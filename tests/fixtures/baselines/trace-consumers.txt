@@ -1,0 +1,15 @@
+src/__tests__/hooks-capture-integration.test.ts
+src/__tests__/hooks-recall-integration.test.ts
+src/__tests__/hooks.test.ts
+src/__tests__/retrieval-stats.test.ts
+src/__tests__/retrieval-trace.test.ts
+src/__tests__/runir-recall-contract.test.ts
+src/app/routes/hooks/index.ts
+src/app/routes/memory/index.ts
+src/decision/__tests__/decision-extractor.test.ts
+src/decision/decision-extractor.ts
+src/recall/latest-state/run-latest-state-lane.ts
+src/recall/query/memory-query.ts
+src/recall/selection/retrieval-stats.ts
+src/recall/selection/retrieval-trace.ts
+src/storage/surreal/phase2-store.ts

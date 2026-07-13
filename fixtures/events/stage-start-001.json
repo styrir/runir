@@ -1,0 +1,6 @@
+{
+  "type": "stage_start",
+  "stage": "vector_search",
+  "inputCount": 24,
+  "tStartedMs": 1777226400000
+}

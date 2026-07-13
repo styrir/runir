@@ -1,0 +1,41 @@
+{
+  "scenario": "grpc",
+  "events": [
+    {
+      "type": "project_decision",
+      "decision_id": "dec-scenario-grpc-5df867a8",
+      "decision": "Going with the gRPC streaming variant for the recall pipeline",
+      "at": "2026-04-27T08:00:30Z"
+    },
+    {
+      "type": "decision_rationale",
+      "decision_id": "dec-scenario-grpc-5df867a8",
+      "text": "because the unary call had p95 latency over 500ms under load and the streaming variant lets us interleave retrieval with reranking",
+      "at": "2026-04-27T08:00:30Z"
+    },
+    {
+      "type": "project_decision",
+      "decision_id": "dec-scenario-grpc-21726f42",
+      "decision": "We chose to fall back to BM25-only when the embedder times out",
+      "at": "2026-04-27T08:01:30Z"
+    },
+    {
+      "type": "decision_rationale",
+      "decision_id": "dec-scenario-grpc-21726f42",
+      "text": "since the embedder dependency is the dominant tail-latency contributor and BM25 still delivers usable recall on short queries",
+      "at": "2026-04-27T08:01:30Z"
+    },
+    {
+      "type": "project_decision",
+      "decision_id": "dec-scenario-grpc-5bae8f60",
+      "decision": "settled on the additive lifecycle event extension rather than a parallel structure",
+      "at": "2026-04-27T08:02:30Z"
+    },
+    {
+      "type": "decision_rationale",
+      "decision_id": "dec-scenario-grpc-5bae8f60",
+      "text": "because ADR 0008 freezes the existing schema and additive variants do not require a traceSchemaVersion bump while preserving consumer compatibility",
+      "at": "2026-04-27T08:02:30Z"
+    }
+  ]
+}

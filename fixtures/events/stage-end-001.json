@@ -1,0 +1,7 @@
+{
+  "type": "stage_end",
+  "stage": "vector_search",
+  "outputCount": 18,
+  "droppedCount": 6,
+  "durationMs": 47
+}

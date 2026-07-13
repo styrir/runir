@@ -1,0 +1,7 @@
+{"type":"progress","data":{"type":"hook_progress"},"uuid":"p1a2b3c4-d5e6-7890-abcd-ef0123456789","timestamp":"2026-03-27T00:00:00Z"}
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-03-27T00:00:00Z","sessionId":"sess-nonmsg-001","content":"scheduled indexing task for corpus table rebuild"}
+{"type":"system","content":"Claude Code session initialized with workspace context","uuid":"sys1a2b3-c4d5-6789-0abc-def012345678","timestamp":"2026-03-27T00:00:00Z"}
+{"type":"file-history-snapshot","files":[],"uuid":"fh1a2b3c-4d5e-6789-abcd-ef0123456789","timestamp":"2026-03-27T00:00:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_03GHI789","name":"Read","input":{}}]},"uuid":"a1b2c3d4-e5f6-7890-abcd-ef0123456789","timestamp":"2026-03-27T00:00:00Z"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_03GHI789","content":"file contents returned from tool execution"}]},"uuid":"u1b2c3d4-e5f6-7890-abcd-ef0123456789","timestamp":"2026-03-27T00:00:00Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"internal reasoning about the approach to take for this refactoring task"}]},"uuid":"a2b3c4d5-e6f7-8901-bcde-f01234567890","timestamp":"2026-03-27T00:00:00Z"}

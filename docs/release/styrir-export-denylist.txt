@@ -1,0 +1,42 @@
+# Hard denylist — export ABORTS if any path matches a rule.
+# Rules (one per line):
+#   exact:PATH     — relative path equals PATH
+#   prefix:PATH    — relative path is PATH or under PATH/
+#   name:NAME      — any path segment equals NAME (e.g. node_modules)
+#   glob:PATTERN   — bash-style glob against full relative path
+#
+# .env.example is ALLOWED (install template). Secrets files are not.
+
+exact:.env
+exact:.env.local
+prefix:.beads
+prefix:.pipeline
+prefix:.omc
+prefix:.omx
+prefix:.omo
+prefix:.ouroboros
+prefix:.gitnexus
+prefix:.venv
+name:node_modules
+name:coverage
+name:logs
+name:dist
+prefix:harness
+prefix:scripts/g004
+prefix:scripts/h435
+prefix:scripts/pn1l
+prefix:docs/handoffs
+prefix:docs/analysis
+prefix:docs/plans
+prefix:docs/brainstorms
+prefix:docs/ideation
+prefix:docs/baselines
+prefix:openclaw-plugin
+prefix:plugins/runir-hermes
+prefix:hexis
+prefix:context
+prefix:workspace
+name:.DS_Store
+glob:*.pem
+glob:*.key
+exact:id_rsa

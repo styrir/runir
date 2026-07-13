@@ -1,0 +1,16 @@
+{
+  "name": "runir-local-claude",
+  "owner": {
+    "name": "AlphaComposite"
+  },
+  "metadata": {
+    "description": "Local Claude marketplace for the Rúnir packaged plugin."
+  },
+  "plugins": [
+    {
+      "name": "runir-claudecode",
+      "source": "./plugins/runir-claudecode",
+      "description": "Rúnir memory lifecycle hooks for Claude Code."
+    }
+  ]
+}

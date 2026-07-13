@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://runir.local/schemas/event.schema.json",
+  "title": "RetrievalTrace lifecycle event",
+  "description": "JSON Schema mirror of TraceLifecycleEvent (src/recall/selection/retrieval-trace.ts). Frozen by ADR 0008. v2: 5 variants — stage_start, stage_end, recall_decision, memory_committed, memory_indexed. memory_committed + memory_indexed added in Rúnir-yod0.3.14b per ADR 0009 §Synchrony / §Phantom-prevention rules.",
+  "oneOf": [
+    {
+      "title": "stage_start",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "stage", "inputCount", "tStartedMs"],
+      "properties": {
+        "type": { "const": "stage_start" },
+        "stage": { "type": "string", "minLength": 1 },
+        "inputCount": { "type": "integer", "minimum": 0 },
+        "tStartedMs": { "type": "integer", "minimum": 0 }
+      }
+    },
+    {
+      "title": "stage_end",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "stage", "outputCount", "droppedCount", "durationMs"],
+      "properties": {
+        "type": { "const": "stage_end" },
+        "stage": { "type": "string", "minLength": 1 },
+        "outputCount": { "type": "integer", "minimum": 0 },
+        "droppedCount": { "type": "integer", "minimum": 0 },
+        "durationMs": { "type": "integer", "minimum": 0 }
+      }
+    },
+    {
+      "title": "recall_decision",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "decision", "entryId"],
+      "properties": {
+        "type": { "const": "recall_decision" },
+        "decision": { "enum": ["accept", "drop", "supersede", "merge"] },
+        "entryId": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string" }
+      }
+    },
+    {
+      "title": "memory_committed",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "memoryId", "lockKey", "outcome", "committedAtMs"],
+      "properties": {
+        "type": { "const": "memory_committed" },
+        "memoryId": { "type": "string", "minLength": 1 },
+        "lockKey": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["factKey", "continuitySubjectKey"],
+          "properties": {
+            "factKey": { "type": "string", "minLength": 1 },
+            "continuitySubjectKey": { "type": "string", "minLength": 1 }
+          }
+        },
+        "outcome": { "enum": ["create", "merge-update", "supersede"] },
+        "committedAtMs": { "type": "integer", "minimum": 0 }
+      }
+    },
+    {
+      "title": "memory_indexed",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "memoryId", "indexedAtMs"],
+      "properties": {
+        "type": { "const": "memory_indexed" },
+        "memoryId": { "type": "string", "minLength": 1 },
+        "indexedAtMs": { "type": "integer", "minimum": 0 }
+      }
+    }
+  ]
+}

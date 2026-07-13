@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  fast:
+    name: Fast (lint + typecheck + test:ci:fast)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit + integration (fast)
+        run: npm run test:ci:fast
+      - name: Skip-rate report (pre-mortem 5 mitigation)
+        if: always()
+        run: npm run skips:report > .pipeline/skip-rate-report.json || true
+      - name: Upload skip-rate artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: skip-rate-fast-${{ github.run_id }}
+          path: |
+            .pipeline/test-skips/
+            .pipeline/skip-rate-report.json
+          if-no-files-found: ignore
+
+  slow:
+    name: Slow (containerized integration)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci
+      - name: Start containerized deps (SurrealDB + Ollama)
+        run: npm run test:ci:slow:up
+      - name: Run slow integration tests
+        run: npm run test:ci:slow
+      - name: Stop containers
+        if: always()
+        run: npm run test:ci:slow:down
+
+  corpus-audit:
+    name: Corpus PII audit (pre-mortem 1 mitigation)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci
+      - name: Check for sanitizer/corpus changes
+        id: changed
+        run: |
+          if git diff --name-only HEAD^..HEAD | grep -E '^(src/testing/marker-redaction\.ts|src/testing/transcript-derived-fixtures\.ts|harness/datasets/)' > /dev/null; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Audit corpus
+        if: steps.changed.outputs.changed == 'true'
+        run: npm run corpus:audit -- --json
+      - name: Run redaction canaries
+        if: steps.changed.outputs.changed == 'true'
+        run: npx vitest run harness/datasets/__tests__/redaction-canaries.test.ts
+
+  baseline-pin-check:
+    name: Baseline manifest pin enforcement (pre-mortem 4 mitigation)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci
+      - name: Check for baseline changes
+        id: changed
+        run: |
+          if git diff --name-only HEAD^..HEAD | grep -E '^docs/baselines/' > /dev/null; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Verify baseline manifests exist for every metrics file
+        if: steps.changed.outputs.changed == 'true'
+        run: |
+          set -e
+          missing=0
+          for metrics in docs/baselines/*.metrics.json; do
+            [ -f "$metrics" ] || continue
+            manifest="${metrics%.metrics.json}.manifest.json"
+            if [ ! -f "$manifest" ]; then
+              echo "::error file=$metrics::no companion manifest at $manifest"
+              missing=1
+            fi
+          done
+          exit $missing
+      - name: Enforce baseline pin consistency for changed manifests
+        if: steps.changed.outputs.changed == 'true'
+        run: |
+          set -e
+          failed=0
+          changed_manifests=$(git diff --name-only HEAD~1 HEAD | grep -E '^docs/baselines/.*\.manifest\.json$' || true)
+          for new_manifest in $changed_manifests; do
+            [ -f "$new_manifest" ] || continue
+            # Check whether this manifest existed on the previous commit
+            if git show "HEAD~1:${new_manifest}" > /dev/null 2>&1; then
+              prev_tmp=$(mktemp /tmp/prev-manifest-XXXXXX.manifest.json)
+              git show "HEAD~1:${new_manifest}" > "$prev_tmp"
+              echo "Checking pin consistency: $new_manifest"
+              if ! npm run baseline:diff -- "$prev_tmp" "$new_manifest"; then
+                echo "::error file=$new_manifest::baseline:diff failed — manifest pins disagree with previous commit. Re-baseline with matching pins before merging."
+                failed=1
+              fi
+              rm -f "$prev_tmp"
+            else
+              echo "New manifest (no prior version to compare): $new_manifest — skipping pin check"
+            fi
+          done
+          exit $failed

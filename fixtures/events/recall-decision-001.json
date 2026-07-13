@@ -1,0 +1,6 @@
+{
+  "type": "recall_decision",
+  "decision": "accept",
+  "entryId": "memory:01HKZX9YE9C2J7M2VRXM4YR4PE",
+  "reason": "rrf_fused score 0.812 above admissibility floor 0.55"
+}

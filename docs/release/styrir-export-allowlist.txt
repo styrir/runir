@@ -1,0 +1,50 @@
+# Styrir product export allowlist
+# One path per line (repo-root relative). Directories are copied recursively.
+# Comments and blank lines ignored. Used by scripts/export-styrir-tree.sh
+#
+# Policy: ship what a stranger needs to install, run, test, and use supported clients.
+# Laboratory paths belong in the forge archive only.
+
+# --- Root product metadata ---
+package.json
+package-lock.json
+index.ts
+tsconfig.json
+eslint.config.mjs
+vitest.config.ts
+README.md
+CHANGELOG.md
+.gitignore
+.env.example
+docker-compose.test.yml
+
+# --- Service + CLI ---
+src/
+cli/
+schemas/
+fixtures/
+config/
+
+# --- Product tests (vitest overlay drops lab-coupled suites) ---
+test/
+tests/
+
+# --- Supported clients only (1.0) ---
+plugins/runir-claudecode/
+plugins/runir-codex/
+.claude-plugin/
+
+# --- Minimal product scripts (install / hooks / marketplace) ---
+scripts/deploy-preflight.ts
+scripts/runir-claudecode-hook-contract.ts
+scripts/runir-codex-hook-contract.ts
+scripts/build-plugin-marketplace-archives.py
+
+# --- Public-ish product docs (lean) ---
+docs/zed-01-beta-scope.md
+docs/production-contract.md
+docs/ops/
+docs/release/
+
+# --- CI (trimmed: ci only; deploy/nightly stay forge-side unless added later) ---
+.github/workflows/ci.yml

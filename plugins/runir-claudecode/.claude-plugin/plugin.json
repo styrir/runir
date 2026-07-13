@@ -1,0 +1,11 @@
+{
+  "name": "runir-claudecode",
+  "version": "0.2.3",
+  "description": "Rúnir memory integration for Claude Code with opener, recall, capture, and session-finalization hooks.",
+  "author": {
+    "name": "AlphaComposite"
+  },
+  "homepage": "https://github.com/AlphaComposite/runir",
+  "repository": "https://github.com/AlphaComposite/runir",
+  "license": "UNLICENSED"
+}
