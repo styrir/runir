@@ -1,0 +1,459 @@
+[
+  {
+    "rowId": "supersede_shadow:xmcr42mh1x6bkzvqajwl",
+    "incomingText": "GitNexus 1.6.7 is installed at /opt/homebrew/bin/gitnexus and functions as a CLI, but the current Pi session lacks GitNexus MCP server registration, preventing access to GitNexus-specific tools like g",
+    "candidateText": "Pi MCP adapter is failing to expose GitNexus tools because GitNexus is not registered as an MCP server in the current Pi session, despite GitNexus CLI 1.6.7 being installed at /opt/homebrew/bin/gitnexus. GitNexus 1.6.7 is installed at /opt/homebrew/bin/gitnexus and functions as a CLI, but the current Pi session lacks GitNexus MCP server registration, preventing access to GitNexus-specific tools like gitnexus_query. Exact source list: - `/Users/brooks/Code/AGENTS.md` - `/Users/brooks/Code/runir/AGENTS.md` - `docs/AGENTS.md` - `docs/agent-guidance/AGENTS.md` - `scripts/AGENTS.md` - earlier source/storage docs from the carried context: `src/AGENTS.md`, `src/storage/AGENTS.md` - `gitnexus_query` - `gitnexus_context` - `gitnexus_impact` - `gitnexus_detect_changes` - `/opt/homebrew/bin/gitnexus` - version `1.6.7` - supports `gitnexus query`, `context`, `impact`, `detect-changes`, and `mcp` GitNexus CLI (v1.6.7) is installed at /opt/homebrew/bin/gitnexus and supports 'mcp' mode, which is required for Pi integration. Pi does not hot-reload MCP configuration changes; the user must run /reload or restart the Pi session for the new GitNexus MCP server to be recognized.",
+    "incomingTags": null,
+    "candidateTags": [
+      "project:runir",
+      "pi",
+      "mcp",
+      "gitnexus",
+      "tooling"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "clean_distinct",
+    "expectedFire": true,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:m6g0k1zkuwzfnhpwh5og",
+    "incomingText": "Large content from web_search or fetch_content is truncated at 30,000 characters in the tool output, with full content stored behind a responseId retrievable via get_search_content.",
+    "candidateText": "The fetch_content tool in pi-web-access truncates direct output at 30,000 characters, storing the full content behind a responseId for later retrieval. Large content from web_search or fetch_content is truncated at 30,000 characters in the tool output, with full content stored behind a responseId retrievable via get_search_content.",
+    "incomingTags": null,
+    "candidateTags": [
+      "project:pi-web-access",
+      "fetch_content",
+      "constraints"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "dup_recapture",
+    "expectedFire": false,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:upikgyp67j4kpc7x499m",
+    "incomingText": "The pi-web-access extension's 'auto' provider mode prioritizes OpenAI when suitable (no recency filter, default result count) and available, followed by Exa, Brave, Parallel, Tavily, Perplexity, and G",
+    "candidateText": "The pi-web-access extension's 'auto' provider mode prioritizes OpenAI when suitable (no recency filter, default result count) and available, followed by Exa, Brave, Parallel, Tavily, Perplexity, and Gemini.\n\nSource:\nI inspected the installed `pi-web-access@0.12.0` package at `~/.pi/agent/npm/node_modules/pi-web-access`.\n\n## What it is\n\n`pi-web-access` is a Pi extension package that registers:\n\n- Tools:\n  - `web_search`\n  - `fetch_content`\n  - `get_search_content`\n- Commands:\n  - `/websearch`\n  - `/curator`\n  - `/search`\n  - `/google-account`\n- Shortcuts:\n  - default `ctrl+shift+s` for search curator\n  - default `ctrl+shift+w` for web activity monitor\n- A bundled `librarian` skill.\n\nIt does **not** register a Pi model provider. Instead, it calls several external web/search/extraction providers from inside its tools.\n\n## Does it use one provider or many?\n\nMany. For `web_search`, supported providers are:\n\n- OpenAI Responses API / Codex web search\n- Exa\n- Brave Search\n- Parallel\n- Tavily\n- Perplexity\n- Ge…\n\nExact source list:\n- Tools:\n- `web_search`\n- `fetch_content`\n- `get_search_content`\n- Commands:\n- `/websearch`\n- `/curator`\n- `/search`\n- `/google-account`\n- Shortcuts:\n- default `ctrl+shift+s` for search curator\n- default `ctrl+shift+w` for web activity monitor\n- A bundled `librarian` skill.\n- OpenAI Responses API / Codex web search\n- Exa\n- Brave Search\n- Parallel\n- Tavily\n- Perplexity\n- Gemini API\n- Gemini Web via browser cookies\n- OpenAI, but only when “suitable”:\n- no `recencyFilter`\n- `numResults` is default/5\n- OpenAI/Codex auth is available\n- Exa\n- always considered available because it can use Exa MCP without an API key\n- if `EXA_API_KEY` / config key exists, it uses Exa direct API\n- Brave, if key exists\n- Parallel, if key exists\n- Tavily, if key exists\n- Perplexity, if key exists\n- Gemini API, then Gemini Web\n- `web_search` can be disabled entirely with:\n- UI mode changes behavior:\n- with UI, default workflow is `summary-review`\n- without UI, it falls back to raw/no-curator mode\n- Workflows:\n- `summary-review`: opens browser curator, generates/approves summary\n- `auto-summary`: model-generated summary without curator\n- `none`: raw search results\n- OpenAI availability can come from:\n- Pi model registry / `/login` Codex subscription\n- `OPENAI_API_KEY`\n- `openaiApiKey` in config\n- Gemini Web only works if browser-cookie access is explicitly enabled:\n- `allowBrowserCookies: true`\n- or `PI_ALLOW_BROWSER_COOKIES=1`\n- Search options change provider internals:\n- Exa uses `/answer` for simple queries with an API key\n- Exa uses `/search` when `includeContent`, recency, domain filters, or non-default result count are requested\n- Curator opening differs by platform:\n- macOS tries `glimpseui` first if available\n- otherwise uses `open`, `xdg-open`, or Windows `start`\n- On session start/shutdown/tree changes it restores/clears stored search results, aborts pending fetches, closes curator windows, and clears GitHub clone cache.\n- `queries`\n- `queryCount`\n- `successfulQueries`\n- `totalResults`\n- `includeContent`\n- `fetchId`\n- `fetchUrls`\n- `searchId`\n- curated query/source metadata, if curator was used\n- summary metadata, if summary workflow was used\n- If the provider already returned full inline content for all URLs, it stores it immediately.\n- Otherwise it starts a background fetch.\n- When background fetch finishes, it sends a custom Pi message like `web-search-content-ready`.\n- Full content is retrieved later with `get_search_content`.\n- Local video file?\n- Gemini API upload first\n- Gemini Web fallback\n- optional `ffmpeg` thumbnail/frame extraction\n- Frame extraction requested?\n- YouTube: `yt-dlp` + `ffmpeg`\n- local video: `ffmpeg`\n- GitHub URL?\n- clones/caches repo when feasible\n- API fallback for oversized/specific commit cases\n- YouTube URL?\n- Gemini Web\n- Gemini API\n- Perplexity text-summary fallback\n- Regular HTTP/HTTPS page?\n- SSRF-protected fetch\n- PDF extraction if PDF\n- Readability HTML extraction\n- Next.js RSC parser fallback\n- Jina Reader fallback\n- Parallel extraction fallback\n- Gemini URL Context fallback\n- Gemini Web fallback",
+    "incomingTags": null,
+    "candidateTags": [
+      "project:pi",
+      "extension:pi-web-access",
+      "web-search",
+      "provider-routing"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "dup_recapture",
+    "expectedFire": false,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:anjkoiwq6t41q40szj14",
+    "incomingText": "When a user submits curated results, `pi-web-access` injects them into the agent with the preamble: '[These results were manually curated by the user in the browser. Use them as-is — do not re-search ",
+    "candidateText": "When results are manually curated in the browser UI, pi-web-access injects a preamble into the Pi session: '[These results were manually curated by the user in the browser. Use them as-is — do not re-search or discard.]'. When a user submits curated results, `pi-web-access` injects them into the agent with the preamble: '[These results were manually curated by the user in the browser. Source: The main UI is the **Search Curator** browser UI. You can initiate it three ways: 1. **Call `web_search` with curator workflow** In interactive Pi, this is the default unless disabled: ```ts web_search({ query: \"...\" }) ``` Or explicitly: web_search({ query: \"...\", workflow: \"summary-review\" }) This starts a local curator server, opens a browser/Glimpse window, streams results into it, and waits for approval/timeout. 2. **Use the slash command directly** ```text /websearch /websearch react hooks, next.js caching This opens the curator without needing the model to call `web_search`. 3. **Use the shortcut while a search is pending** Default: Ctrl+Shift+S This reopens/opens the curator for an act…",
+    "incomingTags": null,
+    "candidateTags": [
+      "project:pi",
+      "extension:pi-web-access",
+      "curator",
+      "output-format"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "dup_recapture",
+    "expectedFire": false,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:7tp5we1gdi2vr3sqv555",
+    "incomingText": "The pi-web-access Search Curator UI can be initiated via web_search calls (default workflow), the /websearch slash command, or the Ctrl+Shift+S shortcut.",
+    "candidateText": "The Search Curator UI can be initiated via three methods: calling `web_search` (default or with workflow: 'summary-review'), using the `/websearch` slash command, or using the `Ctrl+Shift+S` shortcut for pending searches. The pi-web-access Search Curator UI can be initiated via web_search calls (default workflow), the /websearch slash command, or the Ctrl+Shift+S shortcut.",
+    "incomingTags": null,
+    "candidateTags": [
+      "project:runir",
+      "ui",
+      "search-curator",
+      "workflow"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "dup_recapture",
+    "expectedFire": false,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:tenso14nrbk454hn4vnc",
+    "incomingText": "The project 'Gefa' is now indexed in GitNexus, allowing for automated impact detection and context retrieval. The registration was performed using 'gitnexus analyze --index-only --name gefa --default-",
+    "candidateText": "Gefa repository is located at /Users/brooks/Code/gefa, branch master, remote git@github.com:AlphaComposite/gefa.git, with Dolt ref refs/dolt/data.\n\nSource:\n## Compaction Handoff — Gefa\n\n### Current repo state\n\n- Repo: `/Users/brooks/Code/gefa`\n- Branch: `master`\n- Git status: clean/up-to-date\n  - `## master...origin/master`\n- Remote: `git@github.com:AlphaComposite/gefa.git`\n- Recent commits:\n  - `e2f8f8e` — `Document GitNexus indexing workflow`\n  - `ca35c71` — `Clarify trunk closeout guidance`\n  - `386c5b4` — `Build simulated transcript loop and LLM providers`\n- Dolt ref exists:\n  - `refs/dolt/data`\n\n### Beads state\n\nClosed beads:\n- `gefa-2um` — Fix standalone git repo setup\n- `gefa-8ol` — Wire real LLM providers\n- `gefa-hie` — Clarify trunk closeout first-push workflow\n- `gefa-9jg` — Add Gefa to GitNexus\n\nOpen/in-progress beads:\n- none\n\nNext session should create:\n- one roadmap epic bead\n- child beads for remaining steps:\n  - Step 3: session…\n\nExact source list:\n- Repo: `/Users/brooks/Code/gefa`\n- Branch: `master`\n- Git status: clean/up-to-date\n- `## master...origin/master`\n- Remote: `git@github.com:AlphaComposite/gefa.git`\n- Recent commits:\n- `e2f8f8e` — `Document GitNexus indexing workflow`\n- `ca35c71` — `Clarify trunk closeout guidance`\n- `386c5b4` — `Build simulated transcript loop and LLM providers`\n- Dolt ref exists:\n- `refs/dolt/data`\n- `gefa-2um` — Fix standalone git repo setup\n- `gefa-8ol` — Wire real LLM providers\n- `gefa-hie` — Clarify trunk closeout first-push workflow\n- `gefa-9jg` — Add Gefa to GitNexus\n- none\n- one roadmap epic bead\n- child beads for remaining steps:\n- Step 3: session/conversation data model\n- Step 4a: text/Markdown ingestion\n- Step 4b: LanceDB schema + embeddings\n- Step 4c: PDF/image OCR\n- Step 5: Tavily search button\n- Step 6a: audio capture\n- Step 6b: Deepgram streaming STT\n- Step 6c: speaker clustering/manual identity mapping\n- repo `/Users/brooks/Code/gefa`\n- branch `master`\n- indexed commit `e2f8f8e`\n- status up-to-date\n- `gitnexus_impact({ repo: \"gefa\", target: \"...\", direction: \"upstream\" })`\n- `gitnexus_detect_changes({ repo: \"gefa\", scope: \"all\" })`\n- timed simulated transcript stream\n- transcript events feed recent context into agent chat\n- “How should I respond?” button wired\n- “Search this topic online” button wired in stub/no-external-call mode\n- OpenAI-compatible provider behind `LlmProvider`\n- Ollama provider behind `LlmProvider`\n- Stub provider remains default/fallback\n- env selection:\n- `GEFA_LLM_PROVIDER=stub|openai|ollama`\n- `gefa-core`: durable session/conversation/chat/corpus domain types\n- `gefa-data`: metadata persistence boundary\n- `gefa-app`: wire current simulated session through the model\n- SQLite vs another metadata store. Current architecture says local metadata store alongside LanceDB; likely SQLite, but ask only if needed as a major architecture decision.\n- parent agent owns orchestration, beads, GitNexus, decisions, commits/pushes\n- use read-only `scout` / `context-builder` / `researcher` / `planner`\n- use one `worker` as sole writer\n- use fresh-context `reviewer` / validators after implementation\n- no parallel writers in main worktree\n- secrets/API keys or real external smoke tests\n- major architecture decisions\n- native macOS audio permissions/system behavior\n- validation failures not safely fixable in one loop",
+    "incomingTags": null,
+    "candidateTags": [
+      "speaker:assistant",
+      "owner:project",
+      "gitnexus",
+      "gefa",
+      "cli"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "clean_distinct",
+    "expectedFire": true,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:41dc2cof3utuqohyyj9c",
+    "incomingText": "Gefa repository is located at /Users/brooks/Code/gefa, branch master, remote git@github.com:AlphaComposite/gefa.git, with Dolt ref refs/dolt/data.\n\nSource:\n## Compaction Handoff — Gefa\n\n### Current re",
+    "candidateText": "Gefa repository is located at /Users/brooks/Code/gefa, branch master, remote git@github.com:AlphaComposite/gefa.git, with Dolt ref refs/dolt/data.\n\nSource:\n## Compaction Handoff — Gefa\n\n### Current repo state\n\n- Repo: `/Users/brooks/Code/gefa`\n- Branch: `master`\n- Git status: clean/up-to-date\n  - `## master...origin/master`\n- Remote: `git@github.com:AlphaComposite/gefa.git`\n- Recent commits:\n  - `e2f8f8e` — `Document GitNexus indexing workflow`\n  - `ca35c71` — `Clarify trunk closeout guidance`\n  - `386c5b4` — `Build simulated transcript loop and LLM providers`\n- Dolt ref exists:\n  - `refs/dolt/data`\n\n### Beads state\n\nClosed beads:\n- `gefa-2um` — Fix standalone git repo setup\n- `gefa-8ol` — Wire real LLM providers\n- `gefa-hie` — Clarify trunk closeout first-push workflow\n- `gefa-9jg` — Add Gefa to GitNexus\n\nOpen/in-progress beads:\n- none\n\nNext session should create:\n- one roadmap epic bead\n- child beads for remaining steps:\n  - Step 3: session…\n\nExact source list:\n- Repo: `/Users/brooks/Code/gefa`\n- Branch: `master`\n- Git status: clean/up-to-date\n- `## master...origin/master`\n- Remote: `git@github.com:AlphaComposite/gefa.git`\n- Recent commits:\n- `e2f8f8e` — `Document GitNexus indexing workflow`\n- `ca35c71` — `Clarify trunk closeout guidance`\n- `386c5b4` — `Build simulated transcript loop and LLM providers`\n- Dolt ref exists:\n- `refs/dolt/data`\n- `gefa-2um` — Fix standalone git repo setup\n- `gefa-8ol` — Wire real LLM providers\n- `gefa-hie` — Clarify trunk closeout first-push workflow\n- `gefa-9jg` — Add Gefa to GitNexus\n- none\n- one roadmap epic bead\n- child beads for remaining steps:\n- Step 3: session/conversation data model\n- Step 4a: text/Markdown ingestion\n- Step 4b: LanceDB schema + embeddings\n- Step 4c: PDF/image OCR\n- Step 5: Tavily search button\n- Step 6a: audio capture\n- Step 6b: Deepgram streaming STT\n- Step 6c: speaker clustering/manual identity mapping\n- repo `/Users/brooks/Code/gefa`\n- branch `master`\n- indexed commit `e2f8f8e`\n- status up-to-date\n- `gitnexus_impact({ repo: \"gefa\", target: \"...\", direction: \"upstream\" })`\n- `gitnexus_detect_changes({ repo: \"gefa\", scope: \"all\" })`\n- timed simulated transcript stream\n- transcript events feed recent context into agent chat\n- “How should I respond?” button wired\n- “Search this topic online” button wired in stub/no-external-call mode\n- OpenAI-compatible provider behind `LlmProvider`\n- Ollama provider behind `LlmProvider`\n- Stub provider remains default/fallback\n- env selection:\n- `GEFA_LLM_PROVIDER=stub|openai|ollama`\n- `gefa-core`: durable session/conversation/chat/corpus domain types\n- `gefa-data`: metadata persistence boundary\n- `gefa-app`: wire current simulated session through the model\n- SQLite vs another metadata store. Current architecture says local metadata store alongside LanceDB; likely SQLite, but ask only if needed as a major architecture decision.\n- parent agent owns orchestration, beads, GitNexus, decisions, commits/pushes\n- use read-only `scout` / `context-builder` / `researcher` / `planner`\n- use one `worker` as sole writer\n- use fresh-context `reviewer` / validators after implementation\n- no parallel writers in main worktree\n- secrets/API keys or real external smoke tests\n- major architecture decisions\n- native macOS audio permissions/system behavior\n- validation failures not safely fixable in one loop",
+    "incomingTags": null,
+    "candidateTags": [
+      "speaker:assistant",
+      "owner:project",
+      "gitnexus",
+      "gefa",
+      "cli"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "dup_recapture",
+    "expectedFire": false,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:xmayzpwihy4ot6x70b4z",
+    "incomingText": "Gefa is indexed in GitNexus. The command 'gitnexus analyze --index-only --name gefa --default-branch master .' must be run after meaningful code changes.",
+    "candidateText": "The GitNexus indexing workflow documentation was updated in docs/agent-guidance/gitnexus.md and committed as e2f8f8e. Exact source list: - Created/claimed/closed bead `gefa-9jg`. - Added Gefa to GitNexus with: - `gitnexus analyze --index-only --name gefa --default-branch master .` - Updated `docs/agent-guidance/gitnexus.md` with: - how to check if repo is indexed - exact command to add/register Gefa - why the flags are used - validation commands - Committed and pushed: - `e2f8f8e` — `Document GitNexus indexing workflow` - `gitnexus status` shows `gefa`, branch `master`, indexed commit `e2f8f8e`, up-to-date. - `gitnexus_list_repos` includes `gefa`. - `gitnexus_context(repo=\"gefa\", name=\"LlmProvider\")` resolves successfully. - `gitnexus_detect_changes(repo=\"gefa\")` now works. - `bd dolt push --remote origin` succeeded. - `git push` succeeded. - `git status --short --branch`: - `## master...origin/master` - Dolt ref exists: - `refs/dolt/data` Gefa is indexed in GitNexus. The command 'gitnexus analyze --index-only --name gefa --default-branch master .' must be run after meaningful code changes.",
+    "incomingTags": null,
+    "candidateTags": [
+      "speaker:assistant",
+      "owner:project",
+      "gitnexus",
+      "documentation",
+      "commit:e2f8f8e"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "clean_distinct",
+    "expectedFire": true,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:fluv3j2az00uj837gpf5",
+    "incomingText": "Bead gefa-bie.3 (Step 4b) closed with commit 33b5fad, implementing vector retrieval boundaries and local in-memory validation without real LanceDB IO.",
+    "candidateText": "Project Gefa bead gefa-bie.3 Step 4b (LanceDB schema and embeddings boundary) implemented by subagent. Scope included shared retrieval types in gefa-core, refactoring gefa-data vector boundary, adding EmbeddingProvider trait, defining vector record/schema types, filter semantics, LanceDB-facing schema constants, and an InMemoryVectorIndex for testing. Bead gefa-bie.3 (Step 4b) closed with commit 33b5fad, implementing vector retrieval boundaries and local in-memory validation without real LanceDB IO.",
+    "incomingTags": null,
+    "candidateTags": [
+      "project:gefa",
+      "bead:gefa-bie.3",
+      "step:4b",
+      "lancedb",
+      "embeddings",
+      "implementation"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "clean_distinct",
+    "expectedFire": true,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:dk65atcqins4v1cvkipx",
+    "incomingText": "The Gefa roadmap epic (gefa-bie) is complete and shipped as of commit 61984af. All 8 child slices (gefa-bie.1 through gefa-bie.8) are closed, pushed, and reindexed in GitNexus.",
+    "candidateText": "Step 5 of the Gefa roadmap was completed and committed as 5bb3b7b, including reindexing of GitNexus. The Gefa roadmap epic (gefa-bie) is complete and shipped as of commit 61984af. All 8 child slices (gefa-bie.1 through gefa-bie.8) are closed, pushed, and reindexed in GitNexus.",
+    "incomingTags": null,
+    "candidateTags": [
+      "speaker:assistant",
+      "owner:project",
+      "gefa",
+      "roadmap",
+      "commit:5bb3b7b"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "clean_distinct",
+    "expectedFire": true,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:44t0npthcm1s9ibv2am0",
+    "incomingText": "Planned Phase 5 steps: fresh-clone smoke test, contract gates, version update, CHANGELOG update, zed-01 tag, batched close, and final closing pushes.",
+    "candidateText": "Rúnir project release plan: After the Phase 4 docs lane completes, the next steps are: push both lanes, perform fresh-clone install smoke test (Node + 22.12 floor), verify hook-contract gates, set version to 1.0.0-beta.1, update CHANGELOG, tag zed-01, and perform final batched close and pushes. Planned Phase 5 steps: fresh-clone smoke test, contract gates, version update, CHANGELOG update, zed-01 tag, batched close, and final closing pushes.",
+    "incomingTags": null,
+    "candidateTags": [
+      "project:runir",
+      "release-plan",
+      "workflow"
+    ],
+    "guardLeg": "distinct-occasion",
+    "verdict": "clean_distinct",
+    "expectedFire": true,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:z9x0k6d1hk891vlsdiym",
+    "incomingText": "Forced compaction (85% band) executes at agent_end to prevent ctx.compact() from aborting in-flight agent work during tool loops.\n\nExact source list:\n- **Soft (55%)** flushes the full branch to captur",
+    "candidateText": "Forced compaction (85% band) executes at agent_end to prevent ctx.compact() from aborting in-flight agent work during tool loops.\n\nExact source list:\n- **Soft (55%)** flushes the full branch to capture. It inherits the old single-threshold lane's role, so it stays alive under `RUNIR_OM_DISABLED=1`, and legacy `RUNIR_PRECOMPACT_PERCENT` still overrides its threshold.\n- **Plan (70%)** prepares a `pre_compaction` projection into a generation-guarded slot separate from the injection slot, disarming only on success (failures stay armed with a 60s cooldown).\n- **Forced (85%, or an absolute 200k-token ceiling for huge windows)** arms on `turn_end` but executes at `agent_end` — the key subtlety I caught in scout: `ctx.compact()` aborts in-flight agent work, and `turn_end` fires mid-run inside tool loops. Execution refreshes the projection if over the 2-minute freshness window (reusing any in-flight plan fetch), then compacts with the projection as summarizer focus behind an ignore-embedded-instructions hygiene line, awaiting completion so Pi's own post-run compaction check and queued messages can't overlap it — all bounded by a watchdog TTL.",
+    "incomingTags": null,
+    "candidateTags": [
+      "project:pi-tools",
+      "file:runir-memory.ts",
+      "bug",
+      "compaction",
+      "om-5"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "dup_recapture",
+    "expectedFire": false,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": true
+  },
+  {
+    "rowId": "supersede_shadow:7ggumml3l8996rupkavz",
+    "incomingText": "Task bgljlcinf, 'Launch Codex adversarial review of the OM-6 brief', completed successfully with exit code 0.",
+    "candidateText": "Task b1uxruce6, 'Launch Codex adversarial review of the OM-4 brief', completed successfully with exit code 0. Project Runir: The Codex adversarial review of the OM-5 brief (task by7cokr3v) completed successfully with exit code 0. Task bidwfprbl (Codex adversarial review of the OM-5 diff) completed successfully with exit code 0; output saved to /private/tmp/claude-501/-Users-brooks-Code-runir/65e562a1-bcd2-4b0d-8f4a-b3e3286bf61f/tasks/bidwfprbl.output. Task bgljlcinf, 'Launch Codex adversarial review of the OM-6 brief', completed successfully with exit code 0. Task bqwsm0hkm, 'Launch Codex arch review of the OM-6 diff', completed successfully with exit code 0. Project Runir: The 'Codex adversarial review of the extraction re-spec addendum' task (bj8gfw9po) completed successfully with exit code 0. Task bo4rnyw4p ('Codex GPT-5.5 adversarial brief review') completed with exit code 0; output is located at /private/tmp/claude-501/-Users-brooks-Code-runir/fbf72698-e026-4740-8303-9c8d47fb301c/tasks/bo4rnyw4p.output.",
+    "incomingTags": null,
+    "candidateTags": [
+      "project:runir",
+      "task:b1uxruce6",
+      "codex",
+      "adversarial-review",
+      "om-4"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "clean_distinct",
+    "expectedFire": true,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:8sm04shh2mngejs9crer",
+    "incomingText": "49 regression harness cases were moved from the session scratchpad to pi-tools/test/ with a self-contained run.sh, verified green.",
+    "candidateText": "The project's three regression harnesses, totaling 49 cases, were moved from the session-scoped scratchpad to the pi-tools repository to ensure persistence across sessions. 49 regression harness cases were moved from the session scratchpad to pi-tools/test/ with a self-contained run.sh, verified green.",
+    "incomingTags": null,
+    "candidateTags": [
+      "speaker:assistant",
+      "owner:project",
+      "regression-testing",
+      "pi-tools",
+      "persistence"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "dup_recapture",
+    "expectedFire": false,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:pfay1856pf01y5u1b6zn",
+    "incomingText": "Q1 resolution issue: The Rúnir enrollment row lacks namespace data (userId, workspaceId, projectKey, projectId, source, enrolledAt), while Leit's registry contains the necessary namespace info. The in",
+    "candidateText": "Leit ratification amendment: enrollment records must gain optional repo anchors because Runir lacks a workspaceId and uses a different projectKey vocabulary. Q1 resolution issue: The Rúnir enrollment row lacks namespace data (userId, workspaceId, projectKey, projectId, source, enrolledAt), while Leit's registry contains the necessary namespace info. The integration seam must be updated to transmit namespace refs or Rúnir must be modified to handle evidence-explicit targets. Exact source list: - MAJOR — Q1 target resolution is under-specified. - MAJOR — A-1 ratifies raw private repo anchors. - MAJOR — Q2 states future behavior as if it is source-verified current behavior. - MAJOR — Q4 is defensible, but it must patch the canonical Runir brief. - MAJOR — A-3 needs explicit ingress normalization, not only storage wording. - MINOR — Q3 citation needs the exact authoritative doc path. A-3 ratification issue: The record must explicitly state that while `workspaceId` may be null/omitted at ingress, Rúnir canonicalizes it to `\"-\"` for internal SurrealDB operations (lookup, dedupe, indexes, queries). Exact source list: - MAJOR — Q1 target resolution is under-specified.",
+    "incomingTags": null,
+    "candidateTags": [
+      "project:runir",
+      "leit",
+      "amendment"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "clean_distinct",
+    "expectedFire": true,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:5ia3zwuvnms06zgqx4gf",
+    "incomingText": "A-3 ratification issue: The record must explicitly state that while `workspaceId` may be null/omitted at ingress, Rúnir canonicalizes it to `\"-\"` for internal SurrealDB operations (lookup, dedupe, ind",
+    "candidateText": "Leit ratification amendment: enrollment records must gain optional repo anchors because Runir lacks a workspaceId and uses a different projectKey vocabulary. Q1 resolution issue: The Rúnir enrollment row lacks namespace data (userId, workspaceId, projectKey, projectId, source, enrolledAt), while Leit's registry contains the necessary namespace info. The integration seam must be updated to transmit namespace refs or Rúnir must be modified to handle evidence-explicit targets. Exact source list: - MAJOR — Q1 target resolution is under-specified. - MAJOR — A-1 ratifies raw private repo anchors. - MAJOR — Q2 states future behavior as if it is source-verified current behavior. - MAJOR — Q4 is defensible, but it must patch the canonical Runir brief. - MAJOR — A-3 needs explicit ingress normalization, not only storage wording. - MINOR — Q3 citation needs the exact authoritative doc path. A-3 ratification issue: The record must explicitly state that while `workspaceId` may be null/omitted at ingress, Rúnir canonicalizes it to `\"-\"` for internal SurrealDB operations (lookup, dedupe, indexes, queries). Exact source list: - MAJOR — Q1 target resolution is under-specified.",
+    "incomingTags": null,
+    "candidateTags": [
+      "project:runir",
+      "leit",
+      "amendment"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "clean_distinct",
+    "expectedFire": true,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:wx3yj60uz9xvrddv6d9s",
+    "incomingText": "Project constraint: Use native 127.0.0.1:8000 for SurrealDB; never start Docker for the default test lane.",
+    "candidateText": "Runir test lanes: the default test lane uses the native SurrealDB install on 127.0.0.1:8000 with an isolated TEST_DB namespace. The containerized 'test:ci:slow' lane (using docker-compose.test.yml) is the only one requiring Docker. Runir documentation issue: AGENTS.md 'Test Dependencies' section is ambiguous, implying a blanket requirement to start Docker for SurrealDB tests, which leads agents to incorrectly trigger the containerized lane. Project constraint: Use native 127.0.0.1:8000 for SurrealDB; never start Docker for the default test lane. Project Runir test dependency policy updated in AGENTS.md: SurrealDB must be a native install on 127.0.0.1:8000 for real-DB tests, using the TEST_DB database. Developers must not start the runir-surreal container due to IPv6 *:8000 split-brain risks. Docker usage is restricted to the test:ci:slow lane.",
+    "incomingTags": null,
+    "candidateTags": [
+      "project:runir",
+      "testing",
+      "docker",
+      "native"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "dup_recapture",
+    "expectedFire": false,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:nap7kpaac6cef0o9lsge",
+    "incomingText": "The CAS create-race test was updated to force the create branch: the proxy now triggers a miss on the first 'SELECT id, version' even when the row exists, ensuring the subsequent 'CREATE' collides and",
+    "candidateText": "Minor finding: CAS create-race wording is too narrow. It should specify that on duplicate create race, the system must re-read and report version_mismatch, rather than matching only the composite-index name. Exact source list: - MAJOR — Binding misses explicit-project identity rows. - MAJOR — Forced maintenance can violate the “post-promotion” snapshot claim. - MAJOR — Cursor advancement on LLM failure is under-specified. - MINOR — CAS create-race wording is too narrow. CAS race handling: on any create failure (duplicate deterministic record ID or composite-unique-index rejection), the system must re-read and report version_mismatch rather than performing index-name-only matching. The CAS create-race test was updated to force the create branch: the proxy now triggers a miss on the first 'SELECT id, version' even when the row exists, ensuring the subsequent 'CREATE' collides and hits the '.catch' re-read path.",
+    "incomingTags": null,
+    "candidateTags": [
+      "project:runir",
+      "cas",
+      "race-condition",
+      "minor-finding"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "clean_distinct",
+    "expectedFire": true,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:5nr51673419yiyjjemri",
+    "incomingText": "AGENTS.md line 99 updated to remove SurrealDB from the blanket Docker dependency list. The directive now specifies '(the test:ci:slow compose stack, Testcontainers, etc.)' to prevent agents from incor",
+    "candidateText": "AGENTS.md 'Test Dependencies' section is identified as a latent trap because it incorrectly suggests starting Docker for all Surreal tests, whereas only 'test:ci:slow' requires Docker. AGENTS.md line 99 updated to remove SurrealDB from the blanket Docker dependency list. The directive now specifies '(the test:ci:slow compose stack, Testcontainers, etc.)' to prevent agents from incorrectly pattern-matching SurrealDB as a Docker dependency.",
+    "incomingTags": null,
+    "candidateTags": [
+      "speaker:assistant",
+      "owner:project",
+      "documentation",
+      "agents.md",
+      "test-dependencies"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "clean_distinct",
+    "expectedFire": true,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:c8dit9t5u4c9r87wxid8",
+    "incomingText": "GitNexus reindexing completed with zero tracked-file churn, confirming the .gitnexusrc pure-index configuration is effective.",
+    "candidateText": "GitNexus reindex was verified as pure, meaning no tracked files were modified. The main branch at commit e721be0 remains in sync with origin. GitNexus reindexing completed with zero tracked-file churn, confirming the .gitnexusrc pure-index configuration is effective.",
+    "incomingTags": null,
+    "candidateTags": [
+      "project:runir",
+      "gitnexus",
+      "git",
+      "verification"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "clean_distinct",
+    "expectedFire": true,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:idzbtvdr4dbmnknbgd25",
+    "incomingText": "Project Runir state at handoff: main branch at commit e75de2b, in sync with origin, Dolt synced, and production port :7700 healthy. POST /hooks/evidence is live and smoke-verified with RUNIR_EVIDENCE_",
+    "candidateText": "Next action for Runir: perform adversarial review of the storage-batch brief (.pipeline/storage-batch/brief.md) using 'omc ask codex', then build and closeout. Fold djs6 and imaf.5 bead annotations into the batch's bd pass. Source: Handoff landed and pushed — main @ `e75de2b`, in sync with origin, Dolt synced, tree clean except `history.txt`. (GitNexus flags staleness on the docs-only commit; the next code session's closeout reindex covers it.) Here's the pasteable opener for the next session: --- **Pickup this handoff work.** Handoff doc: `docs/handoffs/2026-07-04-model-routing-archeion-live-and-s2-endpoint-handoff.md` — supersedes the earlier 2026-07-04 78sy.4/.5 handoff's resume list; its gotchas stand. **State:** runir main @ `e75de2b`, in sync with origin, Dolt synced. Prod `:7700` healthy on the new code — `POST /hooks/evidence` LIVE and smoke-verified (`RUNIR_EVIDENCE_SECRET` set in `.env`; Leit still needs the value out-of-band). Full suite 3829/0, tree clean except the pre-existing untracked `history.tx… Runir development constraint: always poll issues.jsonl before any bd command to avoid the export-clobber race condition on mutations.",
+    "incomingTags": null,
+    "candidateTags": [
+      "project:runir",
+      "git",
+      "dolt",
+      "commit:3589b35"
+    ],
+    "guardLeg": "distinct-occasion",
+    "verdict": "clean_distinct",
+    "expectedFire": true,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:ss8t3lq8a2y2lnjkzxti",
+    "incomingText": "Task baf1xd8ey (Codex adversarial review of storage-batch brief) completed with exit code 0; output saved to /private/tmp/claude-501/-Users-brooks-Code-runir/aebda631-8768-4671-b2f3-a12f982983e1/tasks",
+    "candidateText": "Task bei7icelu (Codex adversarial brief review for 78sy.9) completed successfully with exit code 0. Task baf1xd8ey (Codex adversarial review of storage-batch brief) completed with exit code 0; output saved to /private/tmp/claude-501/-Users-brooks-Code-runir/aebda631-8768-4671-b2f3-a12f982983e1/tasks/baf1xd8ey.output. The background task 'Codex adversarial review of hygiene-batch brief' (ID: bwpmtncuj) completed successfully with exit code 0. The background task 'Codex adversarial code review' (ID: bm21cp5t3) completed successfully with exit code 0. Codex adversarial review of the plan (task btou7xav3) completed with exit code 0. Task becoyc9a8 (Run Codex round-3 review) completed successfully with exit code 0.",
+    "incomingTags": null,
+    "candidateTags": [
+      "speaker:user",
+      "owner:project",
+      "task:bei7icelu",
+      "codex",
+      "adversarial-review"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "clean_distinct",
+    "expectedFire": true,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:7s3a21ml5uw8zp1il7pi",
+    "incomingText": "The H2-verify step for the hygiene-batch build.jsonl is complete and passed, confirming the H2 strip is behavior-identical to the previous state.",
+    "candidateText": "Task bly4ezhko: The 'hygiene-batch' build.jsonl verification step 'H2a-verify' passed on 2026-07-04T00:12:00Z, confirmed by a clean 'npx tsc --noEmit -p tsconfig.json' execution. The H2-verify step for the hygiene-batch build.jsonl is complete and passed, confirming the H2 strip is behavior-identical to the previous state. Remaining in-flight tasks for the hygiene-batch build.jsonl include H3 (worker failure tests), H4-H6, and the full-suite gate.",
+    "incomingTags": null,
+    "candidateTags": [
+      "speaker:user",
+      "owner:project",
+      "task:bly4ezhko",
+      "hygiene-batch",
+      "typescript",
+      "verification"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "clean_distinct",
+    "expectedFire": true,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:aj37lj45471hz2l2t5qw",
+    "incomingText": "Remaining in-flight tasks for the hygiene-batch build.jsonl include H3 (worker failure tests), H4-H6, and the full-suite gate.",
+    "candidateText": "Task bly4ezhko: The 'hygiene-batch' build.jsonl verification step 'H2a-verify' passed on 2026-07-04T00:12:00Z, confirmed by a clean 'npx tsc --noEmit -p tsconfig.json' execution. The H2-verify step for the hygiene-batch build.jsonl is complete and passed, confirming the H2 strip is behavior-identical to the previous state. Remaining in-flight tasks for the hygiene-batch build.jsonl include H3 (worker failure tests), H4-H6, and the full-suite gate.",
+    "incomingTags": null,
+    "candidateTags": [
+      "speaker:user",
+      "owner:project",
+      "task:bly4ezhko",
+      "hygiene-batch",
+      "typescript",
+      "verification"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "clean_distinct",
+    "expectedFire": true,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  },
+  {
+    "rowId": "supersede_shadow:knr3rvq2rmbzqv3vhywi",
+    "incomingText": "Project Runir hygiene-sweep batch updated Python scripts `scripts/g004/semantic_ledger_l2.py` and `scripts/g004/fam07_stage_attribution.py` with taxonomy notes; logic remains untouched.\n\nExact source ",
+    "candidateText": "Project Runir hygiene-sweep batch updated Python scripts `scripts/g004/semantic_ledger_l2.py` and `scripts/g004/fam07_stage_attribution.py` with taxonomy notes; logic remains untouched.\n\nExact source list:\n- `nativeRrfSearch`: deleted `legFetchLimit`/`fusionCandidateLimit`, replaced all 5 use-sites with `safeLimit`\n- `runHybridQueryWithEvidenceTable`: deleted `effLegFetchLimit`/`effFusionCandidateLimit`, replaced all 4 use-sites with `candidateLimit`\n- `RecallCandidateStages` emitter field names (`legFetchLimit:`, `fusionCandidateLimit:`) kept unchanged — attribution schema contract preserved\n- Adjusted 3 comments that named the deleted locals\n- `scripts/g004/semantic_ledger_l2.py`: added the specified note at 3 locations (module docstring taxonomy block, `classify_unit()` docstring, inline branch comment)\n- `scripts/g004/fam07_stage_attribution.py`: confirmed it reuses `classify_unit` and restates the live taxonomy — added the same one-line note per the conditional instruction\n- `npm run typecheck` → clean\n- `npm run lint` → clean (0 violations)\n- `npx vitest run` on the 3 memory-query test files + `noema-retrieval-policy.test.ts` → **4 files passed, 87 tests passed**\n- `python3 -m py_compile scripts/g004/semantic_ledger_l2.py scripts/g004/fam07_stage_attribution.py` → exit 0, both clean\n- `npm run test:ci` (full gate) → **Test Files 325 passed | 10 skipped (335); Tests 3840 passed | 54 skipped | 7 todo (3901); 0 failed** — identical counts to the pre-simplify-pass run, confirming full behavior-identity\n- `git diff --check` → clean\n- No debug code in any new diff",
+    "incomingTags": null,
+    "candidateTags": [
+      "speaker:user",
+      "owner:project",
+      "task:bly4ezhko",
+      "hygiene-batch",
+      "verification",
+      "temporal:2026-07-05"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "dup_recapture",
+    "expectedFire": false,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": true
+  },
+  {
+    "rowId": "supersede_shadow:ooh6ynrxoc91sw9jzgqf",
+    "incomingText": "Next steps for the project include Leit-side handover (RUNIR_EVIDENCE_SECRET + leit-31p collector), 78sy.1 seam ratification, and unblocking 78sy.10.",
+    "candidateText": "Post-ratification plan: amend and commit the advisory in the 'leit' repo (currently untracked), file the Leit-side beads, annotate the 'runir' brief's Part II with ratified deltas, and close issue 'Rúnir-78sy.1' with evidence. Next steps for the project include Leit-side handover (RUNIR_EVIDENCE_SECRET + leit-31p collector), 78sy.1 seam ratification, and unblocking 78sy.10. The Rúnir project's Rúnir-78sy.1 seam ratification is closed as of 2026-07-03, with the decision record in Leit's advisory doc, a Codex REVISE→ACCEPT review, and architect PASS.",
+    "incomingTags": null,
+    "candidateTags": [
+      "speaker:assistant",
+      "owner:project",
+      "leit",
+      "runir",
+      "workflow"
+    ],
+    "guardLeg": "conflicting-subjects",
+    "verdict": "clean_distinct",
+    "expectedFire": true,
+    "incomingTagsUnavailable": true,
+    "postHocLimited": false
+  }
+]

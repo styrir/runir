@@ -1,0 +1,93 @@
+{
+  "_comment": "Per-tenant ranking profile for the runir/owner tenant (Rúnir-mmg2). Carries the behavior-frozen values lifted out of recall-selection.ts (STALE_SIGNALS, KNOWN_RENAMES) and memory-query.ts (ENTITY_QUERY_FILLER_WORDS, TAXONOMY_EXPANSION_FACETS). Point RUNIR_RANKING_PROFILES at this file to reproduce today's ranking; with no profile configured the service runs CLEAN (no demotion, no rename collapse, no filler filtering, no taxonomy expansion). Validated by src/recall/policy/ranking-profile.ts (zod). regex source strings are JSON-escaped (one backslash in JS == two here).",
+  "profiles": [
+    {
+      "userId": "owner",
+      "staleSignals": {
+        "schema": [
+          { "pattern": "payload\\.data\\b", "flags": "" },
+          { "pattern": "payload\\.hash\\b", "flags": "" },
+          { "pattern": "\\brunId\\b", "flags": "" }
+        ],
+        "recent_work": [
+          { "pattern": "decay-engine\\.ts", "flags": "" },
+          { "pattern": "memory-middleware", "flags": "" }
+        ],
+        "architecture": [
+          { "pattern": "decay-engine\\.ts", "flags": "" },
+          { "pattern": "memory-middleware", "flags": "" }
+        ],
+        "debugging": [
+          { "pattern": "\\ball\\s+\\d+\\s+tests?\\s+passed\\b", "flags": "i" },
+          { "pattern": "\\b\\d{3}\\s+tests?\\b", "flags": "i" },
+          { "pattern": "\\bbenchmark.*\\bNO-GO\\b", "flags": "i" }
+        ],
+        "current_status": [
+          { "pattern": "\\bBuilder Brief\\b", "flags": "i" },
+          { "pattern": "\\b(?:audit|revision|verification)\\s+(?:process|steps?)\\b", "flags": "i" },
+          { "pattern": "\\bkebab-case\\b", "flags": "i" },
+          { "pattern": "\\bnaming convention\\b", "flags": "i" },
+          { "pattern": "\\bDEFINE FIELD\\b", "flags": "" },
+          { "pattern": "\\bschema migration\\b", "flags": "i" },
+          { "pattern": "\\bdecay-engine\\.ts\\b", "flags": "" },
+          { "pattern": "\\bmemory-middleware\\b", "flags": "" },
+          { "pattern": "\\bscripts\\/\\s+folder\\s+is\\s+not\\s+in\\s+`?tsconfig\\.json`?\\s+includes\\b", "flags": "i" },
+          { "pattern": "\\buse\\s+`?npx\\s+tsx`?\\s+for\\s+script\\s+runs\\b", "flags": "i" },
+          { "pattern": "\\btsconfig\\.json\\b", "flags": "i" },
+          { "pattern": "\\bread[- ]path\\b", "flags": "i" },
+          { "pattern": "\\bcontext insufficiency\\b", "flags": "i" },
+          { "pattern": "\\bproject[_ -]?state update flow\\b", "flags": "i" },
+          { "pattern": "\\b\\/clear\\b", "flags": "i" },
+          { "pattern": "\\bcheckpoint hook\\b", "flags": "i" },
+          { "pattern": "\\bwatermark progression\\b", "flags": "i" },
+          { "pattern": "\\bmemory synchronization loop\\b", "flags": "i" }
+        ],
+        "session_opener": [
+          { "pattern": "\\bBuilder Brief\\b", "flags": "i" },
+          { "pattern": "\\b(?:audit|revision|verification)\\s+(?:process|steps?)\\b", "flags": "i" },
+          { "pattern": "\\bkebab-case\\b", "flags": "i" },
+          { "pattern": "\\bnaming convention\\b", "flags": "i" },
+          { "pattern": "\\bDEFINE FIELD\\b", "flags": "" },
+          { "pattern": "\\bschema migration\\b", "flags": "i" },
+          { "pattern": "\\bdecay-engine\\.ts\\b", "flags": "" },
+          { "pattern": "\\bmemory-middleware\\b", "flags": "" },
+          { "pattern": "\\bscripts\\/\\s+folder\\s+is\\s+not\\s+in\\s+`?tsconfig\\.json`?\\s+includes\\b", "flags": "i" },
+          { "pattern": "\\buse\\s+`?npx\\s+tsx`?\\s+for\\s+script\\s+runs\\b", "flags": "i" },
+          { "pattern": "\\btsconfig\\.json\\b", "flags": "i" },
+          { "pattern": "\\bread[- ]path\\b", "flags": "i" },
+          { "pattern": "\\bcontext insufficiency\\b", "flags": "i" },
+          { "pattern": "\\bproject[_ -]?state update flow\\b", "flags": "i" },
+          { "pattern": "\\b\\/clear\\b", "flags": "i" },
+          { "pattern": "\\bcheckpoint hook\\b", "flags": "i" },
+          { "pattern": "\\bwatermark progression\\b", "flags": "i" },
+          { "pattern": "\\bmemory synchronization loop\\b", "flags": "i" }
+        ]
+      },
+      "knownRenames": [
+        [
+          { "pattern": "\\bwriteWithArbitration\\b", "flags": "" },
+          { "pattern": "\\barbitrateWrite\\b", "flags": "" }
+        ]
+      ],
+      "entityFillerWords": [
+        "about", "after", "before", "career", "decide", "decided", "does", "educaton", "education", "field", "fields",
+        "going", "growing", "hadn", "likely", "paint", "path", "prioritize", "pursue", "persue", "question", "realize",
+        "research", "still", "support", "want", "would"
+      ],
+      "taxonomyExpansionFacets": [
+        {
+          "signals": [
+            "career", "careers", "field", "fields", "job", "jobs", "profession", "professions", "professional", "pursue", "pursued", "work"
+          ],
+          "terms": ["career", "profession", "work"]
+        },
+        {
+          "signals": [
+            "certification", "certifications", "degree", "educaton", "education", "school", "training"
+          ],
+          "terms": ["education", "training", "certification", "degree"]
+        }
+      ]
+    }
+  ]
+}

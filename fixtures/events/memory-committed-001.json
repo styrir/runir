@@ -1,0 +1,10 @@
+{
+  "type": "memory_committed",
+  "memoryId": "memory:01HKZX9YE9C2J7M2VRXM4YR4PE",
+  "lockKey": {
+    "factKey": "preference:editor",
+    "continuitySubjectKey": "user:01HKZX9YE0X1A2B3C4D5E6F7G8"
+  },
+  "outcome": "create",
+  "committedAtMs": 1714435200000
+}

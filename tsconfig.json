@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "baseUrl": "."
+  },
+  "include": [
+    "index.ts",
+    "src/**/*.ts",
+    "cli/**/*.ts",
+    "scripts/deploy-preflight.ts",
+    "scripts/runir-claudecode-hook-contract.ts",
+    "scripts/runir-codex-hook-contract.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "coverage",
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "test/**",
+    "src/testing/harness-adapter.ts",
+    "src/testing/transcript-derived-fixtures.ts"
+  ]
+}
+
+

@@ -1,0 +1,650 @@
+{
+  "generator": {
+    "name": "generate-ingestion-transcript-fixtures",
+    "version": "v1"
+  },
+  "sanitizerContract": {
+    "primaryTurns": [
+      "user",
+      "assistant"
+    ],
+    "preserved": [
+      "role order",
+      "turn count",
+      "relative turn position",
+      "sidecar event type counts",
+      "length buckets",
+      "tool-use / tool-result density"
+    ],
+    "redacted": [
+      "raw names",
+      "filesystem paths",
+      "URLs",
+      "IDs and UUIDs",
+      "ticket references",
+      "verbatim code blocks"
+    ],
+    "synthesized": [
+      "turn content summaries",
+      "session labels",
+      "project path placeholder"
+    ],
+    "droppedAsSidecars": [
+      "attachments",
+      "queue-operation rows",
+      "system rows",
+      "permission-mode rows",
+      "file-history snapshots"
+    ]
+  },
+  "census": [
+    {
+      "transcriptLabel": "local-transcript-01",
+      "primaryTurnCount": 3,
+      "sidecarCount": 8,
+      "userTurns": 3,
+      "assistantTurns": 0,
+      "sidecarTypes": {
+        "permission-mode": 1,
+        "hook_success:SessionStart": 3,
+        "hook_additional_context:SessionStart": 1,
+        "system": 2,
+        "file-history-snapshot": 1
+      }
+    },
+    {
+      "transcriptLabel": "local-transcript-02",
+      "primaryTurnCount": 3,
+      "sidecarCount": 15,
+      "userTurns": 1,
+      "assistantTurns": 2,
+      "sidecarTypes": {
+        "queue-operation:enqueue": 1,
+        "queue-operation:dequeue": 1,
+        "hook_success:SessionStart": 4,
+        "hook_system_message:SessionStart": 1,
+        "hook_additional_context:SessionStart": 1,
+        "mcp_instructions_delta": 1,
+        "skill_listing": 1,
+        "hook_success:Stop": 5
+      }
+    },
+    {
+      "transcriptLabel": "local-transcript-03",
+      "primaryTurnCount": 3,
+      "sidecarCount": 8,
+      "userTurns": 3,
+      "assistantTurns": 0,
+      "sidecarTypes": {
+        "permission-mode": 1,
+        "hook_success:SessionStart": 4,
+        "hook_system_message:SessionStart": 1,
+        "hook_additional_context:SessionStart": 1,
+        "file-history-snapshot": 1
+      }
+    },
+    {
+      "transcriptLabel": "local-transcript-04",
+      "primaryTurnCount": 13,
+      "sidecarCount": 8,
+      "userTurns": 6,
+      "assistantTurns": 7,
+      "sidecarTypes": {
+        "queue-operation:enqueue": 2,
+        "queue-operation:dequeue": 1,
+        "deferred_tools_delta": 1,
+        "mcp_instructions_delta": 1,
+        "companion_intro": 1,
+        "queue-operation:remove": 1,
+        "last-prompt": 1
+      }
+    },
+    {
+      "transcriptLabel": "local-transcript-05",
+      "primaryTurnCount": 444,
+      "sidecarCount": 849,
+      "userTurns": 184,
+      "assistantTurns": 260,
+      "sidecarTypes": {
+        "permission-mode": 1,
+        "hook_success:SessionStart": 4,
+        "hook_system_message:SessionStart": 1,
+        "hook_additional_context:SessionStart": 1,
+        "file-history-snapshot": 23,
+        "deferred_tools_delta": 1,
+        "mcp_instructions_delta": 1,
+        "skill_listing": 1,
+        "command_permissions": 3,
+        "hook_additional_context:UserPromptSubmit": 3,
+        "hook_success:PreToolUse": 156,
+        "hook_success:PostToolUse": 312,
+        "hook_additional_context:PreToolUse": 147,
+        "hook_additional_context:PostToolUse": 81,
+        "task_reminder": 11,
+        "hook_success:Stop": 58,
+        "system": 29,
+        "hook_success:PostToolUseFailure": 6,
+        "hook_additional_context:PostToolUseFailure": 6,
+        "queue-operation:enqueue": 1,
+        "queue-operation:remove": 1,
+        "queued_command": 1,
+        "edited_text_file": 1
+      }
+    },
+    {
+      "transcriptLabel": "local-transcript-06",
+      "primaryTurnCount": 2,
+      "sidecarCount": 6,
+      "userTurns": 2,
+      "assistantTurns": 0,
+      "sidecarTypes": {
+        "file-history-snapshot": 1,
+        "hook_success:SessionStart": 3,
+        "hook_additional_context:SessionStart": 1,
+        "system": 1
+      }
+    },
+    {
+      "transcriptLabel": "local-transcript-07",
+      "primaryTurnCount": 3,
+      "sidecarCount": 6,
+      "userTurns": 3,
+      "assistantTurns": 0,
+      "sidecarTypes": {
+        "permission-mode": 1,
+        "hook_success:SessionStart": 3,
+        "hook_additional_context:SessionStart": 1,
+        "file-history-snapshot": 1
+      }
+    },
+    {
+      "transcriptLabel": "local-transcript-08",
+      "primaryTurnCount": 6,
+      "sidecarCount": 10,
+      "userTurns": 6,
+      "assistantTurns": 0,
+      "sidecarTypes": {
+        "permission-mode": 2,
+        "hook_success:SessionStart": 4,
+        "hook_system_message:SessionStart": 1,
+        "hook_additional_context:SessionStart": 1,
+        "file-history-snapshot": 2
+      }
+    },
+    {
+      "transcriptLabel": "local-transcript-09",
+      "primaryTurnCount": 3,
+      "sidecarCount": 6,
+      "userTurns": 3,
+      "assistantTurns": 0,
+      "sidecarTypes": {
+        "permission-mode": 1,
+        "hook_success:SessionStart": 3,
+        "hook_additional_context:SessionStart": 1,
+        "file-history-snapshot": 1
+      }
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "capture-transcript-derived-conversational",
+      "title": "Capture uses a sanitized conversational slice derived from a real local transcript",
+      "family": "capture",
+      "route": "/hooks/capture",
+      "sourceInput": {
+        "producer": "sanitized-transcript",
+        "transcriptLabel": "local-transcript-05",
+        "primaryTurnCount": 4,
+        "totalPrimaryTurnCount": 444,
+        "sidecarCount": 849,
+        "sidecarTypes": {
+          "permission-mode": 1,
+          "hook_success:SessionStart": 4,
+          "hook_system_message:SessionStart": 1,
+          "hook_additional_context:SessionStart": 1,
+          "file-history-snapshot": 23,
+          "deferred_tools_delta": 1,
+          "mcp_instructions_delta": 1,
+          "skill_listing": 1,
+          "command_permissions": 3,
+          "hook_additional_context:UserPromptSubmit": 3,
+          "hook_success:PreToolUse": 156,
+          "hook_success:PostToolUse": 312,
+          "hook_additional_context:PreToolUse": 147,
+          "hook_additional_context:PostToolUse": 81,
+          "task_reminder": 11,
+          "hook_success:Stop": 58,
+          "system": 29,
+          "hook_success:PostToolUseFailure": 6,
+          "hook_additional_context:PostToolUseFailure": 6,
+          "queue-operation:enqueue": 1,
+          "queue-operation:remove": 1,
+          "queued_command": 1,
+          "edited_text_file": 1
+        }
+      },
+      "edgeExtraction": {
+        "mode": "wire-passthrough",
+        "extractedMessages": [
+          {
+            "role": "user",
+            "content": "User provides a long request and explicit task constraints.",
+            "timestamp": "2026-04-12T13:51:11.603Z"
+          },
+          {
+            "role": "user",
+            "content": "User provides a long request with code-oriented details and explicit task constraints.",
+            "timestamp": "2026-04-12T13:51:11.603Z"
+          },
+          {
+            "role": "assistant",
+            "content": "Assistant includes an internal reasoning phase, records a non-verbal reasoning turn.",
+            "timestamp": "2026-04-12T13:51:34.267Z"
+          },
+          {
+            "role": "assistant",
+            "content": "Assistant delivers a short status update.",
+            "timestamp": "2026-04-12T13:51:35.227Z"
+          }
+        ],
+        "droppedItems": [
+          {
+            "kind": "sidecar-batch",
+            "position": "between-turns",
+            "count": 849,
+            "eventTypes": [
+              "hook_success:PostToolUse×312",
+              "hook_success:PreToolUse×156",
+              "hook_additional_context:PreToolUse×147",
+              "hook_additional_context:PostToolUse×81",
+              "hook_success:Stop×58",
+              "system×29",
+              "file-history-snapshot×23",
+              "task_reminder×11",
+              "hook_success:PostToolUseFailure×6",
+              "hook_additional_context:PostToolUseFailure×6",
+              "hook_success:SessionStart×4",
+              "command_permissions×3",
+              "hook_additional_context:UserPromptSubmit×3",
+              "permission-mode×1",
+              "hook_system_message:SessionStart×1",
+              "hook_additional_context:SessionStart×1",
+              "deferred_tools_delta×1",
+              "mcp_instructions_delta×1",
+              "skill_listing×1",
+              "queue-operation:enqueue×1",
+              "queue-operation:remove×1",
+              "queued_command×1",
+              "edited_text_file×1"
+            ],
+            "summary": "Dropped 849 non-primary transcript events while preserving their adjacency metadata for inspection."
+          }
+        ],
+        "stats": {
+          "originalMessageCount": 1293,
+          "extractedMessageCount": 4
+        }
+      },
+      "wirePayload": {
+        "userId": "owner",
+        "sessionId": "fixture-capture-transcript-derived-conversational",
+        "path": "/workspace/redacted-project",
+        "client": "h1-harness-transcript",
+        "messages": [
+          {
+            "role": "user",
+            "content": "User provides a long request and explicit task constraints.",
+            "timestamp": "2026-04-12T13:51:11.603Z"
+          },
+          {
+            "role": "user",
+            "content": "User provides a long request with code-oriented details and explicit task constraints.",
+            "timestamp": "2026-04-12T13:51:11.603Z"
+          },
+          {
+            "role": "assistant",
+            "content": "Assistant includes an internal reasoning phase, records a non-verbal reasoning turn.",
+            "timestamp": "2026-04-12T13:51:34.267Z"
+          },
+          {
+            "role": "assistant",
+            "content": "Assistant delivers a short status update.",
+            "timestamp": "2026-04-12T13:51:35.227Z"
+          }
+        ]
+      },
+      "runtime": {
+        "testMode": true,
+        "captureFacts": [
+          {
+            "l2": "Sanitized transcript fixture capture-transcript-derived-conversational preserves real turn structure while redacting private session content.",
+            "confidence": 0.9,
+            "l0": "sanitized transcript fixture",
+            "l1": "- sanitized transcript fixture",
+            "category": "events",
+            "tier": "working",
+            "tags": [
+              "ingestion",
+              "transcript-derived"
+            ],
+            "factKey": "events:capture-transcript-derived-conversational"
+          }
+        ]
+      },
+      "assertions": {
+        "responseStatus": 200,
+        "responseBodyIncludes": {
+          "skipped": false,
+          "factsFound": 1,
+          "outcomes": {
+            "create": 1
+          }
+        },
+        "semioteWrites": 1,
+        "projectStateExists": false,
+        "semiotePayloadContains": {
+          "l2": "Sanitized transcript fixture capture-transcript-derived-conversational preserves real turn structure while redacting private session content.",
+          "tags": [
+            "ingestion",
+            "transcript-derived"
+          ]
+        },
+        "relationCount": 0,
+        "rejectionCount": 0
+      }
+    },
+    {
+      "id": "capture-transcript-derived-tool-heavy",
+      "title": "Capture preserves tool-heavy sidecar density from a real local transcript",
+      "family": "capture",
+      "route": "/hooks/capture",
+      "sourceInput": {
+        "producer": "sanitized-transcript",
+        "transcriptLabel": "local-transcript-02",
+        "primaryTurnCount": 3,
+        "totalPrimaryTurnCount": 3,
+        "sidecarCount": 15,
+        "sidecarTypes": {
+          "queue-operation:enqueue": 1,
+          "queue-operation:dequeue": 1,
+          "hook_success:SessionStart": 4,
+          "hook_system_message:SessionStart": 1,
+          "hook_additional_context:SessionStart": 1,
+          "mcp_instructions_delta": 1,
+          "skill_listing": 1,
+          "hook_success:Stop": 5
+        }
+      },
+      "edgeExtraction": {
+        "mode": "wire-passthrough",
+        "extractedMessages": [
+          {
+            "role": "user",
+            "content": "User provides a short request and explicit task constraints.",
+            "timestamp": "2026-04-14T21:03:17.266Z"
+          },
+          {
+            "role": "assistant",
+            "content": "Assistant includes an internal reasoning phase, records a non-verbal reasoning turn.",
+            "timestamp": "2026-04-14T21:03:26.621Z"
+          },
+          {
+            "role": "assistant",
+            "content": "Assistant delivers a medium status update.",
+            "timestamp": "2026-04-14T21:03:27.991Z"
+          }
+        ],
+        "droppedItems": [
+          {
+            "kind": "sidecar-batch",
+            "position": "between-turns",
+            "count": 15,
+            "eventTypes": [
+              "hook_success:Stop×5",
+              "hook_success:SessionStart×4",
+              "queue-operation:enqueue×1",
+              "queue-operation:dequeue×1",
+              "hook_system_message:SessionStart×1",
+              "hook_additional_context:SessionStart×1",
+              "mcp_instructions_delta×1",
+              "skill_listing×1"
+            ],
+            "summary": "Dropped 15 non-primary transcript events while preserving their adjacency metadata for inspection."
+          }
+        ],
+        "stats": {
+          "originalMessageCount": 18,
+          "extractedMessageCount": 3
+        }
+      },
+      "wirePayload": {
+        "userId": "owner",
+        "sessionId": "fixture-capture-transcript-derived-tool-heavy",
+        "path": "/workspace/redacted-project",
+        "client": "h1-harness-transcript",
+        "messages": [
+          {
+            "role": "user",
+            "content": "User provides a short request and explicit task constraints.",
+            "timestamp": "2026-04-14T21:03:17.266Z"
+          },
+          {
+            "role": "assistant",
+            "content": "Assistant includes an internal reasoning phase, records a non-verbal reasoning turn.",
+            "timestamp": "2026-04-14T21:03:26.621Z"
+          },
+          {
+            "role": "assistant",
+            "content": "Assistant delivers a medium status update.",
+            "timestamp": "2026-04-14T21:03:27.991Z"
+          }
+        ]
+      },
+      "runtime": {
+        "testMode": true,
+        "captureFacts": [
+          {
+            "l2": "Sanitized transcript fixture capture-transcript-derived-tool-heavy preserves real turn structure while redacting private session content.",
+            "confidence": 0.9,
+            "l0": "sanitized transcript fixture",
+            "l1": "- sanitized transcript fixture",
+            "category": "events",
+            "tier": "working",
+            "tags": [
+              "ingestion",
+              "transcript-derived"
+            ],
+            "factKey": "events:capture-transcript-derived-tool-heavy"
+          }
+        ]
+      },
+      "assertions": {
+        "responseStatus": 200,
+        "responseBodyIncludes": {
+          "skipped": false,
+          "factsFound": 1,
+          "outcomes": {
+            "create": 1
+          }
+        },
+        "semioteWrites": 1,
+        "projectStateExists": false,
+        "semiotePayloadContains": {
+          "l2": "Sanitized transcript fixture capture-transcript-derived-tool-heavy preserves real turn structure while redacting private session content.",
+          "tags": [
+            "ingestion",
+            "transcript-derived"
+          ]
+        },
+        "relationCount": 0,
+        "rejectionCount": 0
+      }
+    },
+    {
+      "id": "session-end-transcript-derived-summary",
+      "title": "Session-end records raw turns and advances the watermark for a sanitized multi-turn workstream derived from a real local transcript",
+      "family": "session-end",
+      "route": "/hooks/session-end",
+      "sourceInput": {
+        "producer": "sanitized-transcript",
+        "transcriptLabel": "local-transcript-05",
+        "primaryTurnCount": 6,
+        "totalPrimaryTurnCount": 444,
+        "sidecarCount": 849,
+        "sidecarTypes": {
+          "permission-mode": 1,
+          "hook_success:SessionStart": 4,
+          "hook_system_message:SessionStart": 1,
+          "hook_additional_context:SessionStart": 1,
+          "file-history-snapshot": 23,
+          "deferred_tools_delta": 1,
+          "mcp_instructions_delta": 1,
+          "skill_listing": 1,
+          "command_permissions": 3,
+          "hook_additional_context:UserPromptSubmit": 3,
+          "hook_success:PreToolUse": 156,
+          "hook_success:PostToolUse": 312,
+          "hook_additional_context:PreToolUse": 147,
+          "hook_additional_context:PostToolUse": 81,
+          "task_reminder": 11,
+          "hook_success:Stop": 58,
+          "system": 29,
+          "hook_success:PostToolUseFailure": 6,
+          "hook_additional_context:PostToolUseFailure": 6,
+          "queue-operation:enqueue": 1,
+          "queue-operation:remove": 1,
+          "queued_command": 1,
+          "edited_text_file": 1
+        }
+      },
+      "edgeExtraction": {
+        "mode": "wire-passthrough",
+        "extractedMessages": [
+          {
+            "role": "user",
+            "content": "User provides a long request and explicit task constraints.",
+            "timestamp": "2026-04-12T13:51:11.603Z"
+          },
+          {
+            "role": "user",
+            "content": "User provides a long request with code-oriented details and explicit task constraints.",
+            "timestamp": "2026-04-12T13:51:11.603Z"
+          },
+          {
+            "role": "assistant",
+            "content": "Assistant includes an internal reasoning phase, records a non-verbal reasoning turn.",
+            "timestamp": "2026-04-12T13:51:34.267Z"
+          },
+          {
+            "role": "assistant",
+            "content": "Assistant delivers a short status update.",
+            "timestamp": "2026-04-12T13:51:35.227Z"
+          },
+          {
+            "role": "assistant",
+            "content": "Assistant coordinates 1 tool call, records a non-verbal reasoning turn.",
+            "timestamp": "2026-04-12T13:51:35.555Z"
+          },
+          {
+            "role": "user",
+            "content": "User follows up with short tool-result context and new execution guidance.",
+            "timestamp": "2026-04-12T13:51:35.650Z"
+          }
+        ],
+        "droppedItems": [
+          {
+            "kind": "sidecar-batch",
+            "position": "between-turns",
+            "count": 849,
+            "eventTypes": [
+              "hook_success:PostToolUse×312",
+              "hook_success:PreToolUse×156",
+              "hook_additional_context:PreToolUse×147",
+              "hook_additional_context:PostToolUse×81",
+              "hook_success:Stop×58",
+              "system×29",
+              "file-history-snapshot×23",
+              "task_reminder×11",
+              "hook_success:PostToolUseFailure×6",
+              "hook_additional_context:PostToolUseFailure×6",
+              "hook_success:SessionStart×4",
+              "command_permissions×3",
+              "hook_additional_context:UserPromptSubmit×3",
+              "permission-mode×1",
+              "hook_system_message:SessionStart×1",
+              "hook_additional_context:SessionStart×1",
+              "deferred_tools_delta×1",
+              "mcp_instructions_delta×1",
+              "skill_listing×1",
+              "queue-operation:enqueue×1",
+              "queue-operation:remove×1",
+              "queued_command×1",
+              "edited_text_file×1"
+            ],
+            "summary": "Dropped 849 non-primary transcript events while preserving their adjacency metadata for inspection."
+          }
+        ],
+        "stats": {
+          "originalMessageCount": 1293,
+          "extractedMessageCount": 6
+        }
+      },
+      "wirePayload": {
+        "userId": "owner",
+        "sessionId": "fixture-session-end-transcript-derived-summary",
+        "path": "/workspace/redacted-project",
+        "client": "h1-harness-transcript",
+        "messages": [
+          {
+            "role": "user",
+            "content": "User provides a long request and explicit task constraints.",
+            "timestamp": "2026-04-12T13:51:11.603Z"
+          },
+          {
+            "role": "user",
+            "content": "User provides a long request with code-oriented details and explicit task constraints.",
+            "timestamp": "2026-04-12T13:51:11.603Z"
+          },
+          {
+            "role": "assistant",
+            "content": "Assistant includes an internal reasoning phase, records a non-verbal reasoning turn.",
+            "timestamp": "2026-04-12T13:51:34.267Z"
+          },
+          {
+            "role": "assistant",
+            "content": "Assistant delivers a short status update.",
+            "timestamp": "2026-04-12T13:51:35.227Z"
+          },
+          {
+            "role": "assistant",
+            "content": "Assistant coordinates 1 tool call, records a non-verbal reasoning turn.",
+            "timestamp": "2026-04-12T13:51:35.555Z"
+          },
+          {
+            "role": "user",
+            "content": "User follows up with short tool-result context and new execution guidance.",
+            "timestamp": "2026-04-12T13:51:35.650Z"
+          }
+        ],
+        "messageOffset": 6
+      },
+      "runtime": {
+        "testMode": true
+      },
+      "assertions": {
+        "responseStatus": 200,
+        "responseBodyIncludes": {
+          "skipped": false,
+          "rawTurnsRecorded": 6,
+          "extraction": "disabled"
+        },
+        "semioteWrites": 0,
+        "projectStateExists": false,
+        "watermarkCount": 6,
+        "relationCount": 0,
+        "rejectionCount": 0,
+        "sessionTurnCount": 6
+      }
+    }
+  ]
+}

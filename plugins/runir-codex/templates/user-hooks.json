@@ -1,0 +1,60 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env python3 \"__PLUGIN_ROOT__/hooks/runir_session_start.py\"",
+            "statusMessage": "Loading Rúnir session context"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env python3 \"__PLUGIN_ROOT__/hooks/runir_user_prompt.py\"",
+            "statusMessage": "Loading Rúnir memory"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env python3 \"__PLUGIN_ROOT__/hooks/runir_stop_capture.py\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env node \"__PLUGIN_ROOT__/hooks/gitnexus-hook.cjs\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env node \"__PLUGIN_ROOT__/hooks/gitnexus-hook.cjs\""
+          }
+        ]
+      }
+    ]
+  }
+}

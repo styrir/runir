@@ -1,0 +1,512 @@
+[
+  {
+    "rowId": "supersede_shadow:c92kmo2qn5vl279vjqal",
+    "incomingText": "The project Runir is currently using pi version 0.80.2.",
+    "candidateText": "The project Runir is tracking Issue #9, which focuses on shadow adjudication for non-deterministic shadow implementations.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:o4525tnk3xq2fmnm40gm",
+    "incomingText": "Assistant recommended migrating off Volta to 'mise' or 'fnm' for Node management, while noting that uninstalling Volta mid-session will break the 'pi' command because it is currently installed via Vol",
+    "candidateText": "Assistant recommended that if the user's machine is primarily used for modern Node projects and 'pi'/npm globals, they should consider switching from Volta to 'mise', 'fnm', 'nvm', or 'corepack'. Exact source list: - `git:github.com/EveryInc/compound-engineering-plugin` - `origin/main` moved `fadeea90..2c330ad3` - npm reinstall completed with `0 vulnerabilities`. Assistant recommended migrating off Volta to 'mise' or 'fnm' for Node management, while noting that uninstalling Volta mid-session will break the 'pi' command because it is currently installed via Volta shims.",
+    "wouldSignal": "currentness_cue:slot",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:7hurcfhpfjrdxu2bgqgs",
+    "incomingText": "Assistant recommended fixing the ABI mismatch by running 'npm rebuild --prefix ~/.pi/agent/npm better-sqlite3' or by switching the Pi agent environment to Node 24 LTS.\n\nSource:\nIt’s a native-module AB",
+    "candidateText": "The Pi agent's session backfill check is failing due to a native-module ABI mismatch in 'better-sqlite3'. The module was compiled for NODE_MODULE_VERSION 137 (Node 24), but the current environment is running Node v25.9.0 (NODE_MODULE_VERSION 141).\n\nSource:\nIt’s a native-module ABI mismatch.\n\nYour current Node is:\n\n```txt\nv25.9.0\n```\n\nBut Pi’s installed `better-sqlite3` native binary was compiled for an older Node ABI:\n\n```txt\ncompiled for NODE_MODULE_VERSION 137  = Node 24\ncurrent requires NODE_MODULE_VERSION 141 = Node 25\n```\n\nSo when Pi tries to run its **session backfill check** — indexing/searching old saved conversations — `better-sqlite3` can’t load.\n\nThis is usually not data loss and doesn’t mean Pi is broken overall. It mostly affects session indexing/search/backfill until rebuilt.\n\nTry:\n\n```bash\nnpm rebuild --prefix ~/.pi/agent/npm better-sqlite3\n```\n\nIf that fails, the cleaner fix is usually to run Pi under Node 24 LTS instead of Node 25, then rebuild/reinstall dependencies. Node 25 is current/odd-version and native packages often …",
+    "wouldSignal": "currentness_cue:slot",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:8nzmzkeryugnbtdadpwn",
+    "incomingText": "The Rúnir Pi extension per-turn capture timeout was updated from 10,000ms to 45,000ms in /Users/brooks/Code/pi-tools/extensions/runir-memory.ts by changing the RUNIR_CAPTURE_TIMEOUT_MS constant.\n\nExact source list:\n- `/Users/brooks/Code/pi-tools/extensions/runir-memory.ts`\n- `RUNIR_CAPTURE_TIMEOUT_MS` default: `10_000` → `45_000`\n- `/Users/brooks/Code/pi-tools/AGENTS.md`\n- Documented the 45s default and why.\n- `esbuild` bundle check\n- `prettier --check`",
+    "candidateText": "Assistant diagnosed Rúnir Inspector errors as originating from the local Pi extension at /Users/brooks/Code/pi-tools, not the Rúnir service itself. Source: Done: - Found the Rúnir Inspector errors were from the **local Pi extension** in `/Users/brooks/Code/pi-tools`, not the Rúnir service. - Fixed `extensions/runir-memory.ts` on branch `fix/runir-capture-current-turn`. - Root cause: `agent_end` capture resent the last 50 session entries; this grew/repeated payloads and hit the 10s capture timeout. It now captures only `event.messages`. Verification: - Rúnir `/health` OK. - Small `/hooks/capture` OK. - Old behavior reproduced `TimeoutError` at 10s. - Current-turn capture succeeded in ~8.7s. - `esbuild` passed. - `prettier --check` passed. - `pi list` confirms Pi loads `/Users/brooks/Code/pi-tools`. Memory: - PROJECT.md: unchanged. - PROJECT.changes.md: N/A. - oo_memory_apply: N/A. - oo_finish_work: outcome=done, 0 warnings. Discoveries: - N… The Rúnir Inspector errors were caused by the local Pi extension in /Users/brooks/Code/pi-tools, specifically an agent_end capture logic that resent the last 50 session entries, causing payload bloat and a 10s timeout.",
+    "wouldSignal": "extractor_correction:named_value",
+    "label": "correct_supersede",
+    "expected": "allow",
+    "provable": "key-dependent",
+    "classNote": "value/status succession (Pi-ext timeout) — proves only via fact-key fuel"
+  },
+  {
+    "rowId": "supersede_shadow:o68a8l5fw24pztxepf14",
+    "incomingText": "Project Runir: The ~/.volta directory is now safe to delete as no boot paths reference it. The launchd plist PATH still contains ~/.volta/bin, but it is harmless as nothing resolves through it.",
+    "candidateText": "Project Runir: Production launchd wrapper updated to use Homebrew node v26.4.0 instead of Volta node 24.14.0. The wrapper now resolves node via /opt/homebrew/bin/node with a RUNIR_NODE_BIN override and a fail-loud fallback.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:cfhcoe1hsrs8z7g6rxvq",
+    "incomingText": "Project Runir: The Node-floor smoke recipe in the release evidence uses a downloaded node tarball, ensuring the beta-gate procedure remains functional without Volta.",
+    "candidateText": "Project Runir: Production launchd wrapper updated to use Homebrew node v26.4.0 instead of Volta node 24.14.0. The wrapper now resolves node via /opt/homebrew/bin/node with a RUNIR_NODE_BIN override and a fail-loud fallback.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:bumj8pu8pjbzqsn8td5l",
+    "incomingText": "Project Runir: The remaining program horizon consists of OM-2 (intents), OM-4/5/6 (pi-tools adapter), OM-7 (Story Probe), and the Archeion P0 Leit-side handshake.",
+    "candidateText": "Project Runir: Documentation updated in src/recall/AGENTS.md (Local Contracts) to include the budget-projection contract. Other docs (service-architecture.md, zed-01-beta-scope.md) remain unchanged pending OM-2 intent landing.\n\nExact source list:\n- **`74630d2`** — `feat(om): budget-aware projection — optional budgetTokens fits the recall payload depth-aware; no-budget path byte-identical (Rúnir-tfxt.1)` (8 files, +539/−7)\n- **`6b485dd`** — `feat(om): recognize pi as a client value (Rúnir-tfxt.3)` (1 line)\n- **Parse site**: `body.budgetTokens` is parsed in `orchestrateRecall` (`src/recall/orchestrator/recall-orchestrator.ts:490`), not the route — post-qjn4.2 the route passes `body` 1:1 and all optional-field parsing (`nowMs`, `sessionId`…) lives in the orchestrator; I followed that idiom. Guard is `resolveBudgetTokens` (exported, `recall-selection.ts`): finite positive number floored, everything else → `undefined`, never throws.\n- **Fit algorithm** (`fitSelectionToBudget`): uniform depth ladder deepest-first (`full→l1→l0` from the intent depth; rung 1 reproduces today's rendering exactly), then prefix-only tail drop at the shallowest depth — degrade EVERY item before dropping ANY; kept set is always a prefix of the ranked selection; empties to zero rather than exceed the ceiling. No budget-filling upgrades (\"ceiling, not target\").\n- **Token cost**: reused the codebase's existing chars/4 estimator (`approximateTokens`, now exported from `preference-packet.ts`), measured on the **real wrapper** (`formatRecallInjectionFromRendered`), so the ceiling covers what the client receives, overhead included.\n- **Scope**: applies to deterministic-plain + hybrid paths; the retired `session_opener` intent is excluded (its payload isn't the rendered-lines injection — respects the opener-retirement boundary). Audit surfaced as optional `budgetFit` response field (added to the strict zod contract + `RecallRequest` type); dropped items are never access-tracked.\n- **No-refill rule** (from Codex): a budget-emptied deterministic recall returns an honest empty `deterministic_plain` (`prependContext:null, count:0, budgetFit`) instead of falling through to hybrid.\n- Targeted vitest: **6 files, 107/107 green** (budget-fit 19, selection-extended, orchestrator incl. new no-refill regression, preference-packet, recall-contract, recall-client).\n- `npm run typecheck` exit 0 on the final combined tree; eslint clean on all touched files (full-repo lint failures during the wave were the other agent's in-flight `vault-exporter.ts`, since landed as `586df1d`; I never touched it).\n- Full suite NOT run (other agent owns it this wave).\n- Live replay harness run (needs restart — unit enforcement used instead, as sanctioned).\n- GitNexus index now stale post-commit; did not run `analyze` (not needed for this packet, other agent mid-flight).\n- DOX: `src/recall/AGENTS.md` Local Contracts updated with the budget-projection contract. `docs/agent-guidance/service-architecture.md` and `docs/zed-01-beta-scope.md` intentionally unchanged — no new endpoint, one optional field; OM-epic docs should consolidate when tfxt.2 (intents) lands.\n- No push, no `bd` commands (per hard rules) — beads tfxt.1/tfxt.3 close-out is left to the orchestrator.</result>",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:jocvybtwcozz2a1na6vx",
+    "incomingText": "The pi-tools repository is installed as a path package at /Users/brooks/Code/pi-tools, allowing live source edits via Pi /reload without requiring a reinstall.",
+    "candidateText": "The pi-tools repository is local-only and has no git remote configured, which is a critical constraint for backup planning.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:ay4th5phhqk4hdccsgd2",
+    "incomingText": "Agent 'Simplification cleanup review' identified six refactoring opportunities in Runir to reduce code duplication and improve maintainability.\n\nSource:\n<task-notification>\n<task-id>aaa7075d5d2dcc7c2</task-id>\n<tool-use-id>toolu_01G5ygrhVAmabFSs4pY3Gv3X</tool-use-id>\n<output-file>/private/tmp/claude-501/-Users-brooks-Code-runir/9a664775-e19f-495c-985b-0b077703f781/tasks/aaa7075d5d2dcc7c2.output</output-file>\n<status>completed</status>\n<summary>Agent \"Simplification cleanup review\" finished</summary>\n<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>\n<result>## Simplification Findings\n\n**File: `/Users/brooks/Code/runir/src/storage/surreal/continuity-gap-store.ts`**\n\n**1. Line 244-272 / 287-306: upsertContinuityGap — Redundant field-list duplication in CREATE and UPDATE**\n\nThe CREATE a…\n\nExact source list:\n- Extract items from state (different source lists)\n- Check `if (items.length === 0) return null`\n- Build dedupeKey as `kind:${normalizedListFingerprint(items)}`\n- Return identical ContinuityGapWrite shape with identical evidence (semioteEvidenceRefs), confidence (weak), status (new), and score\n- **continuity-gap-store.ts § upsertContinuityGap**: Duplicate 16-field SQL fragments (CREATE/UPDATE) — unify via shared template or pre-computed field list.\n- **continuity-report.ts § mdList/htmlList**: Duplicate empty/map/join pattern — extract parameterized formatList helper.\n- **continuity-report.ts § render* functions**: Duplicate gap/evidence iteration in markdown vs HTML — extract gap-to-lines model builder with rendering strategies.\n- **continuity-report.ts § resolveLookbackDays/resolveReportDir**: Duplicate three-tier config resolution — extract generic resolveConfig helper.\n- **continuity-gaps.ts § detectUnfiledIntent/detectStartedUnfinished**: Duplicate 48-line detector shape — extract buildRollingGap helper with kind/items/summary params.\n- **continuity-gaps.ts § detectForProject**: Minor over-initialization of fired Map — simplify inline or use object instead.</result>",
+    "candidateText": "Project Rúnir: The adversarial review of the OM-4 diff (task baa4v9pcp) completed successfully with exit code 0. Project Runir is currently in Round 4 of the review process, focusing on a confirmation pass for the weak-anchor grade system.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:0wxv83rz82in0fh73jjr",
+    "incomingText": "Project Rúnir: The workflow for closing Rúnir-tfxt.4 involves deduping and applying surviving fixes from the /simplify agents, re-verifying, committing in pi-tools, and performing a beads sync. Project Runir: The 'Rúnir-tfxt.4' task is closed and removed from the 'bd ready' queue following a Dolt-push re-import. The Rúnir-tfxt.6 task will be closed with a beads sync after the OM-6 diff processing is complete.",
+    "candidateText": "Project Rúnir: The adversarial review of the OM-4 diff (task baa4v9pcp) completed successfully with exit code 0. Project Runir is currently in Round 4 of the review process, focusing on a confirmation pass for the weak-anchor grade system.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:ketkpwmkb0cm5dz5yvse",
+    "incomingText": "The assistant is waiting for the completion of three remaining /simplify agents (simplification, efficiency, altitude) before applying any changes to the codebase. Assistant is currently working on the 'altitude' agent task, after which it will apply two previously accepted simplification fixes and perform re-verification.",
+    "candidateText": "Assistant is currently waiting on the Codex architecture review (ID: baa4v9pcp) before proceeding with the /simplify pass, final commit, and task closure.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:xhp4cmkfcjmx13vv6706",
+    "incomingText": "Project Runir: Live smoke test against production passed with a 2092-character projection passed into `compact()`.",
+    "candidateText": "Project Runir: Regression tests for OM-5 (14/14) and OM-4 (18/18) are passing.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:dw8ymlko3qgomj3k8o62",
+    "incomingText": "Assistant is updating the harness for new semantics, specifically: auto-completing compact stub, failure/cooldown case, stale-refresh case, and reworked guard/watchdog cases.",
+    "candidateText": "Assistant is currently waiting on the Codex architecture review (ID: baa4v9pcp) before proceeding with the /simplify pass, final commit, and task closure.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:qeqxin20q6mxxsggarj3",
+    "incomingText": "Assistant is currently running four /simplify agents on the OM-5 diff. The workflow is: wait for agent reports, dedup, apply surviving changes, re-verify, commit pi-tools, and close Rúnir-tfxt.5 with a beads sync.",
+    "candidateText": "Assistant is currently waiting on the Codex architecture review (ID: baa4v9pcp) before proceeding with the /simplify pass, final commit, and task closure.",
+    "wouldSignal": "deterministic_text",
+    "label": "correct_supersede",
+    "expected": "allow",
+    "provable": "key-dependent",
+    "classNote": "status succession (waiting-on-review → running /simplify) — no shared anchor, not near-verbatim; proves only via fact-key fuel"
+  },
+  {
+    "rowId": "supersede_shadow:agy3vaypeakydz7k9421",
+    "incomingText": "Assistant is finalizing the OM-5 implementation in pi-tools after applying three small fixes: shared payload/extraction helpers, removal of unused 'expiresAt' logic, accessor hoisting, and documentation updates for 'resetBands'.",
+    "candidateText": "Assistant is currently running four /simplify agents on the OM-5 diff. The workflow is: wait for agent reports, dedup, apply surviving changes, re-verify, commit pi-tools, and close Rúnir-tfxt.5 with a beads sync.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:4ynacvsp4info6mshovm",
+    "incomingText": "Project Runir: An 'om7' full-mode scored run is currently executing in the background, involving a fresh isolated service/tenant, one capture/extraction pass, two recall fetches, and 30 total model calls (2 summarizer + 28 answer).",
+    "candidateText": "Project Runir: The OM epic is reduced to one open child task, 'Rúnir-tfxt.7' (the Story Probe).",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:uabjh20mel3famlgior4",
+    "incomingText": "Project Runir: The assistant identified a multi-close revert race condition when closing beads, requiring the item-8 decision on the epic and the closing of both beads to be handled in a single invocation.",
+    "candidateText": "Project Runir: Pending Codex architectural review (ID: bidwfprbl). Next steps include fixes, a /simplify pass, commit, and Rúnir-tfxt.5 closure with beads sync.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:ele7lq0nyrroci0g5ppm",
+    "incomingText": "Assistant is holding all code fixes until the other three efficiency lanes report to allow for deduplication of tasks.",
+    "candidateText": "Assistant is currently running four /simplify agents on the OM-6 diff to deduplicate and apply findings, followed by re-verification and committing pi-tools.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:w86qf7ub83c0j8u3rw0a",
+    "incomingText": "New technical gotcha: requesty 400s occur with max_tokens=1 on reasoning-capable models because reasoning tokens count against the budget; the probe now uses 256 tokens.",
+    "candidateText": "New technical gotcha: Reasoning-capable models return 400 errors on max_tokens=1 because reasoning tokens count against the budget; the probe now uses 256 tokens.\n\nSource:\nThe durable handoff doc is already committed and pushed ([2026-07-03-om7-story-probe-handoff.md](docs/handoffs/2026-07-03-om7-story-probe-handoff.md), in `9ed3056`) — here is the pasteable session handoff that goes with it, same shape as the one that opened this session:\n\n---\n\n**Pickup this handoff work.**\n\nHandoff doc: `docs/handoffs/2026-07-03-om7-story-probe-handoff.md` — supersedes the OM-4/5/6 handoff's resume list; everything else there stands.\n\n**State:** runir main @ `9ed3056`, in sync with origin, Dolt remote synced, GitNexus reindexed, tree clean except the pre-existing untracked `history.txt`. Prod `:7700` untouched and healthy — the probe ran only against isolated `om7_*` spawns. pi-tools untouched (master @ `fd7f885`). Beads: `Rúnir-tfxt.7` closed with evidence, **OM epic `Rún…\n\nExact source list:\n- **ARCH-P0 (`Rúnir-78sy.1`)** — S-1/S-2 seam ratification; needs a **Leit-repo session** against `leit/docs/advisory/runir-archeion-v2-continuity-seam.md`. Blocks 78sy.3/.4/.5.\n- **`Rúnir-78sy.6`** — exporter operability (CLI runner or 202+poll, per-N progress, batch the ~4,380 `fetchMentionCount` edge-scans).\n- **pn1l re-adjudication** at n≥30–50 diverged rows (accrual ≈18/10 days from 2026-07-03) — `scripts/g004/shadow_adjudication_report.ts`, labels + verdict on `Rúnir-pn1l.13.3`; flip stays default-OFF, architect-gated.\n- **`Rúnir-w2gq`** — extractor re-eval, still awaiting the user naming ONE approved model.\n- **`Rúnir-51r2`** — compaction-projection selection recency bias + denser holdout probe (ranking work: Codex review + attribution-replay gate mandatory).",
+    "wouldSignal": "deterministic_text",
+    "label": "correct_supersede",
+    "expected": "allow",
+    "provable": "key-dependent",
+    "classNote": "near-verbatim dedup (requesty max_tokens=1 gotcha reworded) — U3 CALIBRATION DOWNGRADE: distinctive-token Jaccard is 0.094 (13 shared / 138 union; candidateText carries a large appended handoff doc), which is BELOW every block-row Jaccard including a verbatim-duplicate block row at Jaccard 1.0 (supersede_shadow:o4525tnk3xq2fmnm40gm) — no floor cleanly separates this row from the block set, so per U3-brief §3 it retires via factKey equality in prod (factKey ~98% populated) instead of near-verbatim; keyless it correctly reports unproven"
+  },
+  {
+    "rowId": "supersede_shadow:8z6k5gh9bnrb66ybfoll",
+    "incomingText": "The continuity builder uses the x46j dedup_state lexicographic-ISO timestamp pattern for cursors, ensuring per-project processing of semiotes newer than the last build.",
+    "candidateText": "The continuity builder is restricted to enrolled projects only (iterating project_enrollment rows) and will not fabricate seam keys for unenrolled projects; enrollment is managed via a v1 operator CLI.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:go23tahpjek3es1888oi",
+    "incomingText": "Task b1uxruce6, 'Launch Codex adversarial review of the OM-4 brief', completed successfully with exit code 0. Project Runir: The Codex adversarial review of the OM-5 brief (task by7cokr3v) completed successfully with exit code 0. Task bidwfprbl (Codex adversarial review of the OM-5 diff) completed successfully with exit code 0; output saved to /private/tmp/claude-501/-Users-brooks-Code-runir/65e562a1-bcd2-4b0d-8f4a-b3e3286bf61f/tasks/bidwfprbl.output. Task bgljlcinf, 'Launch Codex adversarial review of the OM-6 brief', completed successfully with exit code 0. Task bqwsm0hkm, 'Launch Codex arch review of the OM-6 diff', completed successfully with exit code 0. Project Runir: The 'Codex adversarial review of the extraction re-spec addendum' task (bj8gfw9po) completed successfully with exit code 0. Task bo4rnyw4p ('Codex GPT-5.5 adversarial brief review') completed with exit code 0; output is located at /private/tmp/claude-501/-Users-brooks-Code-runir/fbf72698-e026-4740-8303-9c8d47fb301c/tasks/bo4rnyw4p.output.",
+    "candidateText": "Project Runir: Pending Codex architectural review (ID: bidwfprbl). Next steps include fixes, a /simplify pass, commit, and Rúnir-tfxt.5 closure with beads sync.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede magnet: distinct labeled id (bidwfprbl vs bj8gfw9po)"
+  },
+  {
+    "rowId": "supersede_shadow:impxm7cmjebb7ix4dg0e",
+    "incomingText": "Project Runir: Upon Codex acceptance of the re-review, the build phase will commence using the extraction re-spec addendum as the contract. The Codex re-review of the revised addendum for project Rúnir is complete (exit code 0) and accepted with no residuals; the addendum is now the approved build contract.",
+    "candidateText": "Project Runir: Pending Codex architectural review (ID: bidwfprbl). Next steps include fixes, a /simplify pass, commit, and Rúnir-tfxt.5 closure with beads sync.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:csqfexjya6e11yqgmcu0",
+    "incomingText": "The project documentation at /Users/brooks/Code/runir/docs/ideation/2026-07-03-archeion-v2-phase2-extraction-respec.md was updated to address four findings regarding explicit-project rows, forced-path snapshots, cursor advancement on LLM failure, and CAS race handling.",
+    "candidateText": "Project Rúnir continuity state (ARCH-P2) is unblocked by ratification. The extraction logic must be re-specified to use turn-based capture and the maintenance scheduler, replacing the previous session-end summarization anchor.",
+    "wouldSignal": "extractor_correction:named_value",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:cy4mm1mc2ckfedgxyf2k",
+    "incomingText": "The assistant is using the model claude-opus-4-8 for the current session.",
+    "candidateText": "The assistant is waiting for the completion of three remaining /simplify agents (simplification, efficiency, altitude) before applying any changes to the codebase. Assistant is currently working on the 'altitude' agent task, after which it will apply two previously accepted simplification fixes and perform re-verification.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:1xh5w6xosmpm51sme9l2",
+    "incomingText": "Project Runir: The DOX pass for the 78sy.3 implementation is complete, including updates to canon §4 (Step 4.5 builder), operations-env (3 env vars), storage DOX (continuity tables and the workspaceId=\"-\" canonicalization invariant), and the root AGENTS.md Test Dependencies section (distinguishing native default vs. Docker slow lanes to prevent incident recurrence). Project Runir committed changes for Rúnir-78sy.3 as commit 4b5c17c, which includes code, tests, docs, and DOX, excluding history.txt. Project Rúnir version 78sy.3 (commit 4b5c17c) is pushed to main, with Dolt beads synced and all four Codex-verified fixes and seven simplify cleanups applied.",
+    "candidateText": "Project Runir: The post-implementation pipeline consists of: Codex code-review gate, /simplify command, DOX pass, and closeout. The Runir project is in the final closeout phase, with only the Codex code review remaining to be completed. The Rúnir build pipeline sequence is: Scout findings review -> contract decision resolution -> build brief synthesis -> Codex GPT-5.5 brief review -> Sonnet build -> Codex code review -> Opus 4.8 closeout (nits, gates, DOX, commit, bd close, dolt+git push) -> restart :7700 -> live-smoke.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:licedtb8tphk5h6halgn",
+    "incomingText": "Project Runir: The simplify-apply lane is applying 7 code quality improvements (extractId reuse, CAS-return spread, mapProjectStateRow hoist, appendUnique/unionArrays merge, uniform carryForwardFields, Promise.all for 3 independent per-project reads, and extracting project:/git: key formats into shared helpers).",
+    "candidateText": "Project Runir: The post-implementation pipeline consists of: Codex code-review gate, /simplify command, DOX pass, and closeout. The Runir project is in the final closeout phase, with only the Codex code review remaining to be completed. The Rúnir build pipeline sequence is: Scout findings review -> contract decision resolution -> build brief synthesis -> Codex GPT-5.5 brief review -> Sonnet build -> Codex code review -> Opus 4.8 closeout (nits, gates, DOX, commit, bd close, dolt+git push) -> restart :7700 -> live-smoke.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:xvgqsvjlgxekge7m8oxt",
+    "incomingText": "Project Runir: The closeout plan for 78sy.3 involves a multi-close race workaround: batch-closing Rúnir-78sy.3 plus the superseded April quintet (850i, l768, v3mp, pnq9, 6wc0) in a single 'bd close' command.",
+    "candidateText": "Project Runir: The assistant identified a multi-close revert race condition when closing beads, requiring the item-8 decision on the epic and the closing of both beads to be handled in a single invocation.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:ovs1wbwsau74fqruzi59",
+    "incomingText": "Project Rúnir architecture update: Four detectors (orphaned_change, bead_stale, doc_drift, stale_agent_run) are collector-blocked and gated on Leit's S-2 push; they are not part of the current build scope. The Rúnir-78sy.9 epic is complete (status=closed). The remaining blocker for Phase 3b detectors is now solely the Leit collector (leit-31p), which is now unblocked on the Runir side because the evidence endpoint is live. Rúnir-78sy.10 (collector-blocked continuity-gap detectors) is blocked by the completion of the Leit-31p collector job.",
+    "candidateText": "Project Rúnir architecture update: Rúnir-78sy.4 (ARCH-P3) introduces a 'continuity_gap' table and three 'ship-now' detectors (unfiled_intent, started_unfinished, missing_handoff) operating on Rúnir-resident evidence.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:xrltxtp8fukep95bx48a",
+    "incomingText": "Assistant identified a major bug in src/lifecycle/archive/continuity-report.ts:84 where the content hash is calculated over a reduced object, missing fields like dedupeKey, candidateTaskPreview, relatedWorkItems, and sourceId. Fix: include all contract/rendered fields in the sanitized hash model.",
+    "candidateText": "Assistant identified a major bug in src/lifecycle/archive/continuity-report.ts:419 where gaps-pending projects are incorrectly skipped in subsequent runs because the content hash remains identical to the initial 'pending' state. Fix: never skip when gapsPending is true; do not advance report state for pending projects.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede magnet: distinct file:line (continuity-report.ts:84 vs continuity-report.ts:419)"
+  },
+  {
+    "rowId": "supersede_shadow:no80j2ae3kkq8ibxpahs",
+    "incomingText": "Assistant identified a major bug in src/lifecycle/archive/continuity-report.ts:45 where elidePaths leaks parent directory names when paths contain spaces. Fix: replace regex with a path scanner that handles spaces or fail closed to '[PATH]'.",
+    "candidateText": "Assistant identified a major bug in src/lifecycle/archive/continuity-report.ts:84 where the content hash is calculated over a reduced object, missing fields like dedupeKey, candidateTaskPreview, relatedWorkItems, and sourceId. Fix: include all contract/rendered fields in the sanitized hash model.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:puftjtolj836d5fev592",
+    "incomingText": "Assistant is waiting for reuse and altitude agents to finish before applying the identified efficiency improvements to Runir.",
+    "candidateText": "Assistant is holding all code fixes until the other three efficiency lanes report to allow for deduplication of tasks.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:exs2j2b2lnjmnxno69t7",
+    "incomingText": "Project Runir: The 'Codex re-confirm' task for diff 78sy.9 completed successfully (exit code 0).",
+    "candidateText": "Project Runir: The DOX pass for the 78sy.3 implementation is complete, including updates to canon §4 (Step 4.5 builder), operations-env (3 env vars), storage DOX (continuity tables and the workspaceId=\"-\" canonicalization invariant), and the root AGENTS.md Test Dependencies section (distinguishing native default vs. Docker slow lanes to prevent incident recurrence). Project Runir committed changes for Rúnir-78sy.3 as commit 4b5c17c, which includes code, tests, docs, and DOX, excluding history.txt. Project Rúnir version 78sy.3 (commit 4b5c17c) is pushed to main, with Dolt beads synced and all four Codex-verified fixes and seven simplify cleanups applied.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:vfamj2uz1932sbkgjawi",
+    "incomingText": "Project Runir: compareAndSwapProjectState in surreal-store.ts:1736-1743 incorrectly synthesizes 'version_mismatch' for all CREATE failures without discriminating between race conditions and real errors. The fix is to port the pattern from continuity-state-store.ts:563-584, which correctly re-reads and rethrows. This is safe as there are zero production callers of compareAndSwapProjectState.\n\nExact source list:\n- **Rúnir-sfzl** — smallest, safest, zero-caller-impact port of an already-proven fix pattern; do first as a quick win.\n- **Rúnir-ekos** — mechanical fix once scoped, but now has 2 newly-discovered live bugs (novelty query, DAG cycle guard) that should be fixed as part of this bead rather than left latent — moderate size.\n- **Rúnir-djs6** — no code gap identified, only a verification task; sequence after ekos/sfzl since it just needs a live probe, ideally after 78sy.6's stall fix (not blocking, but higher-value once available).\n- **Rúnir-imaf.5** — hold/do not build against this batch; it needs a design decision (relation semantics) before any code, and forcing a cheap wire-up now would contradict the existing analysis. Recommend routing to a design/interview step separately rather than batching it with the other three mechanical fixes.</result>",
+    "candidateText": "Project Runir: An exhaustive audit of all ORDER BY sites in /src/ (35+ locations) confirmed zero broken queries regarding the SurrealDB v3 requirement that ordered idioms must be present in the projection. Exact source list: - `ORDER BY id` and `ORDER BY ... rand()` patterns: none exist anywhere in `src/` — not applicable. - `src/capture/`: contains no ORDER BY queries of its own (delegates to `memory-query.ts`, already covered above). - `src/recall/`: fully covered via `memory-query.ts` (the only file under `recall/` with ORDER BY). Runir project-wide audit: An exhaustive sweep of 35+ sites in src/ (including vault-exporter, entity-repair, phase2-store, surreal-store, memory-query, staleness-pass, session-turn-store, and continuity stores) confirmed zero remaining instances of the 'ORDER BY column not in projection' error class.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:tdvfffmzk95f83skrqy9",
+    "incomingText": "Project Runir: Two new live bugs identified in the 'ekos' audit: (1) session-salience.ts:184 calls queryTopMemoriesForNovelty without a tableName, causing it to query the legacy 'memories' table; (2) staleness-pass.ts:352 calls wouldCreateCycle without a tableName, causing the DAG cycle-guard to walk the wrong table chain.\n\nExact source list:\n- **Rúnir-sfzl** — smallest, safest, zero-caller-impact port of an already-proven fix pattern; do first as a quick win.\n- **Rúnir-ekos** — mechanical fix once scoped, but now has 2 newly-discovered live bugs (novelty query, DAG cycle guard) that should be fixed as part of this bead rather than left latent — moderate size.\n- **Rúnir-djs6** — no code gap identified, only a verification task; sequence after ekos/sfzl since it just needs a live probe, ideally after 78sy.6's stall fix (not blocking, but higher-value once available).\n- **Rúnir-imaf.5** — hold/do not build against this batch; it needs a design decision (relation semantics) before any code, and forcing a cheap wire-up now would contradict the existing analysis. Recommend routing to a design/interview step separately rather than batching it with the other three mechanical fixes.</result>",
+    "candidateText": "Project Runir: An exhaustive audit of all ORDER BY sites in /src/ (35+ locations) confirmed zero broken queries regarding the SurrealDB v3 requirement that ordered idioms must be present in the projection. Exact source list: - `ORDER BY id` and `ORDER BY ... rand()` patterns: none exist anywhere in `src/` — not applicable. - `src/capture/`: contains no ORDER BY queries of its own (delegates to `memory-query.ts`, already covered above). - `src/recall/`: fully covered via `memory-query.ts` (the only file under `recall/` with ORDER BY). Runir project-wide audit: An exhaustive sweep of 35+ sites in src/ (including vault-exporter, entity-repair, phase2-store, surreal-store, memory-query, staleness-pass, session-turn-store, and continuity stores) confirmed zero remaining instances of the 'ORDER BY column not in projection' error class.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:hl1fpwptldfs5mjutgzn",
+    "incomingText": "Project Runir: `session-salience.test.ts` (line 196) asserts that emitted SQL targets `FROM semiote`. The test remains valid even if the 7th table argument is removed from `scoreSessionSalience` because `queryTopMemoriesForNovelty` now defaults to `PRIMARY_MEMORY_TABLE`.",
+    "candidateText": "Project Runir: The `writeWithArbitration` function in `src/storage/writes/write-arbitrator.ts` now requires an explicit `targetTable` argument. Callers omitting `targetTable` previously defaulted to the legacy `memories` table, but now default to `PRIMARY_MEMORY_TABLE` (which routes to `semiote`).",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:epp4ly6ns8rv42zuiy4v",
+    "incomingText": "Project Runir: `PRIMARY_MEMORY_TABLE` is defined in `domain/memory/boundary.ts` and does not create an import cycle.",
+    "candidateText": "Project Runir: The `writeWithArbitration` function in `src/storage/writes/write-arbitrator.ts` now requires an explicit `targetTable` argument. Callers omitting `targetTable` previously defaulted to the legacy `memories` table, but now default to `PRIMARY_MEMORY_TABLE` (which routes to `semiote`).",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:z7ssiqkr7jfnjzgtgu42",
+    "incomingText": "Assistant is currently executing the '/simplify' workflow on the working-tree diff and plans to incorporate Codex's minor feedback, specifically tightening a comment at write-arbitrator.ts:1583.",
+    "candidateText": "Assistant is currently running four /simplify agents on the OM-6 diff to deduplicate and apply findings, followed by re-verification and committing pi-tools.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:hn68qrmdlc3o88oc40e5",
+    "incomingText": "Runir project code review finding: Admin routes contain a thrice-pasted B5 comment. The fix is to consolidate this into a single rationale with short references to reduce redundancy.\n\nExact source list:\n- **Reuse / Efficiency:** clean.\n- **Apply:** (1) ALT-1 — the port left the `!created` fallback and `.catch` discriminator duplicating re-read-and-shape logic; the sibling's 78sy.8 S1 cleanup extracted a local `reportVersionMismatchFromReRead` helper, and the port should mirror that too (per-store local copy, no cross-import). (2) ALT-2 — two of four `targetTable` sites in `arbitrateWrite` got the `?? PRIMARY_MEMORY_TABLE` treatment, two still pass bare `input.targetTable`; make all four consistent (provably behavior-identical now that callee defaults are `PRIMARY_MEMORY_TABLE`). (3) SIMP-1 — inline `.catch` comment restates the JSDoc; keep one. (4) SIMP-3 — the thrice-pasted B5 comment in admin routes becomes one rationale + short refs. (5) Codex MINOR-1 — tighten the not-quite-true \"behavior-identical\" comment.\n- **Skip:** SIMP-5 (the per-site one-line marker comments are brief-mandated), SIMP-2 (subsumed by ALT-1 / sibling-parity), Codex MINOR-2 (SQL-level assertion is the acceptance behavior).",
+    "candidateText": "Runir project code review finding: In src/storage/writes/write-arbitrator.ts, the arbitrateWrite function inconsistently applies the 'input.targetTable ?? PRIMARY_MEMORY_TABLE' pattern across its four call sites. Two sites were updated to use the explicit fallback, while two were left as bare 'input.targetTable'. The fix is to make all four sites consistent.\n\nSource:\n<task-notification>\n<task-id>ada59675cde9a4096</task-id>\n<tool-use-id>toolu_01RaB1wzqa1ESqcJ9HFeie7E</tool-use-id>\n<output-file>/private/tmp/claude-501/-Users-brooks-Code-runir/aebda631-8768-4671-b2f3-a12f982983e1/tasks/ada59675cde9a4096.output</output-file>\n<status>completed</status>\n<summary>Agent \"Simplify review: altitude\" finished</summary>\n<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>\n<result>All consistent. `memory-query.ts` imports directly from `../../domain/memory/types.js` too (seen earlier). All good, no inconsistency here.\n\nThis completes my review of the diff at the \"right altitude\" per the brief's scope.\n\n## Findi…",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:ivimfwqizh1r18kld7pl",
+    "incomingText": "Project Runir: The top-level 'hexis/' directory contains orphaned external-tool scaffold and is not read by any runtime code; all 'hexis/' references in the repo resolve to 'src/hexis/*.ts'. The project decision is to keep 'hexis/' gitignored and document it at priority P4.",
+    "candidateText": "Project Runir: The OM-6 implementation (Altitude Angle) in extensions/runir-memory.ts is verified as clean, with stateless helpers at the module level and stateful tracing at the factory level.\n\nExact source list:\n- **Module/factory seam**: Stateless id-expansion helpers (module level) + stateful tracing wrapper (factory level). Clean separation.\n- **Formatting cohesion**: `formatLineageChain` and `formatRecallResult` are tightly composed; both apply the UNTRUSTED wrapper correctly.\n- **Protocol strictness**: 404 vs empty-body distinction, lineage payload validation, and explicit throw-vs-text split are all justified with comments.\n- **Lineage consultation**: Correctly consults lineage before declaring not-found, even when not explicitly requested.\n- **Error shaping**: Command vs tool paths properly differentiate fail-soft (command) from fail-loud (tool).\n- **Tool schema safety**: Explicit `prepareArguments` validation and raw JSON Schema literal to avoid runtime type coercion bugs.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:s2vrfqo0jb1m8xvwep4u",
+    "incomingText": "Project Runir: The 'Rúnir-tp2w.3' task to strip environment knobs is complete. The knobs were removed from '.env', '.env.example', 'ecosystem.config.cjs', and the production launchd plist. The code now null-coalesces to defaults, and the change is behavior-preserving.",
+    "candidateText": "Project Runir: The ~/.volta directory is now safe to delete as no boot paths reference it. The launchd plist PATH still contains ~/.volta/bin, but it is harmless as nothing resolves through it.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:hma18by67abbbc57uxib",
+    "incomingText": "Project Runir: The 'Rúnir-noem1.4.5' task involves renaming the '0.6' literal at 'src/recall/policy/noema-retrieval-policy.ts:90'. The existing test 'noema-retrieval-policy.test.ts:69-78' is insufficient because it only asserts the 'rankingExplanation' marker and not the numeric score value.",
+    "candidateText": "Project Runir: An exhaustive audit of all ORDER BY sites in /src/ (35+ locations) confirmed zero broken queries regarding the SurrealDB v3 requirement that ordered idioms must be present in the projection. Exact source list: - `ORDER BY id` and `ORDER BY ... rand()` patterns: none exist anywhere in `src/` — not applicable. - `src/capture/`: contains no ORDER BY queries of its own (delegates to `memory-query.ts`, already covered above). - `src/recall/`: fully covered via `memory-query.ts` (the only file under `recall/` with ORDER BY). Runir project-wide audit: An exhaustive sweep of 35+ sites in src/ (including vault-exporter, entity-repair, phase2-store, surreal-store, memory-query, staleness-pass, session-turn-store, and continuity stores) confirmed zero remaining instances of the 'ORDER BY column not in projection' error class.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:za77z0d409pmp7bycnc9",
+    "incomingText": "Project Runir: The 'Rúnir-mp09' task identified a gap in 'plugins/runir-claudecode/hooks/runir-session-end-worker.sh' testing. Existing tests hardcode the status code to '200', failing to cover non-2xx error paths or transport failures (http_code='000').",
+    "candidateText": "Project Runir: The DOX pass for the 78sy.3 implementation is complete, including updates to canon §4 (Step 4.5 builder), operations-env (3 env vars), storage DOX (continuity tables and the workspaceId=\"-\" canonicalization invariant), and the root AGENTS.md Test Dependencies section (distinguishing native default vs. Docker slow lanes to prevent incident recurrence). Project Runir committed changes for Rúnir-78sy.3 as commit 4b5c17c, which includes code, tests, docs, and DOX, excluding history.txt. Project Rúnir version 78sy.3 (commit 4b5c17c) is pushed to main, with Dolt beads synced and all four Codex-verified fixes and seven simplify cleanups applied.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:saen889ls2np77spfg9r",
+    "incomingText": "Project Runir hygiene-sweep: The exception for historical records in the grep-sweep is inconsistently applied. While Verification correctly includes docs/handoffs/ at .pipeline/hygiene-batch/brief.md:62, H2a, H2c, and Acceptance still restrict historical records to docs/analysis/ only, failing to account for docs/handoffs/2026-06-04-semantic-ledger-l2-screen-split-window-handoff.md.",
+    "candidateText": "Project Runir hygiene-sweep: H2d now mandates DELETE for all five g004 split-window wrappers, justified by their role as arm-comparison wrappers (shelved lever x41m.12), with git history and docs/analysis preserved as evidence. scripts/AGENTS.md does not require updates as it does not index these wrappers. Runir hygiene build key rulings: attribution telemetry is preserved, all five split-window wrapper scripts are deleted, and 78ge is resolved as keep-gitignored and documented in root AGENTS.md.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:3bozmlhurvlpw6rdl01u",
+    "incomingText": "Project Runir hygiene-sweep: Acceptance 1 now specifies no RUNTIME code changes, maintaining H1c as a test-only shape with debugTimings unpinned, as documented at .pipeline/hygiene-batch/brief.md:66.",
+    "candidateText": "Project Runir hygiene-sweep: The exception for historical records in the grep-sweep is inconsistently applied. While Verification correctly includes docs/handoffs/ at .pipeline/hygiene-batch/brief.md:62, H2a, H2c, and Acceptance still restrict historical records to docs/analysis/ only, failing to account for docs/handoffs/2026-06-04-semantic-ledger-l2-screen-split-window-handoff.md.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:7ac4a20i0k459jii7gvw",
+    "incomingText": "Task bumib4tnx: The 'test:ci' final gate passed with 0 failures (3838 tests passed, 54 skipped, 7 todo; 325 files passed, 10 skipped). Skipped/todo counts are consistent with the pre-existing baseline. Task bly4ezhko: The final-test-ci step passed with 3840 tests passed and 0 failed, including 2 new tests from failure-path coverage. 10 files and 54 tests remain skipped due to pre-existing Docker/native-service dependencies documented in test/AGENTS.md and root AGENTS.md.",
+    "candidateText": "Task bly4ezhko: The H3b-verify step for the hygiene-batch build.jsonl process passed, confirming that test/claude-plugin-session-end-lifecycle.test.ts now runs 5/5 tests (3 original happy-path tests and 2 new failure-path tests). Task bly4ezhko (hygiene-batch build.jsonl verification) step H5-verify passed: npx eslint test/ is clean, npx tsc --noEmit is clean, and vitest run on 4 modified test files shows 16 passed and 3 skipped tests. Task bly4ezhko (hygiene-batch build.jsonl verification) step H6-verify passed on 2026-07-04T00:53:00Z, confirmed by clean exit of 'git diff --check AGENTS.md'. Task bly4ezhko (hygiene-batch build.jsonl) passed the codex-review-reverify step as of 2026-07-05T00:20:00Z.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "task-milestone: candidate's all-grade labeled_id set is {bly4ezhko}; incoming's is {bly4ezhko, bumib4tnx} — Rúnir-pn1l Q4 U0 setsEqual fix (2026-07-07) correctly conflicts these sets (Codex code-review, 2026-07-07: proveReferentIdentity checks anchorRelation FIRST and short-circuits on conflict BEFORE the key-equality loop, referent-identity.ts:264-268, so this row can NEVER supersede post-fix regardless of key fuel — the prior 'needs key fuel to allow' framing was wrong). Correct post-fix behavior is KEEP-BOTH: incoming's extra task bumib4tnx is not the candidate's task, so superseding would silently drop the candidate's own distinct task record — an over-supersede. This row is now a LIVE regression guard for the setsEqual fix, asserted in the 45/46-block-row arbitration sweep, not parked in the non-asserting key-dependent summary."
+  },
+  {
+    "rowId": "supersede_shadow:jr8xcm6589gwss2ydef2",
+    "incomingText": "Project Runir: The 'Simplify review: efficiency' task (a81942b2422888335) concluded that the recent diff is a pure hygiene pass with no new production computation or hot-path costs. It includes dead-code deletion, constant extraction, and regression tests.\n\nExact source list:\n- `src/shared/config.ts` / `src/recall/query/memory-query.ts` / `src/recall/policy/policy-types.ts`: removes three dead env-override knobs (`LEG_FETCH_LIMIT_OVERRIDE`, `FUSION_CANDIDATE_LIMIT_OVERRIDE`, `RERANK_CANDIDATE_LIMIT_OVERRIDE`) and inlines the now-constant values (`effLegFetchLimit = candidateLimit`, `effFusionCandidateLimit = candidateLimit`, `rerankPool = candidateHits`). This is a net reduction in branches/lookups on the hot query path, not an addition.\n- `src/recall/policy/noema-retrieval-policy.ts`: replaces literal `0.6` with named constant `NOEMA_ANNOTATION_FALLBACK_DEMOTION = 0.6` — same single multiply, no new computation.\n- `eslint.config.mjs`: removes `\"test/**\"` from the ignore list, widening lint scope — this is a CI-time cost, not a runtime/build hot-path cost, and is a one-line scope change, not repeated/redundant work.\n- `scripts/g004/*.sh`: five dead measurement-harness scripts deleted outright (net removal of work).\n- `scripts/g004/devmem_fixtures*.py`: docstring-only edits, no logic touched.\n- Test files (`src/__tests__/*`, `test/*`): assertion additions, removal of an unused `runPython`/`consoleSpy` var, two new integration tests that each spawn one subprocess for one hook invocation (standard isolated test setup, not redundant/repeated I/O within a single test), and a trivial `exec(...)` unused-binding removal. None of these run in production or hot paths.\n- Docs (`AGENTS.md`, `docs/agent-guidance/*.md`, `docs/zed-01-beta-scope.md`): prose only.</result>",
+    "candidateText": "Project Runir: An exhaustive audit of all ORDER BY sites in /src/ (35+ locations) confirmed zero broken queries regarding the SurrealDB v3 requirement that ordered idioms must be present in the projection. Exact source list: - `ORDER BY id` and `ORDER BY ... rand()` patterns: none exist anywhere in `src/` — not applicable. - `src/capture/`: contains no ORDER BY queries of its own (delegates to `memory-query.ts`, already covered above). - `src/recall/`: fully covered via `memory-query.ts` (the only file under `recall/` with ORDER BY). Runir project-wide audit: An exhaustive sweep of 35+ sites in src/ (including vault-exporter, entity-repair, phase2-store, surreal-store, memory-query, staleness-pass, session-turn-store, and continuity stores) confirmed zero remaining instances of the 'ORDER BY column not in projection' error class.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:tptdq405sn0515txnp1y",
+    "incomingText": "Assistant is waiting for the builder's final confirmation, specifically the full 'test:ci' gate, before dispatching the Opus closeout for task bly4ezhko.",
+    "candidateText": "Assistant is holding the hygiene-sweep scout task to avoid an export-clobber race with the Opus 4.8 closeout agent, which is currently performing the final commit, push, and reindex sequence.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:o8d50d65k4ueoup32whn",
+    "incomingText": "Runir project update: The `db-guard: read-only` marker in `scripts/run-vault-export.ts` was identified as semantically false because the export process performs budget-capped alias enrichment (writes). The fix is to use a new `db-guard: owner-ops` marker. Runir project: scripts/check-no-prod-eval-writers.sh now includes 'db-guard: owner-ops' in its acquittal markers, token enumeration, and failure messages. The underlying TOKEN regex remains the broad 'db-guard:' pattern. The db-guard acquittal markers for Runir are: '// db-guard: read-only' (never writes prod), '// db-guard: isolated' (targets isolated namespace), and '// db-guard: owner-ops' (intentional prod writer).",
+    "candidateText": "Runir project: Guard 1 must use text-qualifiers (quarter, ISO-date, year, explicit occasion words) rather than validAt, as validAt is not populated for event facts. Bare ordinals and loose month-prefix regexes are excluded to prevent false matches.\n\nExact source list:\n- **Guard 2 (additive-skip) — real `contentTokens` numbers:** durable-vs-transient retention **0.71–0.75** (NOT Scout B's 0.50), novelty **0.60/0.64**; refinement novelty 0.43; paraphrases 0.00/0.17. **Scout B's \"temporal-guard-owns-it\" is refuted** — the durability guard runs at supersede(:910)+merge(:1009), **not the skip band**, so Guard 2 is the *only* rescue. **Better threshold: NOVELTY ≥ 0.40 (+ ≥3 absolute novel tokens)** — retention doesn't discriminate (high for both additive and paraphrase); novelty separates cleanly.\n- **`validAt` is NOT populated for event facts** (only continuity-state roles) → a valid-window anchor is a no-op in prod → **Guard 1 must use the text-qualifier** (quarter/ISO-date/year/occasion-word, excluding bare ordinals + the loose month regex that false-matches \"**Mar**cus\").",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:bb6yzthns9353tjqdtew",
+    "incomingText": "The Opus closeout agent is explicitly barred from touching djs6 (probe pending), restarting production, or staging history.txt.",
+    "candidateText": "The Opus closeout agent is executing the landing sequence: full quality gates (test:ci + repro proof), DOX pass (scripts/AGENTS.md, operations-and-env.md), detect_changes, three commits, closing Rúnir-78sy.6, Dolt/git push, and reindexing.",
+    "wouldSignal": "deterministic_text",
+    "label": "over_supersede",
+    "expected": "block",
+    "provable": false,
+    "classNote": "over_supersede: deterministic_text nominated but referent identity absent (adjudicated wrong retirement)"
+  },
+  {
+    "rowId": "supersede_shadow:4xy7vowzfpz2j5o6b12x",
+    "incomingText": "Post-ratification plan: amend and commit the advisory in the 'leit' repo (currently untracked), file the Leit-side beads, annotate the 'runir' brief's Part II with ratified deltas, and close issue 'Rúnir-78sy.1' with evidence. Next steps for the project include Leit-side handover (RUNIR_EVIDENCE_SECRET + leit-31p collector), 78sy.1 seam ratification, and unblocking 78sy.10. The Rúnir project's Rúnir-78sy.1 seam ratification is closed as of 2026-07-03, with the decision record in Leit's advisory doc, a Codex REVISE→ACCEPT review, and architect PASS.",
+    "candidateText": "Assistant performed a ratification review of the Rúnir/Leit integration record, issuing a 'REVISE' verdict. The core direction (project-scoped state, polled worker collector, write-only S-2 ingestion, and dedicated evidence secret) is sound, but six specific issues require tightening.\n\nExact source list:\n- MAJOR — Q1 target resolution is under-specified.\n- MAJOR — A-1 ratifies raw private repo anchors.\n- MAJOR — Q2 states future behavior as if it is source-verified current behavior.\n- MAJOR — Q4 is defensible, but it must patch the canonical Runir brief.\n- MAJOR — A-3 needs explicit ingress normalization, not only storage wording.\n- MINOR — Q3 citation needs the exact authoritative doc path.",
+    "wouldSignal": "currentness_cue:slot",
+    "label": "correct_supersede",
+    "expected": "allow",
+    "provable": "key-dependent",
+    "classNote": "status succession (ratification REVISE → post-ratification plan) — proves only via fact-key fuel"
+  },
+  {
+    "rowId": "supersede_shadow:n1m2w8te4u7haxl37kx8",
+    "incomingText": "The GitNexus index was refreshed against merged main (HEAD 951490a), resulting in 11,104 nodes, 21,880 edges, and 300 flows.",
+    "candidateText": "The GitNexus index is stale following the recent commits (7e4e141, 276161c) and requires a manual 'gitnexus analyze' to update.\n\nSource:\n<task-notification>\n<task-id>a0af695dde38f0693</task-id>\n<tool-use-id>toolu_013cqHL6QHbRXBDjoxmhJmQ8</tool-use-id>\n<output-file>/private/tmp/claude-501/-Users-brooks-Code-runir/678e2a73-3c1d-4072-b852-293e0550751f/tasks/a0af695dde38f0693.output</output-file>\n<status>completed</status>\n<summary>Agent \"Fix export enrichment runaway\" finished</summary>\n<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>\n<result>All work landed. The remaining dirty files are exclusively the concurrent agents' scope (harness scripts, openclaw-plugin, transcript fixtures) plus `.beads/issues.jsonl` staged by another process — untouched by me. No push perfor…\n\nExact source list:\n- `7e4e141` — fix(export): alias enrichment persists (entities.aliases_enriched_at schema field) + per-run budget cap — ends the runaway paid loop (9 files, +459/−35)\n- `276161c` — docs(env): DOX pass documenting the new env var in `docs/agent-guidance/operations-and-env.md`",
+    "wouldSignal": "deterministic_text",
+    "label": "correct_supersede",
+    "expected": "allow",
+    "provable": "key-dependent",
+    "classNote": "status succession (GitNexus index stale → refreshed; commit SHAs are non-anchors) — proves only via fact-key fuel"
+  }
+]

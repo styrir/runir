@@ -1,0 +1,22 @@
+node_modules/
+.env
+.env.local
+.env*.local
+dist/
+logs/
+coverage/
+*.js.map
+.DS_Store
+.venv/
+__pycache__/
+*.db
+
+# Local tool noise (should not appear in product clones)
+.pipeline/
+.beads/
+.omc/
+.omx/
+.omo/
+.ouroboros/
+.gitnexus/
+.fallow/

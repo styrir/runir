@@ -1,0 +1,29 @@
+{
+  "name": "runir-codex",
+  "version": "0.2.0",
+  "description": "Rúnir memory integration for Codex with packaged skills plus separate companion hook activation.",
+  "author": {
+    "name": "AlphaComposite",
+    "url": "https://github.com/AlphaComposite"
+  },
+  "homepage": "https://github.com/AlphaComposite/runir",
+  "repository": "https://github.com/AlphaComposite/runir",
+  "license": "UNLICENSED",
+  "keywords": ["runir", "codex", "memory", "hooks"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Rúnir Codex",
+    "shortDescription": "Install the Rúnir Codex package, then activate companion hooks separately.",
+    "longDescription": "Distributes the Rúnir Codex skill package and helper scripts for companion hook activation and verification.",
+    "developerName": "AlphaComposite",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write", "Interactive"],
+    "websiteURL": "https://github.com/AlphaComposite/runir",
+    "defaultPrompt": [
+      "Activate project-scoped Rúnir Codex companion hooks for this repo.",
+      "Verify whether Rúnir companion hooks are wired into Codex.",
+      "Replay a Codex capture payload against Rúnir."
+    ],
+    "brandColor": "#0B6E4F"
+  }
+}

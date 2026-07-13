@@ -1,0 +1,128 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`admissibility-contract snapshot — locks 4 contract definitions > pins shape for selector profile: guidance_reference 1`] = `
+{
+  "barredGroups": [
+    "current_status",
+    "operational_noise",
+    "admin_process",
+    "deploy_ops",
+  ],
+  "cappedGroups": [],
+  "continuityClasses": {
+    "durable_guidance": "preferred",
+    "neutral": "disallowed",
+    "transient_continuity": "capped",
+  },
+  "id": "guidance_reference_admissibility",
+  "primaryGroups": [
+    "planning_active",
+    "architecture_reference",
+  ],
+  "requirePrimaryRepresentative": true,
+  "secondaryGroups": [
+    "recent_work",
+    "session_handoff",
+  ],
+  "selectionEngine": "contract_enforced",
+  "selectorProfile": "guidance_reference",
+  "version": "2026-04-18-v1",
+}
+`;
+
+exports[`admissibility-contract snapshot — locks 4 contract definitions > pins shape for selector profile: recent_work 1`] = `
+{
+  "barredGroups": [
+    "operational_noise",
+    "admin_process",
+    "deploy_ops",
+  ],
+  "cappedGroups": [
+    {
+      "group": "current_status",
+      "max": 1,
+    },
+  ],
+  "continuityClasses": {
+    "durable_guidance": "allowed",
+    "neutral": "disallowed",
+    "transient_continuity": "allowed",
+  },
+  "id": "recent_work_admissibility",
+  "primaryGroups": [
+    "recent_work",
+    "planning_active",
+    "architecture_reference",
+  ],
+  "requirePrimaryRepresentative": true,
+  "secondaryGroups": [
+    "session_handoff",
+    "current_status",
+  ],
+  "selectionEngine": "contract_enforced",
+  "selectorProfile": "recent_work",
+  "version": "2026-04-18-v1",
+}
+`;
+
+exports[`admissibility-contract snapshot — locks 4 contract definitions > pins shape for selector profile: status_continuity 1`] = `
+{
+  "barredGroups": [],
+  "cappedGroups": [],
+  "compatibilityMode": true,
+  "continuityClasses": {
+    "durable_guidance": "compatibility_only",
+    "neutral": "compatibility_only",
+    "transient_continuity": "compatibility_only",
+  },
+  "id": "status_continuity_compatibility",
+  "primaryGroups": [
+    "current_status",
+    "session_handoff",
+    "recent_work",
+    "debugging_active",
+  ],
+  "requirePrimaryRepresentative": false,
+  "secondaryGroups": [
+    "planning_active",
+    "architecture_reference",
+  ],
+  "selectionEngine": "continuity_resolved",
+  "selectorProfile": "status_continuity",
+  "version": "2026-04-18-v1",
+}
+`;
+
+exports[`admissibility-contract snapshot — locks 4 contract definitions > pins shape for selector profile: workflow_posture 1`] = `
+{
+  "barredGroups": [
+    "operational_noise",
+    "admin_process",
+    "deploy_ops",
+  ],
+  "cappedGroups": [
+    {
+      "group": "current_status",
+      "max": 1,
+    },
+  ],
+  "continuityClasses": {
+    "durable_guidance": "preferred",
+    "neutral": "disallowed",
+    "transient_continuity": "capped",
+  },
+  "id": "workflow_posture_admissibility",
+  "primaryGroups": [
+    "planning_active",
+    "session_handoff",
+  ],
+  "requirePrimaryRepresentative": true,
+  "secondaryGroups": [
+    "recent_work",
+    "architecture_reference",
+  ],
+  "selectionEngine": "contract_enforced",
+  "selectorProfile": "workflow_posture",
+  "version": "2026-04-18-v1",
+}
+`;

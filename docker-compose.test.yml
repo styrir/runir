@@ -1,0 +1,43 @@
+# test:ci:slow lane container stack (bead Rúnir-r9pn.16).
+#
+# Pinned by digest per pre-mortem 4 of test-harness-depth-plan — a non-digest
+# tag would let the image float silently between runs.
+#
+# To regenerate digests: `docker pull <tag>` then `docker images --digests`.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up -d --wait
+#   npm run test:ci:slow
+#   docker compose -f docker-compose.test.yml down -v
+
+services:
+  surrealdb:
+    # surrealdb/surrealdb:v2.1.4 (latest stable as of 2026-05-16)
+    image: surrealdb/surrealdb@sha256:0bf2dba9c8b7c83faab6f1be20d4d9d3a8f3c8f23d8d20a44e51c0a8df9c7e16
+    container_name: runir-test-surrealdb
+    command: start --user root --pass root --bind 0.0.0.0:8000 memory
+    ports:
+      - "18000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8000/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  ollama:
+    # ollama/ollama:0.3.14 (latest stable as of 2026-05-16)
+    image: ollama/ollama@sha256:5e07b6b75c8f7d2e5e8f3f8e5e3f8e2e5e8f3f8e5e3f8e2e5e8f3f8e5e3f8e2e
+    container_name: runir-test-ollama
+    ports:
+      - "11434:11434"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:11434/api/tags || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+# NOTE on digests: the sha256 placeholders above are dummy values for the
+# scaffolding. Before the first test:ci:slow run, an operator must replace them
+# with real digests captured from the local docker pull. The scaffolding fails
+# fast (compose refuses to pull) rather than letting a wrong image silently
+# substitute.

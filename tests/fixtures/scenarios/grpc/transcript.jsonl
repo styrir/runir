@@ -1,0 +1,6 @@
+{"role":"user","text":"We need to settle the streaming variant for the recall pipeline. The unary call has been spiking to 700ms p95 under load.","ts":"2026-04-27T08:00:00Z"}
+{"role":"assistant","text":"Going with the gRPC streaming variant for the recall pipeline because the unary call had p95 latency over 500ms under load and the streaming variant lets us interleave retrieval with reranking","ts":"2026-04-27T08:00:30Z"}
+{"role":"user","text":"What about embedder timeouts during the surge?","ts":"2026-04-27T08:01:00Z"}
+{"role":"assistant","text":"We chose to fall back to BM25-only when the embedder times out since the embedder dependency is the dominant tail-latency contributor and BM25 still delivers usable recall on short queries","ts":"2026-04-27T08:01:30Z"}
+{"role":"user","text":"Trace schema?","ts":"2026-04-27T08:02:00Z"}
+{"role":"assistant","text":"We settled on the additive lifecycle event extension rather than a parallel structure because ADR 0008 freezes the existing schema and additive variants do not require a traceSchemaVersion bump while preserving consumer compatibility","ts":"2026-04-27T08:02:30Z"}

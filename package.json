@@ -1,0 +1,60 @@
+{
+  "name": "runir-service",
+  "version": "1.0.0",
+  "description": "Standalone HTTP memory service \u2014 hybrid BM25+vector, SurrealDB, no OpenClaw dependency",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env --import tsx/esm index.ts",
+    "dev": "node --env-file-if-exists=.env --watch --import tsx/esm index.ts",
+    "lint": "eslint . --max-warnings=0",
+    "check": "npm run lint && npm run typecheck && npm run test:ci",
+    "deploy:preflight": "tsx scripts/deploy-preflight.ts",
+    "test": "vitest run",
+    "test:ci": "npm run test:ci:fast",
+    "test:ci:fast": "vitest run",
+    "test:ci:slow": "RUNIR_TEST_SLOW_LANE=1 vitest run test/integration/containerized-deps.test.ts",
+    "test:ci:slow:up": "docker compose -f docker-compose.test.yml up -d --wait",
+    "test:ci:slow:down": "docker compose -f docker-compose.test.yml down -v",
+    "test:ci:exclusive": "RUNIR_CLAUDE_HOOKS_INSTALLED=1 vitest run",
+    "build:plugin-archives": "python3 scripts/build-plugin-marketplace-archives.py",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "audit": "npm audit",
+    "test:hooks:contract:local": "tsx scripts/runir-claudecode-hook-contract.ts",
+    "test:hooks:contract:codex:local": "tsx scripts/runir-codex-hook-contract.ts",
+    "test:hooks:contract:local:markdown": "tsx scripts/runir-claudecode-hook-contract.ts --markdown",
+    "test:hooks:contract:codex:local:markdown": "tsx scripts/runir-codex-hook-contract.ts --markdown",
+    "test:schema:events": "npx --yes ajv-cli@5 validate -s schemas/event.schema.json -d 'fixtures/events/*.json' --spec=draft2020"
+  },
+  "bin": {
+    "runir": "./cli/index.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "@opentelemetry/api": "^1.9.1",
+    "hono": "^4.7.7",
+    "jsonrepair": "^3.14.0",
+    "mem0ai": "^3.0.1",
+    "surrealdb": "^2.0.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@opentelemetry/sdk-trace-base": "^2.7.0",
+    "@types/node": "^25.5.0",
+    "@vitest/coverage-v8": "^4.1.2",
+    "ajv": "^6.15.0",
+    "dotenv": "^17.4.0",
+    "eslint": "^10.2.0",
+    "fallow": "^2.56.0",
+    "fast-check": "^4.7.0",
+    "globals": "^17.5.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.58.2",
+    "vitest": "^4.1.2",
+    "yaml": "^2.8.3"
+  }
+}

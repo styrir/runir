@@ -1,0 +1,385 @@
+[
+  {
+    "id": "session-01-required-only",
+    "description": "session scope, only required userId+sessionId, agentId absent",
+    "scope": "session",
+    "shape": "all-absent",
+    "payload": {
+      "scope": "session",
+      "userId": "u_alice",
+      "sessionId": "s_001"
+    },
+    "expectedHash": "4688bd7e8cf659da58fa834d947ddaf0ac3228b79f18dca5931fd98107799657"
+  },
+  {
+    "id": "session-02-all-present",
+    "description": "session scope with agentId present",
+    "scope": "session",
+    "shape": "all-present",
+    "payload": {
+      "scope": "session",
+      "userId": "u_alice",
+      "sessionId": "s_001",
+      "agentId": "agent_planner"
+    },
+    "expectedHash": "cd31dd8c90bd7899cb70b15a4afca12d3c5d95e6d5bbaec749253fd69828d148"
+  },
+  {
+    "id": "session-03-mixed-empty-agentId",
+    "description": "session scope, agentId='' collapses to absent per ADR 0006 §Optional-field treatment",
+    "scope": "session",
+    "shape": "mixed",
+    "payload": {
+      "scope": "session",
+      "userId": "u_alice",
+      "sessionId": "s_001",
+      "agentId": ""
+    },
+    "expectedHash": "4688bd7e8cf659da58fa834d947ddaf0ac3228b79f18dca5931fd98107799657"
+  },
+  {
+    "id": "session-04-different-user",
+    "description": "session scope with a different user — distinct hash from session-01",
+    "scope": "session",
+    "shape": "all-absent",
+    "payload": {
+      "scope": "session",
+      "userId": "u_bob",
+      "sessionId": "s_001"
+    },
+    "expectedHash": "140bbfe66a873002af26dc74400d5e388fe4c6f14e4889bf2c336532495a7899"
+  },
+  {
+    "id": "session-05-different-session",
+    "description": "session scope, same user, different session — distinct hash",
+    "scope": "session",
+    "shape": "all-absent",
+    "payload": {
+      "scope": "session",
+      "userId": "u_alice",
+      "sessionId": "s_002"
+    },
+    "expectedHash": "ac13c9a630705257967d3433664427f1e3f2fd0ea3164cc286d77416fdb3761d"
+  },
+  {
+    "id": "session-06-tenant-ignored",
+    "description": "session scope ignores tenantId (not in projection per ADR table)",
+    "scope": "session",
+    "shape": "mixed",
+    "payload": {
+      "scope": "session",
+      "userId": "u_alice",
+      "sessionId": "s_001",
+      "tenantId": "tenant-X"
+    },
+    "expectedHash": "4688bd7e8cf659da58fa834d947ddaf0ac3228b79f18dca5931fd98107799657"
+  },
+  {
+    "id": "session-07-principal-ignored",
+    "description": "session scope ignores principalId (not in projection per ADR table)",
+    "scope": "session",
+    "shape": "mixed",
+    "payload": {
+      "scope": "session",
+      "userId": "u_alice",
+      "sessionId": "s_001",
+      "principalId": "principal-X"
+    },
+    "expectedHash": "4688bd7e8cf659da58fa834d947ddaf0ac3228b79f18dca5931fd98107799657"
+  },
+  {
+    "id": "session-08-unicode-user",
+    "description": "session scope with Unicode userId — must hash distinctly",
+    "scope": "session",
+    "shape": "edge",
+    "payload": {
+      "scope": "session",
+      "userId": "用户_梅",
+      "sessionId": "s_001"
+    },
+    "expectedHash": "27019951f72850cbfab73ccb14a65201716357348f3040996b89e4071740b95d"
+  },
+  {
+    "id": "session-09-whitespace-agentId",
+    "description": "session scope with single-space agentId (rejected sentinel) — present, NOT absent",
+    "scope": "session",
+    "shape": "edge",
+    "payload": {
+      "scope": "session",
+      "userId": "u_alice",
+      "sessionId": "s_001",
+      "agentId": " "
+    },
+    "expectedHash": "8668ec1e6acaac8c168190cef5a2a8e23abfad055748c2a8a525482fd4299859"
+  },
+  {
+    "id": "session-10-zero-width-sessionId",
+    "description": "session scope with ZWSP sessionId — present, distinct from absent",
+    "scope": "session",
+    "shape": "edge",
+    "payload": {
+      "scope": "session",
+      "userId": "u_alice",
+      "sessionId": "​sess",
+      "agentId": "a1"
+    },
+    "expectedHash": "a48bc0c4be38febd0910e305cae52c59cda32403e4c1db0064d8faae843c7fb9"
+  },
+  {
+    "id": "session-11-bom-agentId",
+    "description": "session scope with BOM-prefixed agentId — present, distinct from absent",
+    "scope": "session",
+    "shape": "edge",
+    "payload": {
+      "scope": "session",
+      "userId": "u_alice",
+      "sessionId": "s_001",
+      "agentId": "﻿agent"
+    },
+    "expectedHash": "9b1fdaa482869bef1b4796b434335e2488e3bfe7c06c6c0b322b52fb6b40ed80"
+  },
+  {
+    "id": "session-12-control-char-userId",
+    "description": "session scope with control character (TAB) in userId — present, distinct from absent",
+    "scope": "session",
+    "shape": "edge",
+    "payload": {
+      "scope": "session",
+      "userId": "\tu_alice",
+      "sessionId": "s_001"
+    },
+    "expectedHash": "9b6b1463448926348be408114bb80f03711426ba0ac5a78cab5ef029a5cf4b63"
+  },
+  {
+    "id": "user-01-required-only",
+    "description": "user scope, only required userId — principalId+tenantId absent",
+    "scope": "user",
+    "shape": "all-absent",
+    "payload": {
+      "scope": "user",
+      "userId": "u_alice"
+    },
+    "expectedHash": "288d6a4b4f07547dcab33c1f163e9d7768319a68d3ffbc60d22e521e18d5eecc"
+  },
+  {
+    "id": "user-02-all-present",
+    "description": "user scope with principalId+tenantId present",
+    "scope": "user",
+    "shape": "all-present",
+    "payload": {
+      "scope": "user",
+      "userId": "u_alice",
+      "principalId": "p_alice",
+      "tenantId": "tenant_acme"
+    },
+    "expectedHash": "69d75883b7cba0f379c488a3659f5160fefa116ef636487caa941f321bf00b8e"
+  },
+  {
+    "id": "user-03-tenant-only",
+    "description": "user scope with tenantId present, principalId absent — mixed presence",
+    "scope": "user",
+    "shape": "mixed",
+    "payload": {
+      "scope": "user",
+      "userId": "u_alice",
+      "tenantId": "tenant_acme"
+    },
+    "expectedHash": "e728c5dcb7fb9f6566db1d9c27991fde21dda911bc4f064e87323b94f82cfb4b"
+  },
+  {
+    "id": "user-04-principal-only",
+    "description": "user scope with principalId present, tenantId absent — mixed presence",
+    "scope": "user",
+    "shape": "mixed",
+    "payload": {
+      "scope": "user",
+      "userId": "u_alice",
+      "principalId": "p_alice"
+    },
+    "expectedHash": "334783ab0b43f2d3c8dd6a2e8c3102765e058c3c104c1bb7c88ce655ee151224"
+  },
+  {
+    "id": "user-05-empty-tenant",
+    "description": "user scope with tenantId='' collapses to [absent] per §Optional-field treatment",
+    "scope": "user",
+    "shape": "mixed",
+    "payload": {
+      "scope": "user",
+      "userId": "u_alice",
+      "tenantId": ""
+    },
+    "expectedHash": "288d6a4b4f07547dcab33c1f163e9d7768319a68d3ffbc60d22e521e18d5eecc"
+  },
+  {
+    "id": "user-06-session-ignored",
+    "description": "user scope ignores sessionId (not in projection)",
+    "scope": "user",
+    "shape": "mixed",
+    "payload": {
+      "scope": "user",
+      "userId": "u_alice",
+      "sessionId": "s_xyz"
+    },
+    "expectedHash": "288d6a4b4f07547dcab33c1f163e9d7768319a68d3ffbc60d22e521e18d5eecc"
+  },
+  {
+    "id": "user-07-agent-ignored",
+    "description": "user scope ignores agentId (not in projection)",
+    "scope": "user",
+    "shape": "mixed",
+    "payload": {
+      "scope": "user",
+      "userId": "u_alice",
+      "agentId": "agent_X"
+    },
+    "expectedHash": "288d6a4b4f07547dcab33c1f163e9d7768319a68d3ffbc60d22e521e18d5eecc"
+  },
+  {
+    "id": "user-08-bom-tenant",
+    "description": "user scope with BOM-prefixed tenantId — present, distinct from absent",
+    "scope": "user",
+    "shape": "edge",
+    "payload": {
+      "scope": "user",
+      "userId": "u_alice",
+      "tenantId": "﻿acme"
+    },
+    "expectedHash": "ea7c1e67fc9b923a485a2ce1b14909c5e41232efc4c46c4a6547c5b32fa72a8b"
+  },
+  {
+    "id": "user-09-zero-width-principal",
+    "description": "user scope with zero-width-joiner principalId — present, distinct from absent",
+    "scope": "user",
+    "shape": "edge",
+    "payload": {
+      "scope": "user",
+      "userId": "u_alice",
+      "principalId": "‍principal"
+    },
+    "expectedHash": "8ef302dba7888f2269cd724f964ba804bbcebf6d08cc2f054f111ab9c64f1d28"
+  },
+  {
+    "id": "user-10-control-char-tenant",
+    "description": "user scope with NUL byte in tenantId — present, distinct from absent",
+    "scope": "user",
+    "shape": "edge",
+    "payload": {
+      "scope": "user",
+      "userId": "u_alice",
+      "tenantId": "\u0000tenant"
+    },
+    "expectedHash": "c7bd93bc6e00ec68ab1d8fe4f4d613717a2a153dff53fe8caa8b57708a94ca1b"
+  },
+  {
+    "id": "global-01-tenant-absent-defaults",
+    "description": "global scope without tenantId — projects to DEFAULT_TENANT_ID per ADR 0006 §New payload fields",
+    "scope": "global",
+    "shape": "all-absent",
+    "payload": {
+      "scope": "global"
+    },
+    "expectedHash": "948a85917a9c6aa497d662473225cbe58e9ead48431a5d23ad517e3f8aeb07fb"
+  },
+  {
+    "id": "global-02-empty-tenant-defaults",
+    "description": "global scope with tenantId='' — falls back to DEFAULT_TENANT_ID per default-tenant rule",
+    "scope": "global",
+    "shape": "all-absent",
+    "payload": {
+      "scope": "global",
+      "tenantId": ""
+    },
+    "expectedHash": "948a85917a9c6aa497d662473225cbe58e9ead48431a5d23ad517e3f8aeb07fb"
+  },
+  {
+    "id": "global-03-explicit-tenant",
+    "description": "global scope with explicit tenantId='tenant_acme'",
+    "scope": "global",
+    "shape": "all-present",
+    "payload": {
+      "scope": "global",
+      "tenantId": "tenant_acme"
+    },
+    "expectedHash": "db54f7ec59d9ec5c85a37d274a04ac77e86a10f032df433732f91560179eeec0"
+  },
+  {
+    "id": "global-04-different-tenant",
+    "description": "global scope with a different tenant — distinct hash from global-03",
+    "scope": "global",
+    "shape": "all-present",
+    "payload": {
+      "scope": "global",
+      "tenantId": "tenant_globex"
+    },
+    "expectedHash": "d0f9cff7268ddf780135bc39d34747de63efbb824a1dbd14a898ba28efb377c7"
+  },
+  {
+    "id": "global-05-explicit-default-tenant",
+    "description": "global scope with tenantId == DEFAULT_TENANT_ID literal — must equal global-01 (same projection)",
+    "scope": "global",
+    "shape": "mixed",
+    "payload": {
+      "scope": "global",
+      "tenantId": "_runir_default_"
+    },
+    "expectedHash": "948a85917a9c6aa497d662473225cbe58e9ead48431a5d23ad517e3f8aeb07fb"
+  },
+  {
+    "id": "global-06-userId-ignored",
+    "description": "global scope ignores userId (not in projection)",
+    "scope": "global",
+    "shape": "mixed",
+    "payload": {
+      "scope": "global",
+      "userId": "u_alice",
+      "tenantId": "tenant_acme"
+    },
+    "expectedHash": "db54f7ec59d9ec5c85a37d274a04ac77e86a10f032df433732f91560179eeec0"
+  },
+  {
+    "id": "global-07-session-ignored",
+    "description": "global scope ignores sessionId (not in projection)",
+    "scope": "global",
+    "shape": "mixed",
+    "payload": {
+      "scope": "global",
+      "sessionId": "s_001",
+      "tenantId": "tenant_acme"
+    },
+    "expectedHash": "db54f7ec59d9ec5c85a37d274a04ac77e86a10f032df433732f91560179eeec0"
+  },
+  {
+    "id": "global-08-principal-ignored",
+    "description": "global scope ignores principalId (not in projection)",
+    "scope": "global",
+    "shape": "mixed",
+    "payload": {
+      "scope": "global",
+      "principalId": "p_alice",
+      "tenantId": "tenant_acme"
+    },
+    "expectedHash": "db54f7ec59d9ec5c85a37d274a04ac77e86a10f032df433732f91560179eeec0"
+  },
+  {
+    "id": "global-09-bom-tenant",
+    "description": "global scope with BOM-prefixed tenantId — present, distinct from default",
+    "scope": "global",
+    "shape": "edge",
+    "payload": {
+      "scope": "global",
+      "tenantId": "﻿tenant"
+    },
+    "expectedHash": "2aff2f81d257df83755e00ead9a256bfdd6a7c46d2a1b47a56f0b70259741edd"
+  },
+  {
+    "id": "global-10-unicode-tenant",
+    "description": "global scope with Unicode tenantId — present, distinct from default",
+    "scope": "global",
+    "shape": "edge",
+    "payload": {
+      "scope": "global",
+      "tenantId": "テナント_東京"
+    },
+    "expectedHash": "cd8ebe0390e81a67c02da403886b7eabb45efa3a5723ee7b51b336bb94fe1de1"
+  }
+]
