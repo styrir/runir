@@ -1,0 +1,19 @@
+{
+  "name": "runir-pi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "R\u00fanir memory client for Pi (thin HTTP hooks + OM compaction lanes).",
+  "keywords": [
+    "pi-package"
+  ],
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./extensions/runir-memory.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  }
+}
