@@ -3,8 +3,9 @@
  * Slice 3 gate: marketplace-installed-style plugin copies list and execute
  * runir_store from their bundled mcp/runir-mcp.mjs — not a source-checkout path.
  *
- * Stages each plugin under a temp home, resolves the path the way .mcp.json does,
- * runs NDJSON initialize / tools/list / tools/call against a stub HTTP store.
+ * Stages each plugin under a temp root, reads that copy's `.mcp.json`, resolves
+ * command/args/cwd the way the host would, and launches that derived invocation
+ * against a stub HTTP store (NDJSON MCP traffic).
  */
 import { createHash } from "node:crypto";
 import {
@@ -16,27 +17,33 @@ import {
 } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
+type McpServerConfig = {
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+};
+
 type ClientCase = {
   name: "claude" | "codex";
   sourceDir: string;
   stagedRel: string;
-  resolveMjs: (stagedPluginRoot: string) => string;
-  assertMcpConfig: (pluginRoot: string) => void;
-  clientEnv: (stagedPluginRoot: string) => {
-    env: Record<string, string>;
-    cwd: string;
-  };
+  /** Extra tokens for ${VAR} expansion in args (e.g. CLAUDE_PLUGIN_ROOT). */
+  pathTokens: (stagedPluginRoot: string) => Record<string, string>;
+  /** Optional post-checks on plugin manifest (Codex mcpServers pointer). */
+  assertManifest?: (pluginRoot: string) => void;
 };
 
+class SmokeError extends Error {}
+
 function fail(msg: string): never {
-  console.error(`FAIL: ${msg}`);
-  process.exit(1);
+  throw new SmokeError(msg);
 }
 
 function sha256(path: string): string {
@@ -53,6 +60,65 @@ function parseNdjson(raw: string): unknown[] {
     .map((l) => l.trim())
     .filter(Boolean)
     .map((l) => JSON.parse(l));
+}
+
+function expandTokens(value: string, tokens: Record<string, string>): string {
+  return value.replace(/\$\{([A-Z0-9_]+)\}/g, (_, name: string) => {
+    if (!(name in tokens)) {
+      fail(`unresolved config token \${${name}} in ${JSON.stringify(value)}`);
+    }
+    return tokens[name]!;
+  });
+}
+
+function loadRunirMcpConfig(pluginRoot: string): McpServerConfig {
+  const cfgPath = join(pluginRoot, ".mcp.json");
+  if (!existsSync(cfgPath)) fail(`missing .mcp.json under ${pluginRoot}`);
+  const cfg = JSON.parse(readFileSync(cfgPath, "utf8")) as {
+    mcpServers?: Record<string, McpServerConfig>;
+  };
+  const server = cfg.mcpServers?.runir;
+  if (!server) fail(`${cfgPath}: missing mcpServers.runir`);
+  return server;
+}
+
+/** Derive spawn plan from staged plugin's .mcp.json only. */
+function deriveInvocation(
+  pluginRoot: string,
+  tokens: Record<string, string>,
+): { command: string; args: string[]; cwd: string; env: Record<string, string>; mjsPath: string } {
+  const server = loadRunirMcpConfig(pluginRoot);
+  if (server.command !== "node") {
+    fail(`expected command "node", got ${JSON.stringify(server.command)}`);
+  }
+  const args = (server.args ?? []).map((a) => expandTokens(a, tokens));
+  if (args.length !== 1) {
+    fail(`expected single script arg, got ${JSON.stringify(args)}`);
+  }
+  const scriptArg = args[0]!;
+  if (scriptArg.includes(repoRoot)) {
+    fail(`.mcp.json resolved to repo-absolute path: ${scriptArg}`);
+  }
+  const cwd =
+    !server.cwd || server.cwd === "."
+      ? pluginRoot
+      : isAbsolute(server.cwd)
+        ? server.cwd
+        : resolve(pluginRoot, server.cwd);
+  const mjsPath = isAbsolute(scriptArg) ? scriptArg : resolve(cwd, scriptArg);
+  if (!mjsPath.startsWith(pluginRoot)) {
+    fail(`resolved mjs not under staged plugin root: ${mjsPath}`);
+  }
+  if (!existsSync(mjsPath)) {
+    fail(`staged mjs missing: ${mjsPath}`);
+  }
+  return {
+    command: server.command,
+    args,
+    cwd,
+    env: { ...(server.env ?? {}) },
+    mjsPath,
+  };
 }
 
 async function withStubStore(
@@ -87,16 +153,20 @@ async function withStubStore(
   }
 }
 
-async function runMcpSession(opts: {
-  mjsPath: string;
+async function runDerivedMcp(opts: {
+  command: string;
+  args: string[];
   cwd: string;
-  envExtra: Record<string, string>;
+  env: Record<string, string>;
 }): Promise<void> {
   await withStubStore(async (baseUrl, requests) => {
-    const child = spawn(process.execPath, [opts.mjsPath], {
+    // Host would run: command + args with cwd. We always use process.execPath
+    // for "node" so the smoke is hermetic across PATH differences.
+    const argv0 = opts.command === "node" ? process.execPath : opts.command;
+    const child = spawn(argv0, opts.args, {
       env: {
         ...process.env,
-        ...opts.envExtra,
+        ...opts.env,
         RUNIR_BASE: baseUrl,
         RUNIR_API_KEY: "installed-smoke-key",
         RUNIR_USER_ID: "installed-smoke-user",
@@ -138,7 +208,7 @@ async function runMcpSession(opts: {
       const t = setTimeout(() => {
         reject(
           new Error(
-            `timeout for ${opts.mjsPath}\nstdout=${stdout}\nstderr=${stderr}`,
+            `timeout for ${opts.args.join(" ")}\nstdout=${stdout}\nstderr=${stderr}`,
           ),
         );
       }, 8000);
@@ -199,58 +269,24 @@ const cases: ClientCase[] = [
     sourceDir: join(repoRoot, "plugins/runir-claudecode"),
     stagedRel:
       "claude-home/.claude/plugins/cache/runir-local/runir-claudecode/installed",
-    resolveMjs: (root) => join(root, "mcp/runir-mcp.mjs"),
-    assertMcpConfig: (pluginRoot) => {
-      const cfg = JSON.parse(
-        readFileSync(join(pluginRoot, ".mcp.json"), "utf8"),
-      ) as {
-        mcpServers?: { runir?: { command?: string; args?: string[] } };
-      };
-      const joined = (cfg.mcpServers?.runir?.args ?? []).join(" ");
-      if (!joined.includes("${CLAUDE_PLUGIN_ROOT}/mcp/runir-mcp.mjs")) {
-        fail(`claude .mcp.json must use CLAUDE_PLUGIN_ROOT; got ${joined}`);
-      }
-      if (joined.includes(repoRoot)) {
-        fail("claude .mcp.json must not embed repo-absolute path");
-      }
-    },
-    clientEnv: (root) => ({
-      env: { RUNIR_CLIENT: "claude", CLAUDE_PLUGIN_ROOT: root },
-      cwd: root,
-    }),
+    pathTokens: (root) => ({ CLAUDE_PLUGIN_ROOT: root }),
   },
   {
     name: "codex",
     sourceDir: join(repoRoot, "plugins/runir-codex"),
     stagedRel:
       "codex-home/.codex/plugins/cache/runir-local/runir-codex/installed",
-    resolveMjs: (root) => join(root, "mcp/runir-mcp.mjs"),
-    assertMcpConfig: (pluginRoot) => {
-      const cfg = JSON.parse(
-        readFileSync(join(pluginRoot, ".mcp.json"), "utf8"),
-      ) as {
-        mcpServers?: {
-          runir?: { command?: string; args?: string[]; cwd?: string };
-        };
-      };
-      const server = cfg.mcpServers?.runir;
-      const args = server?.args ?? [];
-      if (!args.includes("./mcp/runir-mcp.mjs")) {
+    pathTokens: () => ({}),
+    assertManifest: (pluginRoot) => {
+      const manifest = JSON.parse(
+        readFileSync(join(pluginRoot, ".codex-plugin/plugin.json"), "utf8"),
+      ) as { mcpServers?: string };
+      if (manifest.mcpServers !== "./.mcp.json") {
         fail(
-          `codex .mcp.json must use relative ./mcp/runir-mcp.mjs; got ${JSON.stringify(args)}`,
+          `codex plugin.json mcpServers must be "./.mcp.json"; got ${JSON.stringify(manifest.mcpServers)}`,
         );
       }
-      if (server?.cwd !== ".") {
-        fail(`codex .mcp.json cwd must be "."; got ${server?.cwd}`);
-      }
-      if (args.some((a) => a.includes(repoRoot))) {
-        fail("codex .mcp.json must not embed repo-absolute path");
-      }
     },
-    clientEnv: (root) => ({
-      env: { RUNIR_CLIENT: "codex" },
-      cwd: root,
-    }),
   },
 ];
 
@@ -280,24 +316,23 @@ async function main(): Promise<void> {
           !src.endsWith(".DS_Store"),
       });
 
-      const mjs = c.resolveMjs(stagedPluginRoot);
-      if (!mjs.startsWith(stagedPluginRoot)) {
-        fail(`${c.name}: resolved mjs not under staged root: ${mjs}`);
+      c.assertManifest?.(stagedPluginRoot);
+      const inv = deriveInvocation(stagedPluginRoot, c.pathTokens(stagedPluginRoot));
+      if (inv.mjsPath === claudeMjs || inv.mjsPath === codexMjs) {
+        fail(`${c.name}: resolved to source-checkout path ${inv.mjsPath}`);
       }
-      if (!existsSync(mjs)) {
-        fail(`${c.name}: staged mjs missing: ${mjs}`);
-      }
-      if (mjs === claudeMjs || mjs === codexMjs) {
-        fail(`${c.name}: resolved to source-checkout path ${mjs}`);
-      }
+      digests.push(sha256(inv.mjsPath));
 
-      c.assertMcpConfig(stagedPluginRoot);
-      digests.push(sha256(mjs));
-
-      const { env, cwd } = c.clientEnv(stagedPluginRoot);
-      console.log(`→ ${c.name}: node ${mjs}`);
-      await runMcpSession({ mjsPath: mjs, cwd, envExtra: env });
-      console.log(`  PASS ${c.name}: tools/list + tools/call via staged bundle`);
+      console.log(
+        `→ ${c.name}: ${inv.command} ${inv.args.join(" ")} (cwd=${inv.cwd})`,
+      );
+      await runDerivedMcp({
+        command: inv.command,
+        args: inv.args,
+        cwd: inv.cwd,
+        env: inv.env,
+      });
+      console.log(`  PASS ${c.name}: config-derived tools/list + tools/call`);
     }
 
     if (new Set(digests).size !== 1) {
@@ -315,6 +350,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(err);
+  console.error(err instanceof SmokeError ? `FAIL: ${err.message}` : err);
   process.exit(1);
 });

@@ -817,10 +817,6 @@ function resolveStoreScope(
   return { scope: "session", sessionId };
 }
 
-/**
- * Shared by /runir remember and the runir_store tool. THROWS on validation,
- * missing auth/tenant, session black-hole, non-2xx, or malformed outcomes.
- */
 /** Bound error-body surface per design ("body snippet", not full dump). */
 function httpBodySnippet(body: string, max = 200): string {
   const trimmed = body.trim();
@@ -828,6 +824,10 @@ function httpBodySnippet(body: string, max = 200): string {
   return `${trimmed.slice(0, max)}…`;
 }
 
+/**
+ * Shared by /runir remember and the runir_store tool. THROWS on validation,
+ * missing auth/tenant, session black-hole, non-2xx, or malformed outcomes.
+ */
 async function storeMemory(
   text: string,
   scopeArg: unknown,

@@ -38,7 +38,7 @@ All curl endpoints: base `${RUNIR_BASE:-http://127.0.0.1:7700}`, header
 ## 1. Think — synthesized, cited, honest (preferred for questions)
 
 ```bash
-curl -s -X POST "$RUNIR_BASE/memory/think" \
+curl -s -X POST "${RUNIR_BASE:-http://127.0.0.1:7700}/memory/think" \
   -H "Authorization: Bearer $RUNIR_API_KEY" -H "Content-Type: application/json" \
   -d '{"userId":"'"$RUNIR_USER_ID"'","question":"<the question>"}'
 ```
@@ -57,7 +57,7 @@ Contract you can rely on:
 ## 2. Raw search — when you want the candidates, not an answer
 
 ```bash
-curl -s -X POST "$RUNIR_BASE/memory/search" \
+curl -s -X POST "${RUNIR_BASE:-http://127.0.0.1:7700}/memory/search" \
   -H "Authorization: Bearer $RUNIR_API_KEY" -H "Content-Type: application/json" \
   -d '{"userId":"'"$RUNIR_USER_ID"'","query":"<terms>","topK":10}'
 ```
@@ -74,7 +74,7 @@ the history ("where did I live BEFORE Denver?").
 ## 4. Explicit store fallback (only if MCP `runir_store` is unavailable)
 
 ```bash
-curl -s -X POST "$RUNIR_BASE/memory/store" \
+curl -s -X POST "${RUNIR_BASE:-http://127.0.0.1:7700}/memory/store" \
   -H "Authorization: Bearer $RUNIR_API_KEY" -H "Content-Type: application/json" \
   -d '{"userId":"'"$RUNIR_USER_ID"'","text":"<fact to remember>","scope":"user"}'
 ```
