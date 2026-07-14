@@ -11,6 +11,7 @@
   "license": "UNLICENSED",
   "keywords": ["runir", "codex", "memory", "hooks"],
   "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Rúnir Codex",
     "shortDescription": "Install the Rúnir Codex package, then activate companion hooks separately.",
