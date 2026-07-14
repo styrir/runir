@@ -252,8 +252,8 @@ insufficient):**
 | **0** | Design revision (this doc) | ACCEPTED (Codex Sol r5 APPROVED) |
 | **1** | Pi `runir_store` + `/runir remember` + unit gates | **LANDED** (unit 24 + live smoke; Codex ACCEPT) |
 | **2** | Canonical MCP adapter + generated (byte-identical) package artifacts | **LANDED** (`src/mcp/` → both `mcp/runir-mcp.mjs`; vitest + checksum) |
-| **3** | Installed Claude/Codex smokes | Gate 10 (bundled artifact lists + executes `runir_store`) |
-| **4** | Skill / README / `plugins/AGENTS.md` DOX (add MCP-source ownership note) | Docs only |
+| **3** | Installed Claude/Codex smokes | **LANDED** — `npm run test:runir-mcp:installed` (staged install roots) |
+| **4** | Skill / README / `plugins/AGENTS.md` DOX (add MCP-source ownership note) | **LANDED** — skill prefers MCP `runir_store`; DOX notes ownership |
 
 Slice 1 lands independently — Pi does not block on Claude/Codex.
 

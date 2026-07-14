@@ -28,3 +28,4 @@ Packaged Rúnir client integrations. Clients invoke the HTTP service and must re
 - Codex: `npm run test:hooks:contract:codex:local` when available.
 - Pi: `plugins/runir-pi/test/run.sh` (stub harness incl. store unit gates; no live service required). Live explicit-remember smoke: `plugins/runir-pi/test/store-live-smoke.mjs` (needs service + env).
 - MCP: `npm run build:runir-mcp` then `npx vitest run src/mcp` (store unit + stdio protocol; checksum gate in build).
+- MCP installed-style smoke (gate 10): `npm run test:runir-mcp:installed` (stages Claude/Codex plugin copies under temp roots; tools/list + tools/call via bundled mjs only).

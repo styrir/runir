@@ -25,10 +25,18 @@ The plugin package and the hook configuration are separate surfaces.
 - `plugins/runir-codex/scripts/verify_companion_hooks.py` reports which scope is active and which target path is in use
 - Codex `hooks.json` supports only the root `hooks` object. Hook trust state belongs in `config.toml` under `[hooks.state]`; a root `state` object makes Codex reject the hook config.
 
+## Explicit remember (MCP)
+
+After plugin install, MCP exposes **`runir_store`** from the bundled
+`mcp/runir-mcp.mjs` (see `.mcp.json`). Requires `RUNIR_USER_ID` and
+`RUNIR_API_KEY` in the environment (no credentials in the plugin config).
+Companion hooks remain a **separate** activation surface; MCP store works without them.
+
 ## Required environment
 
 - `RUNIR_BASE`
 - `RUNIR_USER_ID`
+- `RUNIR_API_KEY` (for MCP store and authenticated hooks)
 - Codex hooks enabled in `~/.codex/config.toml` with the canonical feature key:
 
 ```toml
