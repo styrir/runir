@@ -6,9 +6,10 @@ Packaged Rúnir client integrations. Clients invoke the HTTP service and must re
 
 ## Ownership
 
-- `runir-claudecode/`: Claude Code plugin (supported beta/1.0 client).
-- `runir-codex/`: Codex plugin (supported beta/1.0 client).
-- `runir-pi/`: Pi coding-agent extension (`runir-memory.ts` + OM lanes). Install via `pi install` path package; not a Claude/Codex marketplace plugin.
+- `runir-claudecode/`: Claude Code plugin (supported beta/1.0 client). Ships bundled `mcp/runir-mcp.mjs` + `.mcp.json`.
+- `runir-codex/`: Codex plugin (supported beta/1.0 client). Ships the same byte-identical `mcp/runir-mcp.mjs` + `.mcp.json`.
+- `runir-pi/`: Pi coding-agent extension (`runir-memory.ts` + OM lanes + native `runir_store`). Install via `pi install` path package; not a Claude/Codex marketplace plugin.
+- Canonical MCP source: `src/mcp/` (outside `plugins/*`). Emit with `npm run build:runir-mcp` — do not create `plugins/runir-mcp`.
 
 ## Local Contracts
 
@@ -26,3 +27,4 @@ Packaged Rúnir client integrations. Clients invoke the HTTP service and must re
 - Claude: `npm run test:hooks:contract:local` when available.
 - Codex: `npm run test:hooks:contract:codex:local` when available.
 - Pi: `plugins/runir-pi/test/run.sh` (stub harness incl. store unit gates; no live service required). Live explicit-remember smoke: `plugins/runir-pi/test/store-live-smoke.mjs` (needs service + env).
+- MCP: `npm run build:runir-mcp` then `npx vitest run src/mcp` (store unit + stdio protocol; checksum gate in build).

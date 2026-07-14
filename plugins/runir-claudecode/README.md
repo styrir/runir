@@ -6,6 +6,7 @@ Claude Code plugin that wires Rúnir into the native Claude plugin lifecycle. Th
 
 - Manifest: `.claude-plugin/plugin.json`
 - Native hook config: `hooks/hooks.json`
+- MCP: `.mcp.json` → bundled `mcp/runir-mcp.mjs` (`runir_store` tool)
 - Marketplace entry: repo root `.claude-plugin/marketplace.json`
 
 ## What it does
@@ -16,6 +17,9 @@ Claude Code plugin that wires Rúnir into the native Claude plugin lifecycle. Th
 | Each turn | `UserPromptSubmit` | `runir-recall.sh` | Recalls relevant memories from Rúnir before each user turn and prepends them via `hookSpecificOutput.additionalContext` |
 | After turn | `Stop` + `StopFailure` | `runir-capture.sh` → `runir_capture.py` | Incrementally captures the new assistant turn to Rúnir with watermark tracking |
 | Session end | `SessionEnd` | `runir-session-end.sh` | Flushes remaining messages, attaches git evidence for sparse sessions, advances cursor |
+| Explicit save | MCP tool `runir_store` | `mcp/runir-mcp.mjs` | User-scope `POST /memory/store` when the model saves deliberately |
+
+`RUNIR_USER_ID` and `RUNIR_API_KEY` must be present in the process environment for MCP (no credentials in plugin config; no default tenant). Rebuild the bundled adapter after changing `src/mcp/`: `npm run build:runir-mcp`.
 
 ## Install
 

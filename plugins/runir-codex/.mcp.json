@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "runir": {
+      "command": "node",
+      "args": ["./mcp/runir-mcp.mjs"],
+      "cwd": ".",
+      "env": {
+        "RUNIR_CLIENT": "codex"
+      }
+    }
+  }
+}

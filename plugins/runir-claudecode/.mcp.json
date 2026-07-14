@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "runir": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/runir-mcp.mjs"],
+      "env": {
+        "RUNIR_CLIENT": "claude"
+      }
+    }
+  }
+}

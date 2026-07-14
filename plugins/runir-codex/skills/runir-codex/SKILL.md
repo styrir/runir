@@ -12,6 +12,7 @@ Use this skill when the task is about making Codex itself dogfood Rúnir in this
 - The packaged Codex skill surface under `skills/`
 - Hook handler scripts under `hooks/`
 - Companion activation and verification helpers under `scripts/`
+- MCP adapter: `.mcp.json` + bundled `mcp/runir-mcp.mjs` (`runir_store` for explicit remember; requires `RUNIR_USER_ID` + `RUNIR_API_KEY` in the environment)
 
 ## Mechanism
 
