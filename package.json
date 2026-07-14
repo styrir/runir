@@ -21,6 +21,7 @@
     "test:ci:exclusive": "RUNIR_CLAUDE_HOOKS_INSTALLED=1 vitest run",
     "build:plugin-archives": "python3 scripts/build-plugin-marketplace-archives.py",
     "build:runir-mcp": "node scripts/build-runir-mcp.mjs",
+    "test:runir-mcp:installed": "tsx scripts/runir-mcp-installed-smoke.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "audit": "npm audit",
     "test:hooks:contract:local": "tsx scripts/runir-claudecode-hook-contract.ts",
