@@ -28,3 +28,4 @@ npx --yes esbuild ../extensions/runir-memory.ts --bundle --platform=node --forma
 node om4-harness.mjs
 node om5-harness.mjs
 node om6-harness.mjs
+node store-harness.mjs
