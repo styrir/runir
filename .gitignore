@@ -1,7 +1,5 @@
+# Dependencies / build
 node_modules/
-.env
-.env.local
-.env*.local
 dist/
 logs/
 coverage/
@@ -11,20 +9,31 @@ coverage/
 __pycache__/
 *.db
 
-# Local tool noise (should not appear in product clones)
-.pipeline/
-.beads/
-.omc/
-.omx/
-.omo/
-.ouroboros/
-.gitnexus/
-.fallow/
+# Secrets (keep .env.example tracked)
+.env
+.env.local
+.env*.local
 
-# Beads / Dolt files (added by bd init)
-.dolt/
-.beads-credential-key
-.beads/proxieddb/
-
-# Local agent skill/scaffold installs (bd setup, etc.) — not product source
+# Local tool / agent / lab noise (do not ship)
 .agents/
+.beads/
+.claude/
+.codex/
+.cursor/
+.dolt/
+.fallow/
+.gitnexus/
+.omc/
+.omo/
+.omx/
+.ouroboros/
+.pipeline/
+.vscode/
+.idea/
+.beads-credential-key
+
+# Keep tracked (product surface — do NOT add these to ignore):
+#   .github/          CI
+#   .claude-plugin/   Claude marketplace packaging for this product
+#   .env.example      install template
+#   .gitignore
