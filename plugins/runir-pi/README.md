@@ -93,12 +93,18 @@ RUNIR_OM_COMPACT_PENDING_TTL_MS=120000
 /om:ping           service reachability + authenticated hook check
 /om:view           staged projection + OM traces (also /runir om)
 /om:recall <id> [lineage]   fetch a stored memory by id (+ supersession chain)
+/runir remember <text>      explicit user-scope store via POST /memory/store
 ```
 
 The `runir_recall` LLM tool exposes the same id lookup to the model, so it
 can expand memory ids cited in injected context. Superseded ids report their
 supersession chain (with the current state marked) instead of a false
 not-found.
+
+The `runir_store` LLM tool stores durable text when the user asks to remember
+or save something (`text`, optional `scope: user|session`). Explicit writes
+require `RUNIR_USER_ID` and `RUNIR_API_KEY` (no default tenant). Session scope
+needs a real Pi session file id.
 
 Tuning (env, defaults shown):
 

@@ -25,4 +25,4 @@ Packaged Rúnir client integrations. Clients invoke the HTTP service and must re
 
 - Claude: `npm run test:hooks:contract:local` when available.
 - Codex: `npm run test:hooks:contract:codex:local` when available.
-- Pi: `plugins/runir-pi/test/run.sh` (stub harness; no live service required).
+- Pi: `plugins/runir-pi/test/run.sh` (stub harness incl. store unit gates; no live service required). Live explicit-remember smoke: `plugins/runir-pi/test/store-live-smoke.mjs` (needs service + env).
