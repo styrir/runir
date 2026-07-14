@@ -8,34 +8,21 @@ import { existsSync } from "node:fs";
 const root = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const artifact = join(root, "plugins/runir-claudecode/mcp/runir-mcp.mjs");
 
-function frame(msg: unknown): string {
-  const body = JSON.stringify(msg);
-  return `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`;
+/** MCP 2024-11-05 stdio: one JSON-RPC object per line. */
+function line(msg: unknown): string {
+  return `${JSON.stringify(msg)}\n`;
 }
 
-function parseFrames(raw: string | Buffer): unknown[] {
-  // Content-Length is bytes, not JS string units (ú in Rúnir is 2 UTF-8 bytes).
-  const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw, "utf8");
-  const out: unknown[] = [];
-  let i = 0;
-  while (i < buf.length) {
-    const headerEnd = buf.indexOf("\r\n\r\n", i);
-    if (headerEnd === -1) break;
-    const header = buf.subarray(i, headerEnd).toString("utf8");
-    const m = header.match(/Content-Length:\s*(\d+)/i);
-    if (!m) break;
-    const len = Number(m[1]);
-    const start = headerEnd + 4;
-    if (buf.length < start + len) break;
-    const body = buf.subarray(start, start + len).toString("utf8");
-    out.push(JSON.parse(body));
-    i = start + len;
-  }
-  return out;
+function parseNdjson(raw: string): unknown[] {
+  return raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
 }
 
 describe("runir-mcp stdio", () => {
-  it("lists runir_store and stores via stub HTTP", async () => {
+  it("lists runir_store and stores via stub HTTP (NDJSON framing)", async () => {
     if (!existsSync(artifact)) {
       throw new Error(
         `Missing ${artifact} — run npm run build:runir-mcp first`,
@@ -77,13 +64,13 @@ describe("runir-mcp stdio", () => {
       stdio: ["pipe", "pipe", "pipe"],
     });
 
-    const stdoutChunks: Buffer[] = [];
-    child.stdout.on("data", (c: Buffer) => {
-      stdoutChunks.push(Buffer.from(c));
+    let stdout = "";
+    child.stdout.on("data", (c) => {
+      stdout += c.toString("utf8");
     });
 
     const send = (msg: unknown) => {
-      child.stdin.write(frame(msg));
+      child.stdin.write(line(msg));
     };
 
     send({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
@@ -105,10 +92,14 @@ describe("runir-mcp stdio", () => {
         5000,
       );
       const check = () => {
-        const msgs = parseFrames(Buffer.concat(stdoutChunks));
-        if (msgs.length >= 3) {
-          clearTimeout(t);
-          resolve();
+        try {
+          const msgs = parseNdjson(stdout);
+          if (msgs.length >= 3) {
+            clearTimeout(t);
+            resolve();
+          }
+        } catch {
+          // partial line
         }
       };
       child.stdout.on("data", check);
@@ -119,7 +110,10 @@ describe("runir-mcp stdio", () => {
     child.kill();
     server.close();
 
-    const msgs = parseFrames(Buffer.concat(stdoutChunks)) as Array<{
+    // No Content-Length headers on the wire.
+    expect(stdout.includes("Content-Length")).toBe(false);
+
+    const msgs = parseNdjson(stdout) as Array<{
       id?: number;
       result?: {
         tools?: Array<{ name: string }>;

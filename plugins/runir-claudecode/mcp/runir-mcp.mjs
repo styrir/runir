@@ -152,11 +152,8 @@ var TOOL_DEF = {
   }
 };
 function writeMessage(message) {
-  const body = JSON.stringify(message);
-  const header = `Content-Length: ${Buffer.byteLength(body, "utf8")}\r
-\r
-`;
-  process.stdout.write(header + body);
+  process.stdout.write(`${JSON.stringify(message)}
+`);
 }
 function ok(id, result) {
   writeMessage({ jsonrpc: "2.0", id, result });
@@ -245,36 +242,14 @@ async function runStdioServer(getConfig = () => resolveStoreConfig()) {
   });
   async function drain() {
     while (true) {
-      const headerEnd = buffer.indexOf("\r\n\r\n");
-      if (headerEnd === -1) {
-        const nl = buffer.indexOf("\n");
-        if (nl === -1) return;
-        const line = buffer.subarray(0, nl).toString("utf8").trim();
-        buffer = buffer.subarray(nl + 1);
-        if (!line) continue;
-        let msg2;
-        try {
-          msg2 = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        await dispatch(msg2, getConfig);
-        continue;
-      }
-      const header = buffer.subarray(0, headerEnd).toString("utf8");
-      const match = header.match(/Content-Length:\s*(\d+)/i);
-      if (!match) {
-        buffer = buffer.subarray(1);
-        continue;
-      }
-      const length = Number(match[1]);
-      const bodyStart = headerEnd + 4;
-      if (buffer.length < bodyStart + length) return;
-      const body = buffer.subarray(bodyStart, bodyStart + length).toString("utf8");
-      buffer = buffer.subarray(bodyStart + length);
+      const nl = buffer.indexOf("\n");
+      if (nl === -1) return;
+      const line = buffer.subarray(0, nl).toString("utf8").trim();
+      buffer = buffer.subarray(nl + 1);
+      if (!line) continue;
       let msg;
       try {
-        msg = JSON.parse(body);
+        msg = JSON.parse(line);
       } catch {
         continue;
       }
