@@ -1,6 +1,7 @@
 /**
- * Minimal MCP stdio server for runir_store (Content-Length framed JSON-RPC).
+ * Minimal MCP stdio server for runir_store (newline-delimited JSON-RPC).
  * No SDK dependency — esbuild emits a self-contained artifact for Claude/Codex.
+ * Transport: MCP 2024-11-05 stdio (one JSON object per line).
  */
 
 import {
