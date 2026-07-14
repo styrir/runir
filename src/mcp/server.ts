@@ -46,10 +46,12 @@ const TOOL_DEF = {
   },
 };
 
+/**
+ * MCP 2024-11-05 stdio transport: newline-delimited JSON-RPC (one message per line).
+ * @see https://modelcontextprotocol.io/specification/2024-11-05/basic/transports
+ */
 function writeMessage(message: unknown): void {
-  const body = JSON.stringify(message);
-  const header = `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n`;
-  process.stdout.write(header + body);
+  process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
 function ok(id: JsonRpcId, result: unknown): void {
@@ -143,8 +145,7 @@ async function dispatch(
 }
 
 /**
- * Read Content-Length framed JSON-RPC from stdin and dispatch.
- * Also accepts a single-line NDJSON message (test convenience).
+ * Read newline-delimited JSON-RPC from stdin and dispatch (MCP 2024-11-05 stdio).
  */
 export async function runStdioServer(
   getConfig: () => StoreConfig = () => resolveStoreConfig(),
@@ -163,39 +164,14 @@ export async function runStdioServer(
 
   async function drain(): Promise<void> {
     while (true) {
-      const headerEnd = buffer.indexOf("\r\n\r\n");
-      if (headerEnd === -1) {
-        // NDJSON fallback: whole line is a message (no Content-Length).
-        const nl = buffer.indexOf("\n");
-        if (nl === -1) return;
-        const line = buffer.subarray(0, nl).toString("utf8").trim();
-        buffer = buffer.subarray(nl + 1);
-        if (!line) continue;
-        let msg: JsonRpcRequest;
-        try {
-          msg = JSON.parse(line) as JsonRpcRequest;
-        } catch {
-          continue;
-        }
-        await dispatch(msg, getConfig);
-        continue;
-      }
-
-      const header = buffer.subarray(0, headerEnd).toString("utf8");
-      const match = header.match(/Content-Length:\s*(\d+)/i);
-      if (!match) {
-        // Drop a byte and retry (malformed header).
-        buffer = buffer.subarray(1);
-        continue;
-      }
-      const length = Number(match[1]);
-      const bodyStart = headerEnd + 4;
-      if (buffer.length < bodyStart + length) return;
-      const body = buffer.subarray(bodyStart, bodyStart + length).toString("utf8");
-      buffer = buffer.subarray(bodyStart + length);
+      const nl = buffer.indexOf("\n");
+      if (nl === -1) return;
+      const line = buffer.subarray(0, nl).toString("utf8").trim();
+      buffer = buffer.subarray(nl + 1);
+      if (!line) continue;
       let msg: JsonRpcRequest;
       try {
-        msg = JSON.parse(body) as JsonRpcRequest;
+        msg = JSON.parse(line) as JsonRpcRequest;
       } catch {
         continue;
       }
