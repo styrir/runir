@@ -25,3 +25,6 @@ __pycache__/
 .dolt/
 .beads-credential-key
 .beads/proxieddb/
+
+# Local agent skill/scaffold installs (bd setup, etc.) — not product source
+.agents/
