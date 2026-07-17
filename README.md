@@ -2,7 +2,7 @@
 
 Standalone HTTP memory service for AI agents. Rúnir provides persistent, just-in-time, just-enough memory for model turns: relevant recall before each turn, durable capture after turns, and watermarked session-close bookkeeping at boundaries — all without depending on any specific agent framework. It represents knowledge as Semiotes, continuously interprets them through Semiosis, conditions that interpretation through Hexis, and consolidates stable meaning into Noema. Syndesis enables cross-session recall. SurrealDB is the operational source of truth. Rúnir helps AI practitioners preserve continuity, retrieve relevant knowledge, and maintain long-term context over time.
 
-This README is the front door. The frozen zed-01 beta surface (endpoints, ratified decisions, degraded modes, known limitations) is [docs/zed-01-beta-scope.md](docs/zed-01-beta-scope.md); the canonical architecture narrative is [docs/agent-guidance/architecture-canon.md](docs/agent-guidance/architecture-canon.md).
+This README is the front door. The frozen zed-01 beta surface (endpoints, ratified decisions, degraded modes, known limitations) is [docs/zed-01-beta-scope.md](docs/zed-01-beta-scope.md). This repository is the filtered product tree and the active development home; the deeper architecture narrative and lab tooling remained in the pre-1.0 forge archive (provenance in [STYRIR_EXPORT.md](STYRIR_EXPORT.md)).
 
 ## What it does
 
@@ -12,7 +12,7 @@ Rúnir gives any AI agent persistent, searchable memory across sessions. The ope
 >
 > Before each turn, give the model only the additional memory relevant to the current prompt.
 
-**Per-turn recall is the continuity surface.** There is no manufactured session-start briefing: the session-opener lane was retired in June 2026 (see [architecture canon §1](docs/agent-guidance/architecture-canon.md) and [beta scope §3](docs/zed-01-beta-scope.md)). A request that identifies itself as a session opener (`sessionKind: "opener"`) gets an explicit `{"skipped": true, "reason": "opener_retired"}` rather than a synthetic briefing.
+**Per-turn recall is the continuity surface.** There is no manufactured session-start briefing: the session-opener lane was retired in June 2026 (see [beta scope §3](docs/zed-01-beta-scope.md)). A request that identifies itself as a session opener (`sessionKind: "opener"`) gets an explicit `{"skipped": true, "reason": "opener_retired"}` rather than a synthetic briefing.
 
 Rúnir runs as an HTTP service that agents call around their turn lifecycle:
 
@@ -54,7 +54,7 @@ Agent (any framework)
   └─ POST /debug/ping          ← dry-run pipeline (RUNIR_DEBUG=1 only)
 ```
 
-The frozen endpoint list with source-line registrations lives in [docs/zed-01-beta-scope.md §1](docs/zed-01-beta-scope.md).
+The frozen endpoint list with source-line registrations lives in [docs/zed-01-beta-scope.md §1](docs/zed-01-beta-scope.md). Not shown above: the maintenance-class internal routes (`POST /hooks/entity-repair`, `POST /hooks/entity-candidates` — `MAINTENANCE_SECRET` bearer), `POST /hooks/evidence` (its own separate `RUNIR_EVIDENCE_SECRET` bearer), and `POST /hooks/traces/:id/rate` — all ops-only, not client surfaces.
 
 ### Retrieval pipeline
 
@@ -99,7 +99,7 @@ Beyond the real-time turn lifecycle, Rúnir runs asynchronous maintenance:
 | HTTP framework | Hono | Lightweight, fast, framework-independent |
 | Database | SurrealDB | Single DB for vector + graph + document + FTS — no separate stores |
 | Embeddings | Nomic `nomic-embed-text:v1.5` (768-dim) via Ollama | Local, no API cost; same vector space as cloud Nomic API |
-| LLM (extraction / think) | OpenAI-compatible gateway (Requesty) | Gemini Flash Lite default for capture extraction |
+| LLM (extraction / think) | OpenAI-compatible gateway (`RUNIR_LLM_BASE_URL`; code default OpenRouter) | `openai/gpt-5.4-mini` default for capture extraction; Gemini Flash Lite defaults for the LLM reranker and `/memory/think` |
 | Runtime | Node.js ≥ 22.12 + tsx | Direct TypeScript execution, no build step |
 
 ## Setup
@@ -129,7 +129,7 @@ That is the whole flow: `npm run dev` and `npm start` load `.env` themselves via
 | Variable | Guidance |
 |---|---|
 | `SURREAL_URL` / `SURREAL_USER` / `SURREAL_PASS` / `SURREAL_NS` / `SURREAL_DB` | Required. SurrealDB connection. |
-| `OPENROUTER_API_KEY` | Extraction-gateway bearer (**legacy variable name** — it carries the Requesty gateway key, not an OpenRouter key). Required for `/hooks/capture`, `/memory/think`, and maintenance; recall works without it. |
+| `OPENROUTER_API_KEY` | Extraction-gateway bearer (**legacy variable name** — it authenticates to whichever OpenAI-compatible gateway `RUNIR_LLM_BASE_URL` points at; code default OpenRouter, operator deployments may point it elsewhere, e.g. Requesty). Required for `/hooks/capture`, `/memory/think`, and maintenance; recall works without it. |
 | `RUNIR_API_KEY` | Service auth bearer for all non-public routes. Without it the service is **fail-open outside production** and logs a loud startup WARNING (see auth posture below). |
 | `RUNIR_USER_ID` | Default tenant when requests omit `userId`. Set it. |
 | `RUNIR_RECALL_RELEVANCE_FLOOR` | Set `0.55` (the calibrated value, shipped in `.env.example`). Code default `0` = gate off. |
@@ -162,7 +162,7 @@ npm start
 
 ```bash
 curl http://localhost:7700/health
-# {"status":"ok","userId":"owner","reranker":"local","topK":5}
+# {"status":"ok","userId":"owner","reranker":"local","topK":5,"supersessionJudge":{…}}
 ```
 
 `GET /ready` is the deploy gate: `200` only when startup schema/init checks completed and the DB probe succeeds at request time, `503` with bootstrap and DB error details otherwise.
@@ -178,19 +178,16 @@ npm run test:ci
 npm run check
 ```
 
-`npm run test:ci` runs the full Vitest suite. There are no config-level test exclusions; environment-dependent suites gate themselves with env flags and self-skip when their dependencies are absent:
+`npm run test:ci` runs the product Vitest suite (it aliases `test:ci:fast`). The product-repo `vitest.config.ts` excludes suites that depend on forge-only lab tooling not included in this export; environment-dependent suites additionally gate themselves with env flags and self-skip when their dependencies are absent:
 
-- `npm run test:ci:exclusive` — sets `RUNIR_CLAUDE_HOOKS_INSTALLED=1` to un-skip the hook-shell tests (run nightly in CI; see `.github/workflows/nightly-exclusive.yml`)
-- `npm run test:ci:slow` — sets `RUNIR_TEST_SLOW_LANE=1` for the containerized integration lane (`test:ci:slow:up` / `test:ci:slow:down` manage the Docker stack)
-- `test:ingestion-harness:live` / `test:replay-harness:live` — opt-in live harness suites
+- `npm run test:ci:exclusive` — sets `RUNIR_CLAUDE_HOOKS_INSTALLED=1` to un-skip the hook-shell tests (opt-in; run it manually — CI's `ci.yml` does not schedule it)
+- `npm run test:ci:slow` — sets `RUNIR_TEST_SLOW_LANE=1` for the containerized integration lane (`test:ci:slow:up` / `test:ci:slow:down` manage the Docker stack in `docker-compose.test.yml`)
+- `npm run test:schema:events` — validates the event fixtures under `fixtures/events/` against `schemas/event.schema.json`
+- `npm run test:runir-mcp:installed` — smoke-tests the installed `runir_store` MCP server, launching it from the staged `.mcp.json`
 
-### Contract + regression routines
+### Contract routines
 
 ```bash
-# Deterministic corpus seed + verification harness
-npm run test:seed-verify
-npm run test:seed-verify -- --reuse-local-service
-
 # Hook contract tests (JSON summary to stdout)
 npm run test:hooks:contract:local          # claudecode client gate
 npm run test:hooks:contract:codex:local    # codex smoke gate
@@ -200,43 +197,14 @@ npm run test:hooks:contract:local:markdown
 npm run test:hooks:contract:codex:local:markdown
 ```
 
-Deterministic `seed-and-verify` workflow:
-
-- creates or resets an isolated verification namespace/database
-- seeds deterministic multi-tenant data across users, sessions, paths, clients, dates, and lineage states
-- starts a local Rúnir service on a dedicated port
-- verifies both direct DB invariants and live HTTP behavior
-- writes the latest report to `.pipeline/seed-and-verify-latest.json`
-
-Attached mode (`--reuse-local-service`) reuses `http://127.0.0.1:7700` by default, skips direct DB seeding, and runs HTTP smoke checks against the live local service instead of the isolated seeded corpus. Override with `--service-url=` and `--attached-user=` when needed.
-
-### Direct harness / probe scripts
-
-```bash
-# Ingestion harness (dry-run or live)
-npx tsx scripts/ingestion-harness.ts --dry-run
-
-# Turn-by-turn replay harness
-npx tsx scripts/turn-by-turn-replay-harness.ts --dry-run
-
-# Local multi-session recall simulation (writes .md + .json artifacts)
-npx tsx scripts/local-session-recall-sim.ts --service-url=http://localhost:7700 --path=/Users/brooks/Code/runir
-
-# Recall quality audit (baseline diff + regression threshold checks)
-npx tsx scripts/recall-quality-audit.ts --service-url=http://localhost:7700
-
-# Shell probe
-bash scripts/runir-probe.sh "what are we working on in runir" --pretty
-```
-
-Additional diagnostics, corpus, and baseline tooling is catalogued in [AGENTS.md](AGENTS.md) (§Commands, §Corpus + baselines).
+The deterministic seed-and-verify workflow, ingestion/replay harnesses, recall-quality audit, and probe scripts are lab tooling that remained in the pre-1.0 forge archive (see [STYRIR_EXPORT.md](STYRIR_EXPORT.md)); they are not part of this product tree.
 
 ## Deployment
 
 The zed-01 beta install path is the npm scripts above: `cp .env.example .env`, fill values, `npm run dev` or `npm start`. There is no cloud deployment lane in beta scope.
 
 - `npm run deploy:preflight` — optional pre-start sanity check: verifies `RUNIR_API_KEY`, DB connectivity, idempotent schema ensures, and the embedding provider, exiting non-zero on failure.
-- **launchd (owner-ops):** the operator's own always-on local instance runs as a user LaunchAgent — that setup is documented in [docs/ops/local-launchd-service.md](docs/ops/local-launchd-service.md) and is not a beta deliverable. Broader environment/ops guidance: [docs/agent-guidance/operations-and-env.md](docs/agent-guidance/operations-and-env.md).
+- **launchd (owner-ops):** the operator's own always-on local instance runs as a user LaunchAgent — that setup is documented in [docs/ops/local-launchd-service.md](docs/ops/local-launchd-service.md) and is not a beta deliverable.
 
 ## API contract
 
@@ -299,7 +267,7 @@ Call on session close. **Does zero LLM work**: records the session watermark and
 { "skipped": false, "rawTurnsRecorded": 12, "extraction": "disabled" }
 ```
 
-Clients advance their write state on the HTTP status (2xx) only; the body is informational. The optional `gitCommits` field (client-collected commit metadata for sparse sessions) is still accepted.
+Clients advance their write state on the HTTP status (2xx) only; the body is informational. The optional `gitCommits` field is tolerated in the request body, but no live code path consumes it.
 
 ### `POST /hooks/feedback`
 
@@ -419,15 +387,15 @@ Per the ratified zed-01 client decision (D2 in [docs/zed-01-beta-scope.md](docs/
 
 Packaged plugin under `plugins/runir-claudecode/` (`.claude-plugin/marketplace.json` is the repo-local marketplace catalog; install truth is the Claude-installed plugin copy created by `claude plugin install`). Release gate: `npm run test:hooks:contract:local`.
 
-The plugin also ships the `runir-search` skill — the agent-steered escalation path over `/memory/think`, `/memory/search`, and `/memory/lineage`.
+The plugin also ships the `runir-search` skill — the agent-steered escalation path over `/memory/think`, `/memory/search`, and `/memory/lineage` — and a `runir_store` MCP server (`mcp/runir-mcp.mjs`, wired via the plugin's `.mcp.json`) for explicit "remember this" saves over `POST /memory/store`. Build the MCP bundle with `npm run build:runir-mcp`; smoke the installed copy with `npm run test:runir-mcp:installed`.
 
 ### Codex — SUPPORTED WITH SMOKE GATE
 
-Package under `plugins/runir-codex/`: `runir_user_prompt.py` calls `/hooks/recall` on `UserPromptSubmit`, `runir_stop_capture.py` calls `/hooks/capture` on `Stop`. Plugin installation and companion-hook activation are separate steps (`scripts/activate_companion_hooks.py` / `verify_companion_hooks.py`). Gate at each cut: `npm run test:hooks:contract:codex:local`.
+Package under `plugins/runir-codex/`: `hooks/runir_user_prompt.py` calls `/hooks/recall` on `UserPromptSubmit`, `hooks/runir_stop_capture.py` calls `/hooks/capture` on `Stop`. It ships the same `runir_store` MCP adapter as the Claude Code plugin (`mcp/runir-mcp.mjs` is byte-identical across the two plugins; each stages its own `.mcp.json`). Plugin installation and companion-hook activation are separate steps (`scripts/activate_companion_hooks.py` / `verify_companion_hooks.py`). Gate at each cut: `npm run test:hooks:contract:codex:local`.
 
 ### Out of beta scope
 
-Hermes, OpenClaw, and Pi integrations exist in-repo but are **not** zed-01 beta clients.
+The Pi integration (`plugins/runir-pi/`, including the `/runir remember` command and a native `runir_store` tool) exists in-repo but is **not** a zed-01 beta client. The Hermes and OpenClaw integrations remained in the forge archive and are not part of this tree.
 
 ### Any HTTP client
 
@@ -447,4 +415,4 @@ curl -X POST http://localhost:7700/memory/store \
 
 ## Release status
 
-**Stable 1.0.0** (2026-07-13, tag `v1.0.0`). The zed-01 beta surface remains the frozen endpoint baseline in [docs/zed-01-beta-scope.md](docs/zed-01-beta-scope.md): the endpoint surface, ratified decisions (session-start posture, supported clients, install path, security posture), degraded modes, and known limitations. Architecture rationale and settled decisions live in [docs/agent-guidance/architecture-canon.md](docs/agent-guidance/architecture-canon.md); operational guidance in [docs/agent-guidance/operations-and-env.md](docs/agent-guidance/operations-and-env.md).
+**Stable 1.0.0** (2026-07-13, tag `v1.0.0`). The zed-01 beta surface remains the frozen endpoint baseline in [docs/zed-01-beta-scope.md](docs/zed-01-beta-scope.md): the endpoint surface, ratified decisions (session-start posture, supported clients, install path, security posture), degraded modes, and known limitations. Owner-ops operational guidance lives in [docs/ops/local-launchd-service.md](docs/ops/local-launchd-service.md); the deeper architecture rationale remained in the pre-1.0 forge archive (provenance in [STYRIR_EXPORT.md](STYRIR_EXPORT.md)).
