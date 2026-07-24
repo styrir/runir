@@ -23,6 +23,16 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 > source of truth; don't `bd import` during normal operation; don't
 > reach for third-party Dolt hosting before trying the default).
 
+
+## Machine ops (shared agent-ops)
+
+Long-lived Beads + Dolt on the shared server (`com.beads.shared-dolt`, `127.0.0.1:3308`). **Database:** `runir_product`.
+
+- **Dolt push:** `bd-dolt-push-safe --repo "$PWD"` (from `~/Code/agent-ops` → `~/.local/bin`)
+- **Grok multi-stage:** shared `involved-task` at `~/.grok/workflows/`. Babysit: `watch-involved-task --run-dir <wf_dir> --mode watch`
+- **Ops contract:** `~/Code/agent-ops/AGENTS.md` — not a Leit product surface
+
+
 ## Quick Reference
 
 ```bash
