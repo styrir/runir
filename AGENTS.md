@@ -28,10 +28,13 @@ This project uses **bd** (beads) for issue tracking. Run `bd prime` for full wor
 
 Long-lived Beads + Dolt on the shared server (`com.beads.shared-dolt`, `127.0.0.1:3308`). **Database:** `runir_product`.
 
-- **Dolt push:** `bd-dolt-push-safe --repo "$PWD"` (from `~/Code/agent-ops` → `~/.local/bin`)
-- **Grok multi-stage:** shared `involved-task` at `~/.grok/workflows/`. Babysit: `watch-involved-task --run-dir <wf_dir> --mode watch`
-- **Ops contract:** `~/Code/agent-ops/AGENTS.md` — not a Leit product surface
+- **Closeout Dolt push:** `bd-dolt-push-safe --repo "$PWD"` (from `~/Code/agent-ops` → `~/.local/bin`)
+- **Grok multi-stage runs:** machine-global `workgraph` at `~/.grok/workflows/` (owned by agent-ops; install via `~/Code/agent-ops/install.sh`). Human launcher: `workgraph "task…"` / `workgraph auto "…"` / `workgraph --run "…"`. Intent router: `workgraph-intent` (pre-launch shape only — does not rewrite a running graph). Babysit: `watch-workgraph --run-dir <wf_dir> --mode watch`.
+- **workgraph closeout when ship=true:** Dolt push, then **git commit + git push** of product changes — do not leave shipped work uncommitted for the human.
+- **Ops contract / recovery:** `~/Code/agent-ops/AGENTS.md` and `~/Code/agent-ops/docs/` — not a Leit product surface; no Workspace Execution / GraphQL ownership here.
+- **Workflow graph principles:** `~/Code/agent-ops/docs/workflow-graph-hardening-plan.md` and `~/Code/agent-ops/templates/workflow-design-principles.md` — thin orchestrator + capped review; do not invent unbounded multi-reviewer graphs.
 
+Do not copy agent-ops scripts into this repo. Do not pin `.grok/workflows/workgraph.rhai` unless intentional product divergence.
 
 ## Quick Reference
 
