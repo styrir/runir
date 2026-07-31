@@ -7,6 +7,9 @@ Native Grok lifecycle adapter for Rúnir (thin HTTP client).
 | Path | Role |
 |------|------|
 | `hooks/runir-grok.py` | Source of truth for UserPromptSubmit / PreToolUse / Stop |
+| `lib/runir_core.py` | Shared auth/HTTP/envelope/recall+capture leaves (path-loaded) |
+| `scripts/headless_inject.py` | Headless one-shot: recall → `--prompt-json` → grok → capture |
+| `scripts/runir_ask.sh` | Thin ask.sh-compatible wrapper → `headless_inject.py` |
 | `templates/user-hooks.json` | Hooks document template (`__PLUGIN_ROOT__`, narrowed PreToolUse matcher) |
 | `scripts/install_hooks.py` | Deploy template → `~/.grok/hooks/runir-grok.json` |
 | `scripts/verify_hooks.py` | Assert matcher ≠ `.*`, command path, timeout floors; `--skill` for /runir |
@@ -15,7 +18,7 @@ Native Grok lifecycle adapter for Rúnir (thin HTTP client).
 | `scripts/runir_watch.py` | Live second-pane tail (`--mode once|watch`) |
 | `skills/runir/SKILL.md` | `/runir` slash skill (SoT; user-invocable) |
 | `scripts/memory_bridge.py` | Idempotent `[memory]` config + write-only MEMORY.md bridge |
-| `tests/` | Unit tests for D1–D4 + P (+ fail-open + observability) |
+| `tests/` | Unit tests for D1–D4 + P (+ fail-open + observability + headless) |
 
 ## Hardening
 
@@ -87,13 +90,77 @@ python3 plugins/runir-grok/scripts/runir_watch.py --mode watch  # live tail
 Instrumentation is **fail-open**: state write failures never change hook exit
 codes or decision JSON.
 
+## Headless inject (programmatic one-shots)
+
+TUI hooks use a correction gate (deny + re-prompt) that can burn an extra model
+round. For ask.sh-style / batch callers that need **pre-inference** memory without
+that re-burn, use the headless path:
+
+```bash
+# Direct
+python3 plugins/runir-grok/scripts/headless_inject.py \
+  --prompt "What did we decide about the API?" --json --yolo
+
+# ask.sh-compatible thin wrapper (opt-in; ask.sh itself is untouched)
+plugins/runir-grok/scripts/runir_ask.sh "What did we decide about the API?" --json --yolo
+```
+
+Flow:
+
+1. `POST /hooks/recall` → `prependContext` (fail-open empty inject on error)
+2. Build `grok --prompt-json` content blocks: **memory text first** (with
+   `RECALL_FEEDBACK_PREFIX` untrusted envelope), **user prompt second**. Never
+   sets `systemPromptOverride`.
+3. Spawns `grok --prompt-json … --output-format json` with
+   `RUNIR_GROK_DISABLE_GATE=1` so installed TUI hooks no-op for this child.
+4. Parses `sessionId` + `modelUsage.*.modelCalls` (expect `1` when no gate re-burn).
+5. `POST /hooks/capture` with the **original** user text + assistant reply
+   (skipped under `--no-capture`; capture failure is non-fatal).
+
+### Flags
+
+| Flag | Meaning |
+|------|---------|
+| `--prompt TEXT` / `--prompt-file PATH` | User prompt (required, exclusive) |
+| `--resume SESSION` | Pass through to `grok --resume` |
+| `--path CWD` | Workspace for recall/capture/`--cwd` |
+| `--yolo` | Maps to grok `--always-approve` |
+| `--no-capture` | Skip post-turn capture |
+| `--timeout SECONDS` | Subprocess timeout |
+| `--json` | Print `{sessionId,modelCalls,text,memoryInjected,…}` |
+
+Exit codes: `0` ok · `2` usage/missing `RUNIR_USER_ID` · `3` spawn/nonzero · `4` unparseable stdout.
+
+### Privacy note (`--prompt-json` argv)
+
+Verified `grok --help`: `--prompt-json` takes **inline JSON content blocks**, not a
+file path. The script still writes a mode-`0600` tempfile as intermediate storage,
+but the JSON string is passed on argv (visible to local `ps` for the process
+lifetime). Do not use this path for highly sensitive prompts on multi-user hosts
+until the CLI gains a path/`@file` form.
+
+### Env
+
+| Variable | Role |
+|----------|------|
+| `RUNIR_USER_ID` | Required (process env or `RUNIR_ENV_FILE`) |
+| `RUNIR_API_KEY` | Optional bearer for Rúnir HTTP (parent process only; stripped from headless grok child env) |
+| `RUNIR_BASE` / `RUNIR_RECALL_URL` / `RUNIR_CAPTURE_URL` | Endpoints (loopback http(s) by default; non-loopback requires HTTPS + `RUNIR_ALLOW_REMOTE_ENDPOINTS=1`) |
+| `RUNIR_ENV_FILE` | dotenv fallback for credentials (stripped from headless grok child env) |
+| `RUNIR_ALLOW_REMOTE_ENDPOINTS=1` | Opt-in: allow non-loopback HTTPS recall/capture URLs |
+| `RUNIR_GROK_DISABLE_GATE=1` | Full no-op of hook `main()` (all events). Set automatically on the headless child; also usable for manual suppression. Exact `"1"` only. |
+| `RUNIR_E2E=1` | Opt-in live canary `tests/test_e2e_headless_live.py` |
+
 ## Tests
 
 ```bash
-python3 -m pytest plugins/runir-grok/tests -q
+pytest plugins/runir-grok/tests -q
+# Live canary (needs running Rúnir + grok + credentials):
+RUNIR_E2E=1 pytest plugins/runir-grok/tests/test_e2e_headless_live.py -q
 ```
 
 ## Non-goals
 
-ACP wrapper, embeddings (`[memory.embedding]` unset), Stop UX A/B, host chrome /
-Pi ExtensionAPI footer parity, OpenMemory views.
+ACP multi-turn wrapper (deferred), embeddings (`[memory.embedding]` unset), Stop UX A/B,
+host chrome / Pi ExtensionAPI footer parity, OpenMemory views, edits to external
+`ask.sh`, `systemPromptOverride` for per-turn memory.
