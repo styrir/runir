@@ -10,6 +10,7 @@ import pytest
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 HOOK_PATH = PLUGIN_ROOT / "hooks" / "runir-grok.py"
+CORE_PATH = PLUGIN_ROOT / "lib" / "runir_core.py"
 
 
 def load_hook_module():
@@ -17,9 +18,31 @@ def load_hook_module():
     # Fresh load per session is fine; allow re-import in long pytest runs.
     if name in sys.modules:
         return sys.modules[name]
+    # Ensure lib/ is importable for hook's runir_core import.
+    lib = str(PLUGIN_ROOT / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
     spec = importlib.util.spec_from_file_location(name, HOOK_PATH)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load {HOOK_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_core_module():
+    """Load lib/runir_core.py (always reload so edits are visible)."""
+    name = "runir_core_under_test"
+    if name in sys.modules:
+        del sys.modules[name]
+    # Also drop cached real module name if present so tests see this load.
+    lib = str(PLUGIN_ROOT / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    spec = importlib.util.spec_from_file_location(name, CORE_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {CORE_PATH}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
@@ -33,6 +56,9 @@ def load_script_module(script_name: str, module_name: str | None = None):
     # Always reload so edits during a test session are visible.
     if name in sys.modules:
         del sys.modules[name]
+    lib = str(PLUGIN_ROOT / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load {path}")
@@ -56,3 +82,16 @@ def hook(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "RUNIR_RECALL_DEDUPE_TTL_S", 3600.0)
     monkeypatch.setattr(mod, "RUNIR_RECALL_DEDUPE_MAX", 32)
     return mod
+
+
+@pytest.fixture
+def core():
+    return load_core_module()
+
+
+@pytest.fixture
+def load_inject():
+    def _load():
+        return load_script_module("headless_inject.py", "runir_grok_headless_inject_ut")
+
+    return _load
