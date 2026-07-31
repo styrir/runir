@@ -26,6 +26,22 @@ def load_hook_module():
     return module
 
 
+def load_script_module(script_name: str, module_name: str | None = None):
+    """Load a scripts/*.py module by filename (e.g. runir_inspect.py)."""
+    path = PLUGIN_ROOT / "scripts" / script_name
+    name = module_name or f"runir_grok_{path.stem}_under_test"
+    # Always reload so edits during a test session are visible.
+    if name in sys.modules:
+        del sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 @pytest.fixture
 def hook(tmp_path, monkeypatch):
     mod = load_hook_module()
