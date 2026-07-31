@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-import io
 import json
 import sys
 from pathlib import Path
@@ -101,13 +100,7 @@ def test_fetch_runir_facts_parses_service_memory_field(bridge, monkeypatch):
 
 
 def test_upsert_managed_opaque_windows_path(bridge):
-    existing = (
-        "# Memory\n\n"
-        f"{bridge.BEGIN}\n"
-        "old\n"
-        f"{bridge.END}\n"
-        "tail keeps\n"
-    )
+    existing = f"# Memory\n\n{bridge.BEGIN}\nold\n{bridge.END}\ntail keeps\n"
     managed = bridge.format_managed_section(
         [r"path is C:\Users\me\project\file.txt"],
         canary=False,

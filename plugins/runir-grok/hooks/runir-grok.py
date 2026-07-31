@@ -34,11 +34,47 @@ import time
 import urllib.request
 import uuid
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Mapping
 
 RUNIR_BASE = os.environ.get("RUNIR_BASE", "http://127.0.0.1:7700").rstrip("/")
-RUNIR_USER_ID = os.environ.get("RUNIR_USER_ID")
-RUNIR_API_KEY = os.environ.get("RUNIR_API_KEY")
+
+
+def read_dotenv_value(path: str, key: str) -> str | None:
+    """Read KEY=value from a dotenv-style file. Silent on any read error."""
+    if not path or not key:
+        return None
+    prefix = f"{key}="
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                trimmed = line.strip()
+                if (
+                    not trimmed
+                    or trimmed.startswith("#")
+                    or not trimmed.startswith(prefix)
+                ):
+                    continue
+                raw = trimmed[len(prefix) :].strip()
+                if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+                    raw = raw[1:-1]
+                return raw.strip() or None
+    except OSError:
+        pass
+    return None
+
+
+def resolve_credential(key: str, env: Mapping[str, str] | None = None) -> str | None:
+    """Process env first, then the explicitly configured RUNIR_ENV_FILE."""
+    source = os.environ if env is None else env
+    value = (source.get(key) or "").strip()
+    if value:
+        return value
+    env_file = (source.get("RUNIR_ENV_FILE") or "").strip()
+    return read_dotenv_value(env_file, key) if env_file else None
+
+
+RUNIR_USER_ID = resolve_credential("RUNIR_USER_ID")
+RUNIR_API_KEY = resolve_credential("RUNIR_API_KEY")
 RUNIR_CLIENT = os.environ.get("RUNIR_GROK_CLIENT", "grok")
 RUNIR_USER_AGENT = os.environ.get("RUNIR_GROK_USER_AGENT", "runir-grok-hook/0.1")
 RUNIR_RECALL_URL = os.environ.get("RUNIR_RECALL_URL", f"{RUNIR_BASE}/hooks/recall")

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env python3 \"__PLUGIN_ROOT__/hooks/runir-grok.py\"",
+            "command": "/usr/bin/env __ENV_WIRING__python3 \"__PLUGIN_ROOT__/hooks/runir-grok.py\"",
             "timeout": 45
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env python3 \"__PLUGIN_ROOT__/hooks/runir-grok.py\"",
+            "command": "/usr/bin/env __ENV_WIRING__python3 \"__PLUGIN_ROOT__/hooks/runir-grok.py\"",
             "timeout": 5
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env python3 \"__PLUGIN_ROOT__/hooks/runir-grok.py\"",
+            "command": "/usr/bin/env __ENV_WIRING__python3 \"__PLUGIN_ROOT__/hooks/runir-grok.py\"",
             "timeout": 5
           }
         ]
