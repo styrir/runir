@@ -3,18 +3,24 @@
 
 Grok has no marketplace: plugin root is derived from this script's location
 (Path(__file__).resolve().parents[1]). Renders templates/user-hooks.json with
-__PLUGIN_ROOT__ and writes the user hooks JSON. Backs up existing file to .bak
-on first mutation. Idempotent: second run reports changed=false.
+__PLUGIN_ROOT__ and optional __ENV_WIRING__ (RUNIR_ENV_FILE=…), then writes the
+user hooks JSON. Backs up existing file to .bak on first mutation. Idempotent:
+second run reports changed=false.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
+import shlex
 import shutil
 import sys
 from pathlib import Path
 from typing import Any
+
+# Default path only — never hardcode credential values.
+DEFAULT_ENV_FILE = Path.home() / "Code" / "runir" / ".env"
 
 
 def plugin_root() -> Path:
@@ -43,6 +49,20 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Override plugin root (default: parent of scripts/).",
     )
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=DEFAULT_ENV_FILE,
+        help=(
+            "Path to dotenv file wired as RUNIR_ENV_FILE into hook commands "
+            f"(default: {DEFAULT_ENV_FILE}). Path only — never embeds secrets."
+        ),
+    )
+    parser.add_argument(
+        "--no-env-file",
+        action="store_true",
+        help="Omit RUNIR_ENV_FILE wiring (process env only).",
+    )
     return parser.parse_args()
 
 
@@ -56,10 +76,40 @@ def load_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def render_template(template_path: Path, root: Path) -> dict[str, Any]:
-    text = template_path.read_text(encoding="utf-8").replace(
-        "__PLUGIN_ROOT__", str(root)
+def resolve_env_file(args: argparse.Namespace) -> Path | None:
+    """Return absolute env-file path, or None when wiring is disabled."""
+    if args.no_env_file:
+        return None
+    return args.env_file.expanduser().resolve()
+
+
+def env_wiring_fragment(env_file: Path | None) -> str:
+    """Value for __ENV_WIRING__ (JSON-template text; includes trailing space).
+
+    Uses shlex.quote so the path is single-quoted in the final shell command
+    (no $()/backtick expansion at hook runtime). The returned text is also
+    JSON-escaped for safe insertion into templates/user-hooks.json before
+    json.loads — after loads, command contains: RUNIR_ENV_FILE='/abs/path'.
+    """
+    if env_file is None:
+        return ""
+    # Shell-safe assignment (typically single-quoted path).
+    assignment = f"RUNIR_ENV_FILE={shlex.quote(str(env_file))} "
+    # Escape for embedding inside a JSON double-quoted command string.
+    return assignment.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def render_template(
+    template_path: Path, root: Path, env_file: Path | None = None
+) -> dict[str, Any]:
+    wiring = env_wiring_fragment(env_file)
+    text = (
+        template_path.read_text(encoding="utf-8")
+        .replace("__PLUGIN_ROOT__", str(root))
+        .replace("__ENV_WIRING__", wiring)
     )
+    # Collapse double space when wiring is empty: "/usr/bin/env  python3" → single space.
+    text = re.sub(r"/usr/bin/env  +", "/usr/bin/env ", text)
     data = json.loads(text)
     if not isinstance(data, dict):
         raise SystemExit(f"template root must be object: {template_path}")
@@ -136,12 +186,17 @@ def main() -> int:
         print(f"error: missing hook SoT {hook_py}", file=sys.stderr)
         return 2
 
+    try:
+        env_file = resolve_env_file(args)
+    except SystemExit as exc:
+        return int(exc.code) if isinstance(exc.code, int) else 2
+
     dest = (
         args.hooks_file.expanduser().resolve()
         if args.hooks_file
         else (Path.home() / ".grok" / "hooks" / "runir-grok.json")
     )
-    desired = render_template(template, root)
+    desired = render_template(template, root, env_file=env_file)
     desired_text = json_text(desired)
     existing = load_json(dest)
     previous_text = dest.read_text(encoding="utf-8") if dest.exists() else ""
@@ -150,6 +205,7 @@ def main() -> int:
     summary: dict[str, Any] = {
         "pluginRoot": str(root),
         "hooksFile": str(dest),
+        "envFile": str(env_file) if env_file else None,
         "dryRun": bool(args.dry_run),
         "changed": changed,
         "matcher": extract_matcher(desired),
