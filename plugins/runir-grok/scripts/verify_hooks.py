@@ -65,7 +65,74 @@ def parse_args() -> argparse.Namespace:
             "(after process env + installed RUNIR_ENV_FILE wiring; matches adapter order)."
         ),
     )
+    parser.add_argument(
+        "--skill",
+        action="store_true",
+        help="Also verify deployed /runir skill (SKILL.md frontmatter + inspect script).",
+    )
+    parser.add_argument(
+        "--skills-root",
+        type=Path,
+        default=None,
+        help="Skills root for --skill (default: ~/.grok/skills).",
+    )
     return parser.parse_args()
+
+
+def parse_skill_frontmatter(text: str) -> dict[str, str]:
+    """Minimal YAML-ish frontmatter parser for SKILL.md (key: value lines)."""
+    if not text.startswith("---"):
+        return {}
+    end = text.find("\n---", 3)
+    if end < 0:
+        return {}
+    block = text[3:end]
+    out: dict[str, str] = {}
+    for line in block.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or ":" not in stripped:
+            continue
+        key, _, value = stripped.partition(":")
+        out[key.strip()] = value.strip().strip("\"'")
+    return out
+
+
+def verify_skill(root: Path, skills_root: Path) -> tuple[list[str], dict[str, Any]]:
+    """Static skill checks. Returns (errors, detail)."""
+    errors: list[str] = []
+    skill_path = skills_root / "runir" / "SKILL.md"
+    detail: dict[str, Any] = {
+        "skillsRoot": str(skills_root),
+        "skillPath": str(skill_path),
+        "present": skill_path.is_file(),
+    }
+    if not skill_path.is_file():
+        errors.append(f"skill missing: {skill_path}")
+        return errors, detail
+    try:
+        text = skill_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(f"skill unreadable: {type(exc).__name__}")
+        return errors, detail
+    fm = parse_skill_frontmatter(text)
+    detail["frontmatter"] = fm
+    user_inv = fm.get("user-invocable", "").lower()
+    disable_model = fm.get("disable-model-invocation", "").lower()
+    detail["userInvocable"] = user_inv in ("true", "yes", "1")
+    detail["disableModelInvocation"] = disable_model in ("true", "yes", "1")
+    if not detail["userInvocable"]:
+        errors.append("skill user-invocable must be true")
+    if not detail["disableModelInvocation"]:
+        errors.append("skill disable-model-invocation must be true")
+    # Referenced inspector must resolve to plugin SoT (or exist under plugin scripts).
+    inspect_sot = (root / "scripts" / "runir_inspect.py").resolve()
+    detail["inspectScript"] = str(inspect_sot)
+    detail["inspectPresent"] = inspect_sot.is_file()
+    if not inspect_sot.is_file():
+        errors.append(f"inspect script missing at plugin SoT: {inspect_sot}")
+    if "runir_inspect.py" not in text:
+        errors.append("SKILL.md does not reference runir_inspect.py")
+    return errors, detail
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -278,81 +345,98 @@ def live_recall_probe(
 
 def main() -> int:
     args = parse_args()
-    if not args.user and not args.hooks_file:
-        print("error: pass --user or --hooks-file", file=sys.stderr)
+    if not args.user and not args.hooks_file and not args.skill:
+        print("error: pass --user, --hooks-file, and/or --skill", file=sys.stderr)
         return 2
 
     root = (args.plugin_root or plugin_root()).resolve()
-    hooks_file = (
-        args.hooks_file.expanduser().resolve()
-        if args.hooks_file
-        else (Path.home() / ".grok" / "hooks" / "runir-grok.json")
-    )
-    expected_script = (root / "hooks" / "runir-grok.py").resolve()
-    data = load_json(hooks_file)
-    hooks = data.get("hooks") if isinstance(data.get("hooks"), dict) else {}
-
     errors: list[str] = []
     details: dict[str, Any] = {
-        "hooksFile": str(hooks_file),
         "pluginRoot": str(root),
-        "expectedScript": str(expected_script),
-        "events": {},
     }
-
     ups_command: str | None = None
-    for event in EXPECTED_EVENTS:
-        groups = hooks.get(event)
-        hook = first_hook(groups)
-        event_detail: dict[str, Any] = {"present": hook is not None}
-        if hook is None:
-            errors.append(f"missing event {event}")
-            details["events"][event] = event_detail
-            continue
-        command = hook.get("command")
-        timeout = hook.get("timeout")
-        event_detail["command"] = command
-        event_detail["timeout"] = timeout
-        if event == "UserPromptSubmit" and isinstance(command, str):
-            ups_command = command
-        if not isinstance(command, str) or not command:
-            errors.append(f"{event}: empty command")
-        else:
-            script = command_script_path(command)
-            event_detail["scriptPath"] = str(script) if script else None
-            if script is None or not script.is_file():
-                errors.append(
-                    f"{event}: command path does not resolve to existing file: {command}"
-                )
-            else:
-                resolved = script.resolve()
-                event_detail["scriptResolved"] = str(resolved)
-                if resolved != expected_script:
-                    errors.append(
-                        f"{event}: command script {resolved} != plugin SoT {expected_script}"
-                    )
-        floor = TIMEOUT_FLOORS[event]
-        if not isinstance(timeout, (int, float)) or float(timeout) < floor:
-            errors.append(f"{event}: timeout {timeout!r} below floor {floor}")
-        details["events"][event] = event_detail
+    exit_code = 0
 
-    # PreToolUse matcher
-    matcher = None
-    ptu_groups = hooks.get("PreToolUse")
-    if isinstance(ptu_groups, list) and ptu_groups and isinstance(ptu_groups[0], dict):
-        matcher = ptu_groups[0].get("matcher")
-    details["matcher"] = matcher
-    if not isinstance(matcher, str) or not matcher.strip():
-        errors.append("PreToolUse matcher missing or empty")
-    elif matcher == ".*":
-        errors.append('PreToolUse matcher must not be ".*"')
-    else:
-        try:
-            re.compile(matcher)
-            details["matcherCompiles"] = True
-        except re.error as exc:
-            errors.append(f"PreToolUse matcher does not compile: {exc}")
-            details["matcherCompiles"] = False
+    if args.user or args.hooks_file:
+        hooks_file = (
+            args.hooks_file.expanduser().resolve()
+            if args.hooks_file
+            else (Path.home() / ".grok" / "hooks" / "runir-grok.json")
+        )
+        expected_script = (root / "hooks" / "runir-grok.py").resolve()
+        data = load_json(hooks_file)
+        hooks = data.get("hooks") if isinstance(data.get("hooks"), dict) else {}
+
+        details["hooksFile"] = str(hooks_file)
+        details["expectedScript"] = str(expected_script)
+        details["events"] = {}
+
+        for event in EXPECTED_EVENTS:
+            groups = hooks.get(event)
+            hook = first_hook(groups)
+            event_detail: dict[str, Any] = {"present": hook is not None}
+            if hook is None:
+                errors.append(f"missing event {event}")
+                details["events"][event] = event_detail
+                continue
+            command = hook.get("command")
+            timeout = hook.get("timeout")
+            event_detail["command"] = command
+            event_detail["timeout"] = timeout
+            if event == "UserPromptSubmit" and isinstance(command, str):
+                ups_command = command
+            if not isinstance(command, str) or not command:
+                errors.append(f"{event}: empty command")
+            else:
+                script = command_script_path(command)
+                event_detail["scriptPath"] = str(script) if script else None
+                if script is None or not script.is_file():
+                    errors.append(
+                        f"{event}: command path does not resolve to existing file: {command}"
+                    )
+                else:
+                    resolved = script.resolve()
+                    event_detail["scriptResolved"] = str(resolved)
+                    if resolved != expected_script:
+                        errors.append(
+                            f"{event}: command script {resolved} != plugin SoT {expected_script}"
+                        )
+            floor = TIMEOUT_FLOORS[event]
+            if not isinstance(timeout, (int, float)) or float(timeout) < floor:
+                errors.append(f"{event}: timeout {timeout!r} below floor {floor}")
+            details["events"][event] = event_detail
+
+        # PreToolUse matcher
+        matcher = None
+        ptu_groups = hooks.get("PreToolUse")
+        if (
+            isinstance(ptu_groups, list)
+            and ptu_groups
+            and isinstance(ptu_groups[0], dict)
+        ):
+            matcher = ptu_groups[0].get("matcher")
+        details["matcher"] = matcher
+        if not isinstance(matcher, str) or not matcher.strip():
+            errors.append("PreToolUse matcher missing or empty")
+        elif matcher == ".*":
+            errors.append('PreToolUse matcher must not be ".*"')
+        else:
+            try:
+                re.compile(matcher)
+                details["matcherCompiles"] = True
+            except re.error as exc:
+                errors.append(f"PreToolUse matcher does not compile: {exc}")
+                details["matcherCompiles"] = False
+
+    if args.skill:
+        skills_root = (
+            args.skills_root.expanduser().resolve()
+            if args.skills_root
+            else (Path.home() / ".grok" / "skills")
+        )
+        skill_errors, skill_detail = verify_skill(root, skills_root)
+        details["skill"] = skill_detail
+        errors.extend(skill_errors)
 
     if errors:
         summary = {
@@ -364,8 +448,7 @@ def main() -> int:
         return 1
 
     live_detail: dict[str, Any] | None = None
-    exit_code = 0
-    if args.live:
+    if args.live and (args.user or args.hooks_file):
         api_key, user_id, key_source = resolve_live_credential(
             ups_command, args.env_file
         )
@@ -381,7 +464,7 @@ def main() -> int:
             exit_code, live_detail = live_recall_probe(api_key, user_id, key_source)
 
     ok = exit_code == 0
-    summary: dict[str, Any] = {
+    summary = {
         "ok": ok,
         "errors": errors,
         **details,
