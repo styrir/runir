@@ -1,0 +1,39 @@
+{
+  "description": "Native Rúnir lifecycle hooks for Grok.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env python3 \"__PLUGIN_ROOT__/hooks/runir-grok.py\"",
+            "timeout": 45
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|run_terminal_command|Read|read_file|Edit|Write|MultiEdit|search_replace|Grep|grep|Glob|ListDir|list_dir|WebSearch|web_search|Task|spawn_subagent|todo_write|TodoWrite",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env python3 \"__PLUGIN_ROOT__/hooks/runir-grok.py\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env python3 \"__PLUGIN_ROOT__/hooks/runir-grok.py\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
