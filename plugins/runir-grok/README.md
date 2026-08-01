@@ -12,8 +12,10 @@ Native Grok lifecycle adapter for Rúnir (thin HTTP client).
 | `scripts/runir_ask.sh` | Thin ask.sh-compatible wrapper → `headless_inject.py` |
 | `templates/user-hooks.json` | Hooks document template (`__PLUGIN_ROOT__`, narrowed PreToolUse matcher) |
 | `scripts/install_hooks.py` | Deploy template → `~/.grok/hooks/runir-grok.json` |
-| `scripts/verify_hooks.py` | Assert matcher ≠ `.*`, command path, timeout floors; `--skill` for /runir |
+| `scripts/verify_hooks.py` | Assert matcher ≠ `.*`, command path, timeout floors; `--skill`; `--launch-agent` |
 | `scripts/install_skill.py` | Deploy `skills/runir/SKILL.md` → `~/.grok/skills/runir/` |
+| `scripts/install_launch_agent.py` | Deploy embed-warm LaunchAgent SoT → `~/Library/LaunchAgents/` |
+| `launchd/com.runir.embed-warm.plist` | SoT for nomic embed warmer (`keep_alive:-1`, StartInterval 240) |
 | `scripts/runir_inspect.py` | On-demand inspector (`last|session|captures|errors|bridge|status`) |
 | `scripts/runir_watch.py` | Live second-pane tail (`--mode once|watch`) |
 | `skills/runir/SKILL.md` | `/runir` slash skill (SoT; user-invocable) |
@@ -47,6 +49,24 @@ python3 plugins/runir-grok/scripts/install_skill.py --user
 python3 plugins/runir-grok/scripts/verify_hooks.py --user --skill
 ```
 
+Embed-warm LaunchAgent (sibling installer; keeps nomic-embed-text resident via
+ollama `keep_alive:-1`, interval 240s):
+
+```bash
+python3 plugins/runir-grok/scripts/install_launch_agent.py --user --dry-run
+python3 plugins/runir-grok/scripts/install_launch_agent.py --user
+python3 plugins/runir-grok/scripts/verify_hooks.py --launch-agent
+# With ollama running: also assert nomic is resident with far-future expiry
+python3 plugins/runir-grok/scripts/verify_hooks.py --launch-agent --live
+```
+
+Install is idempotent (content compare + `.bak` on first overwrite). Pass
+`--no-load` to skip `launchctl` (tests/offline). Uninstall:
+
+```bash
+python3 plugins/runir-grok/scripts/install_launch_agent.py --user --uninstall
+```
+
 ## Observability
 
 **Grok has no Pi-style memory footer** (including Grok 0.2.x). There is no
@@ -68,6 +88,13 @@ Event kinds: `recall`, `deliver`, `skip`, `capture`, `error`. Bodies store
 counts, `hash12` (contentHash prefix), durations, HTTP status, phase, and
 exception **class names** only — never prompts, recalled context, headers,
 credentials, or plaintext session ids.
+
+**Deliver `promptId` self-attribution:** Grok PreToolUse/Stop payloads often
+omit `promptId`, which used to bucket delivers under `promptId=_none` in
+`/runir session`. The adapter now prefers any event `promptId`, else reads
+the turn's `promptId` from the recall-state file (hash-verified against the
+delivered `contentHash` when present; fail-open to no promptId if state is
+missing/corrupt/mismatched).
 
 ### Inspector
 

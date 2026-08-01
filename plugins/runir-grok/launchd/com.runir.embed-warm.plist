@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.runir.embed-warm</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/curl</string>
+        <string>-s</string>
+        <string>-m</string>
+        <string>60</string>
+        <string>-o</string>
+        <string>/dev/null</string>
+        <string>http://127.0.0.1:11434/api/embed</string>
+        <string>-d</string>
+        <string>{"model":"nomic-embed-text:v1.5","input":"warm","keep_alive":-1}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>240</integer>
+    <key>StandardOutPath</key>
+    <string>/dev/null</string>
+    <key>StandardErrorPath</key>
+    <string>/dev/null</string>
+</dict>
+</plist>
