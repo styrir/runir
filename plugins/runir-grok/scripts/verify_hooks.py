@@ -22,9 +22,11 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +38,8 @@ TIMEOUT_FLOORS = {
 }
 DEFAULT_ENV_FILE = Path.home() / "Code" / "runir" / ".env"
 LIVE_TIMEOUT_S = 5.0
+LAUNCH_AGENT_LABEL = "com.runir.embed-warm"
+NOMIC_MODEL_PREFIX = "nomic-embed-text"
 
 
 def plugin_root() -> Path:
@@ -54,7 +58,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--live",
         action="store_true",
-        help="After static checks, POST an authed /hooks/recall probe (exits 3/4 on auth/service failures).",
+        help=(
+            "After static checks, POST an authed /hooks/recall probe (exits 3/4 on "
+            "auth/service failures). With --launch-agent, also probe ollama /api/ps."
+        ),
     )
     parser.add_argument(
         "--env-file",
@@ -75,6 +82,25 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Skills root for --skill (default: ~/.grok/skills).",
+    )
+    parser.add_argument(
+        "--launch-agent",
+        action="store_true",
+        help=(
+            "Verify embed-warm LaunchAgent is installed, matches plugin SoT, "
+            "and (unless --no-launchctl) is loaded via launchctl."
+        ),
+    )
+    parser.add_argument(
+        "--agents-dir",
+        type=Path,
+        default=None,
+        help="LaunchAgents dir for --launch-agent (default: ~/Library/LaunchAgents).",
+    )
+    parser.add_argument(
+        "--no-launchctl",
+        action="store_true",
+        help="Skip launchctl loaded probe (tests / offline).",
     )
     return parser.parse_args()
 
@@ -260,6 +286,133 @@ def resolve_live_credential(
     return None, user_id, "none"
 
 
+def expiry_is_resident(expires_at: str | None) -> bool:
+    """True when expires_at year is far-future (keep_alive:-1 sentinel).
+
+    Ollama keep_alive:-1 yields years that overflow datetime parsers, so we
+    only parse the leading integer year and require year >= current_year + 10.
+    """
+    if not expires_at or not isinstance(expires_at, str):
+        return False
+    match = re.match(r"^(\d+)", expires_at.strip())
+    if not match:
+        return False
+    try:
+        year = int(match.group(1))
+    except ValueError:
+        return False
+    current_year = datetime.now(timezone.utc).year
+    return year >= current_year + 10
+
+
+def verify_launch_agent(
+    root: Path,
+    agents_dir: Path,
+    *,
+    probe_launchctl: bool,
+) -> tuple[list[str], dict[str, Any]]:
+    """Static (+ optional launchctl) LaunchAgent checks. Returns (errors, detail)."""
+    errors: list[str] = []
+    sot = root / "launchd" / f"{LAUNCH_AGENT_LABEL}.plist"
+    plist_path = agents_dir / f"{LAUNCH_AGENT_LABEL}.plist"
+    detail: dict[str, Any] = {
+        "agentsDir": str(agents_dir),
+        "plistPath": str(plist_path),
+        "sotPath": str(sot),
+        "present": plist_path.is_file(),
+        "matchesSot": False,
+        "loaded": None,
+    }
+    if not sot.is_file():
+        errors.append(f"launch agent SoT missing: {sot}")
+        return errors, detail
+    if not plist_path.is_file():
+        errors.append(f"launch agent missing: {plist_path}")
+        return errors, detail
+    try:
+        installed = plist_path.read_bytes()
+        desired = sot.read_bytes()
+    except OSError as exc:
+        errors.append(f"launch agent unreadable: {type(exc).__name__}")
+        return errors, detail
+    detail["matchesSot"] = installed == desired
+    if not detail["matchesSot"]:
+        errors.append("launch agent drifted from SoT")
+    if probe_launchctl:
+        try:
+            result = subprocess.run(
+                ["launchctl", "print", f"gui/{os.getuid()}/{LAUNCH_AGENT_LABEL}"],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+            detail["loaded"] = result.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            detail["loaded"] = False
+        if not detail["loaded"]:
+            errors.append("launch agent not loaded")
+    return errors, detail
+
+
+def ollama_residency_probe() -> tuple[int, dict[str, Any]]:
+    """GET ollama /api/ps; require nomic-embed-text with far-future expiry.
+
+    Exit 0 resident · 3 present-but-not-far-future or absent · 4 service_down.
+    """
+    base = (os.environ.get("RUNIR_OLLAMA_BASE") or "http://127.0.0.1:11434").rstrip("/")
+    url = f"{base}/api/ps"
+    detail: dict[str, Any] = {"url": url, "modelPrefix": NOMIC_MODEL_PREFIX}
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "runir-grok-verify/0.1",
+        },
+        method="GET",
+    )
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(request, timeout=LIVE_TIMEOUT_S) as response:
+            raw = response.read()
+            try:
+                body = json.loads(raw) if raw else {}
+            except (json.JSONDecodeError, ValueError):
+                body = {}
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        detail["reason"] = "service_down"
+        detail["error"] = type(exc).__name__
+        return 4, detail
+
+    models = body.get("models") if isinstance(body, dict) else None
+    if not isinstance(models, list):
+        models = []
+    match: dict[str, Any] | None = None
+    for entry in models:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or entry.get("model") or "")
+        if name.startswith(NOMIC_MODEL_PREFIX):
+            match = entry
+            break
+    if match is None:
+        detail["reason"] = "model_absent"
+        detail["resident"] = False
+        return 3, detail
+    expires_at = match.get("expires_at")
+    if expires_at is None:
+        expires_at = match.get("expiresAt")
+    expires_s = str(expires_at) if expires_at is not None else None
+    detail["model"] = str(match.get("name") or match.get("model") or "")
+    detail["expiresAt"] = expires_s
+    if expiry_is_resident(expires_s):
+        detail["reason"] = "ok"
+        detail["resident"] = True
+        return 0, detail
+    detail["reason"] = "model_not_resident"
+    detail["resident"] = False
+    return 3, detail
+
+
 def live_recall_probe(
     api_key: str,
     user_id: str | None,
@@ -345,8 +498,16 @@ def live_recall_probe(
 
 def main() -> int:
     args = parse_args()
-    if not args.user and not args.hooks_file and not args.skill:
-        print("error: pass --user, --hooks-file, and/or --skill", file=sys.stderr)
+    if (
+        not args.user
+        and not args.hooks_file
+        and not args.skill
+        and not args.launch_agent
+    ):
+        print(
+            "error: pass --user, --hooks-file, --skill, and/or --launch-agent",
+            file=sys.stderr,
+        )
         return 2
 
     root = (args.plugin_root or plugin_root()).resolve()
@@ -438,6 +599,20 @@ def main() -> int:
         details["skill"] = skill_detail
         errors.extend(skill_errors)
 
+    if args.launch_agent:
+        agents_dir = (
+            args.agents_dir.expanduser().resolve()
+            if args.agents_dir
+            else (Path.home() / "Library" / "LaunchAgents")
+        )
+        la_errors, la_detail = verify_launch_agent(
+            root,
+            agents_dir,
+            probe_launchctl=not args.no_launchctl,
+        )
+        details["launchAgent"] = la_detail
+        errors.extend(la_errors)
+
     if errors:
         summary = {
             "ok": False,
@@ -463,6 +638,12 @@ def main() -> int:
         else:
             exit_code, live_detail = live_recall_probe(api_key, user_id, key_source)
 
+    launch_agent_live: dict[str, Any] | None = None
+    if args.live and args.launch_agent:
+        la_code, launch_agent_live = ollama_residency_probe()
+        if exit_code == 0 and la_code != 0:
+            exit_code = la_code
+
     ok = exit_code == 0
     summary = {
         "ok": ok,
@@ -471,6 +652,8 @@ def main() -> int:
     }
     if live_detail is not None:
         summary["live"] = live_detail
+    if launch_agent_live is not None:
+        summary["launchAgentLive"] = launch_agent_live
     print(json.dumps(summary, indent=2))
     return exit_code
 

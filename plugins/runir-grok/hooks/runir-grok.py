@@ -450,6 +450,44 @@ def sibling_recall_context(event: dict[str, Any]) -> str | None:
         return context
 
 
+def deliver_prompt_id(
+    event: dict[str, Any], session_id: str, digest: str | None = None
+) -> str | None:
+    """Attribute a deliver event to its turn.
+
+    Grok PreToolUse/Stop payloads carry no promptId, so /runir session buckets
+    every deliver under _none. Prefer the event value; else self-attribute from
+    the recall state that produced this context (consume_recall keeps promptId
+    after delivered=true). Fail-open: never raises; None when state is missing
+    or unreadable.
+
+    When the state records a contentHash it must match the delivered digest —
+    a newer turn overwriting state cannot steal attribution. States written
+    before contentHash existed are accepted.
+    """
+    try:
+        event_prompt_id = str(
+            event_value(event, "promptId", "prompt_id", default="")
+        ).strip()
+        if event_prompt_id:
+            return event_prompt_id
+        state = read_json_state(recall_state_path(session_id))
+        if not state:
+            return None
+        state_hash = state.get("contentHash")
+        if (
+            digest
+            and isinstance(state_hash, str)
+            and state_hash
+            and state_hash != digest
+        ):
+            return None
+        prompt_id = state.get("promptId")
+        return prompt_id.strip() or None if isinstance(prompt_id, str) else None
+    except Exception:
+        return None
+
+
 def wait_for_prior_capture(session_id: str) -> None:
     """D1: poll pending capture; bail early if updatedAt is older than RUNIR_CAPTURE_STALE_S."""
     if not session_id:
@@ -666,8 +704,7 @@ def handle_pre_tool_use(event: dict[str, Any]) -> None:
             channel="pre_tool_use",
             contextChars=len(context),
             hash12=digest[:12] if digest else None,
-            promptId=str(event_value(event, "promptId", "prompt_id", default=""))
-            or None,
+            promptId=deliver_prompt_id(event, session_id, digest),
         )
 
 
@@ -774,8 +811,7 @@ def handle_stop(event: dict[str, Any]) -> None:
             channel="stop",
             contextChars=len(context),
             hash12=digest[:12] if digest else None,
-            promptId=str(event_value(event, "promptId", "prompt_id", default=""))
-            or None,
+            promptId=deliver_prompt_id(event, session_id, digest),
         )
         return
     detach_capture(event)
