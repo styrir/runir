@@ -28,6 +28,7 @@ import fcntl
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import time
 import uuid
@@ -86,6 +87,8 @@ RUNIR_CAPTURE_STALE_S = env_float("RUNIR_CAPTURE_STALE_S", 5.0)
 RUNIR_BATCH_SIBLING_S = env_float("RUNIR_BATCH_SIBLING_S", 2.0)
 RUNIR_RECALL_DEDUPE_TTL_S = env_float("RUNIR_RECALL_DEDUPE_TTL_S", 3600.0)
 RUNIR_RECALL_DEDUPE_MAX = env_int("RUNIR_RECALL_DEDUPE_MAX", 32)
+RUNIR_SYNC_MIN_S = env_float("RUNIR_SYNC_MIN_S", 300.0)
+BRIDGE_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "memory_bridge.py"
 STATE_DIR = Path.home() / ".grok" / "state" / "runir"
 # Observability ring retention (Pi TRACE_LIMIT parity). Hard cap: keep last TRACE_LIMIT.
 TRACE_LIMIT = 100
@@ -843,6 +846,68 @@ def detach_capture(event: dict[str, Any]) -> None:
         os._exit(0)
 
 
+def bridge_sync_state_path() -> Path:
+    return STATE_DIR / "bridge-sync.json"
+
+
+def claim_bridge_sync(session_id: str) -> bool:
+    """Throttle gate for projection sync. First prompt of a session forces a
+    sync; otherwise skip while the last successful claim is younger than
+    RUNIR_SYNC_MIN_S. Claim is recorded up-front (fail-open: a failed spawn
+    just waits out the throttle window)."""
+    path = bridge_sync_state_path()
+    digest = (
+        hashlib.sha256(session_id.encode("utf-8")).hexdigest() if session_id else ""
+    )
+    now = time.time()
+    with exclusive_state_lock(path):
+        state = read_json_state(path) or {}
+        sessions = state.get("sessions")
+        if not isinstance(sessions, list):
+            sessions = []
+        first_of_session = bool(digest) and digest not in sessions
+        last = state.get("lastSyncAt")
+        recent = isinstance(last, (int, float)) and (now - last) < RUNIR_SYNC_MIN_S
+        if recent and not first_of_session:
+            return False
+        if digest and first_of_session:
+            sessions = (sessions + [digest])[-32:]
+        write_json_state(
+            path, {"lastSyncAt": now, "sessions": sessions, "updatedAt": now}
+        )
+        return True
+
+
+def spawn_bridge_sync() -> None:
+    """Run memory_bridge.py --sync detached; never blocks the awaited hook."""
+    env = dict(os.environ)
+    if RUNIR_USER_ID:
+        env.setdefault("RUNIR_USER_ID", RUNIR_USER_ID)
+    if RUNIR_API_KEY:
+        env.setdefault("RUNIR_API_KEY", RUNIR_API_KEY)
+    subprocess.Popen(
+        [sys.executable, str(BRIDGE_SCRIPT), "--sync"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        env=env,
+    )
+
+
+def maybe_sync_bridge(event: dict[str, Any]) -> None:
+    """Fail-open projection sync trigger (global MEMORY.md managed block)."""
+    try:
+        session_id = str(event_value(event, "sessionId", "session_id", default=""))
+        if not claim_bridge_sync(session_id):
+            debug("bridge sync throttled")
+            return
+        spawn_bridge_sync()
+        debug("bridge sync spawned")
+    except Exception as exc:
+        debug(f"bridge sync failed open: {exc}")
+
+
 def main() -> int:
     if not RUNIR_USER_ID:
         return 0
@@ -864,6 +929,7 @@ def main() -> int:
         ).lower()
         if name == "user_prompt_submit":
             handle_recall(event)
+            maybe_sync_bridge(event)
         elif name == "pre_tool_use":
             handle_pre_tool_use(event)
         elif name == "stop":

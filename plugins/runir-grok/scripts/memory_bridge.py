@@ -2,9 +2,11 @@
 """Write-only Runir → ~/.grok/memory bridge + idempotent [memory] config helper.
 
 --write-config: append frozen [memory] block to ~/.grok/config.toml if absent.
---sync: write managed <!-- runir-bridge:begin/end --> section into MEMORY.md
-        (global always; project dir only if already discovered). Optional
-        --facts JSON for offline smoke without Runir HTTP.
+--sync: write managed <!-- runir-bridge:begin/end --> section into the GLOBAL
+        MEMORY.md only. Workspace MEMORY.md files are never written: dream
+        consolidation LLM-rewrites workspace files (MemoryScope::Workspace),
+        which would mutate the managed block. Optional --facts JSON for
+        offline smoke without Runir HTTP.
 """
 
 from __future__ import annotations
@@ -16,7 +18,6 @@ import re
 import shutil
 import sys
 import tempfile
-import time
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -74,7 +75,7 @@ def parse_args() -> argparse.Namespace:
         "--state-dir",
         type=Path,
         default=Path.home() / ".grok" / "state" / "runir",
-        help="Where bridge-paths.json is stored",
+        help="Unused (kept for invocation compatibility); sync is global-only",
     )
     parser.add_argument(
         "--facts",
@@ -247,41 +248,19 @@ def upsert_managed(existing: str, managed: str) -> str:
             flags=re.DOTALL,
         )
         return pattern.sub(lambda _m: replacement, existing, count=1)
+    if BEGIN in existing:
+        # Corrupted block: BEGIN without END. Repair from the orphaned BEGIN
+        # to end-of-file so no duplicate marker or stale garbage survives.
+        # Tradeoff: a /remember append landing after the corrupted block is
+        # lost; managed content is regenerable, corruption is not.
+        base = existing[: existing.index(BEGIN)].rstrip()
+        if base:
+            return base + "\n\n" + managed
+        return "# Memory\n\n" + managed
     base = existing.rstrip()
     if base:
         return base + "\n\n" + managed
     return "# Memory\n\n" + managed
-
-
-def discover_project_memory(memory_root: Path, state_dir: Path) -> Path | None:
-    """Use pinned path or a single existing workspace MEMORY.md under memory_root."""
-    pin_path = state_dir / "bridge-paths.json"
-    if pin_path.is_file():
-        try:
-            pin = json.loads(pin_path.read_text(encoding="utf-8"))
-            candidate = pin.get("projectMemory") if isinstance(pin, dict) else None
-            if isinstance(candidate, str):
-                p = Path(candidate)
-                if p.is_file() or p.parent.is_dir():
-                    return p if p.name == "MEMORY.md" else p / "MEMORY.md"
-        except Exception:
-            pass
-    if not memory_root.is_dir():
-        return None
-    found: list[Path] = []
-    for child in memory_root.iterdir():
-        if child.is_dir() and re.match(r".+-[0-9a-f]{8}$", child.name):
-            mem = child / "MEMORY.md"
-            if mem.exists() or child.is_dir():
-                found.append(mem)
-    if len(found) == 1:
-        state_dir.mkdir(parents=True, exist_ok=True)
-        pin_path.write_text(
-            json.dumps({"projectMemory": str(found[0]), "updatedAt": time.time()}),
-            encoding="utf-8",
-        )
-        return found[0]
-    return None
 
 
 def write_memory_file(path: Path, facts: list[str], *, canary: bool) -> dict[str, Any]:
@@ -306,18 +285,13 @@ def sync_memory(args: argparse.Namespace) -> dict[str, Any]:
         facts = ["bridge deploy smoke fact (no Runir facts available)"]
 
     memory_root = args.memory_root.expanduser()
-    state_dir = args.state_dir.expanduser()
     memory_root.mkdir(parents=True, exist_ok=True)
     global_path = memory_root / "MEMORY.md"
-    results = {
+    # Global only — never workspace MEMORY.md (dream rewrites workspace files).
+    return {
         "global": write_memory_file(global_path, facts, canary=args.canary),
-        "project": None,
         "factCount": len(facts),
     }
-    project = discover_project_memory(memory_root, state_dir)
-    if project is not None:
-        results["project"] = write_memory_file(project, facts, canary=False)
-    return results
 
 
 def main() -> int:
