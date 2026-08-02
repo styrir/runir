@@ -56,6 +56,8 @@ Commands:
   session-end --messages <path> End-of-session summarization
   store    --text <text>       Store a memory
   search   --query <text>      Search memories
+  get      --id <id>           Fetch one memory by id
+  lineage  --id <id>           Supersession chain for a memory (oldest → newest)
   traces                       Memory Impact Viewer: list recent recall receipts
   traces   --id <id>           Full receipt: prompt → recalled memories → injected text → answer
   traces rate --id <id> --rating <r>  Rate a recall: helped|hurt|unused|missing|stale (+--note)
@@ -78,6 +80,10 @@ Store options:
 Search options:
   --limit <n>                  Max results (default: 5)
 
+Get / lineage options:
+  --id <id>                    Memory id (required)
+  --json                       Emit JSON instead of compact text (add --pretty to indent)
+
 Environment:
   RUNIR_URL                    Base URL (default: http://localhost:7700)
   RUNIR_API_KEY                Bearer token; required when the service is auth-gated
@@ -93,6 +99,8 @@ Examples:
   runir traces --user-id brooks --limit 20
   runir traces --id <trace-id> --user-id brooks
   runir traces rate --id <trace-id> --rating helped --note "nailed the config detail" --user-id brooks
+  runir get --id mem123 --user-id brooks
+  runir lineage --id mem123 --user-id brooks
 `);
   process.exit(code);
 }
@@ -171,6 +179,72 @@ async function cmdSearch(
   if (opts.limit) body.limit = opts.limit;
   const data = await request("POST", "/memory/search", body);
   printJson(data, opts.pretty);
+}
+
+type MemoryRecord = {
+  id: string;
+  memory: string;
+  created_at?: string;
+  updated_at?: string;
+  tags?: string[];
+  source?: string;
+};
+
+type LineageEntry = {
+  id: string;
+  text: string;
+  active: boolean;
+  createdAt?: string;
+  supersededBy?: string;
+  inactiveReason?: string;
+};
+
+// Compact plain text by default: these outputs are read by a model mid-turn,
+// so every field earns its tokens. `--json` is the escape hatch (as in traces).
+function formatMemory(m: MemoryRecord): string {
+  const meta: string[] = [];
+  if (m.created_at) meta.push(`created ${m.created_at}`);
+  if (m.updated_at && m.updated_at !== m.created_at) meta.push(`updated ${m.updated_at}`);
+  if (m.tags && m.tags.length > 0) meta.push(`tags: ${m.tags.join(",")}`);
+  if (m.source) meta.push(`source: ${m.source}`);
+  const metaLine = meta.length > 0 ? `\n  ${meta.join(" · ")}` : "";
+  return `[${m.id}] ${m.memory}${metaLine}`;
+}
+
+function formatLineage(memoryId: string, chain: LineageEntry[]): string {
+  const lines: string[] = [`lineage for ${memoryId} (${chain.length} ${chain.length === 1 ? "entry" : "entries"}, oldest → newest)`];
+  chain.forEach((entry, i) => {
+    const status = entry.active ? "active" : (entry.inactiveReason ?? "superseded");
+    const when = entry.createdAt ? ` ${entry.createdAt}` : "";
+    lines.push(`${i + 1}. [${entry.id}] (${status})${when}`);
+    lines.push(`   ${entry.text}`);
+    if (entry.supersededBy) lines.push(`   ↓ superseded by [${entry.supersededBy}]`);
+  });
+  return lines.join("\n");
+}
+
+async function cmdGet(
+  id: string,
+  opts: { userId: string; json: boolean; pretty: boolean },
+): Promise<void> {
+  const params = new URLSearchParams({ userId: opts.userId });
+  const data = (await request("GET", `/memory/get/${encodeURIComponent(id)}?${params}`)) as MemoryRecord;
+  if (opts.json) return printJson(data, opts.pretty);
+  console.log(formatMemory(data));
+}
+
+async function cmdLineage(
+  id: string,
+  opts: { userId: string; json: boolean; pretty: boolean },
+): Promise<void> {
+  const params = new URLSearchParams({ userId: opts.userId });
+  const data = (await request("GET", `/memory/lineage/${encodeURIComponent(id)}?${params}`)) as {
+    memoryId: string;
+    chainLength: number;
+    lineage: LineageEntry[];
+  };
+  if (opts.json) return printJson(data, opts.pretty);
+  console.log(formatLineage(data.memoryId, data.lineage));
 }
 
 async function cmdTraces(
@@ -322,6 +396,22 @@ async function main(): Promise<void> {
           scope: values.scope,
           pretty,
         });
+        break;
+
+      case "get":
+        if (!values.id) {
+          console.error("Error: --id is required for get");
+          process.exit(1);
+        }
+        await cmdGet(values.id, { userId, json: values.json ?? false, pretty });
+        break;
+
+      case "lineage":
+        if (!values.id) {
+          console.error("Error: --id is required for lineage");
+          process.exit(1);
+        }
+        await cmdLineage(values.id, { userId, json: values.json ?? false, pretty });
         break;
 
       case "traces":
