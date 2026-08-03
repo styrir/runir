@@ -13,12 +13,13 @@ Native Grok lifecycle adapter for Rúnir (thin HTTP client).
 | `templates/user-hooks.json` | Hooks document template (`__PLUGIN_ROOT__`, narrowed PreToolUse matcher) |
 | `scripts/install_hooks.py` | Deploy template → `~/.grok/hooks/runir-grok.json` |
 | `scripts/verify_hooks.py` | Assert matcher ≠ `.*`, command path, timeout floors; `--skill`; `--launch-agent` |
-| `scripts/install_skill.py` | Deploy `skills/runir/SKILL.md` → `~/.grok/skills/runir/` |
+| `scripts/install_skill.py` | Deploy all `skills/*/SKILL.md` → `~/.grok/skills/<name>/` (`--skill` to narrow) |
 | `scripts/install_launch_agent.py` | Deploy embed-warm LaunchAgent SoT → `~/Library/LaunchAgents/` |
 | `launchd/com.runir.embed-warm.plist` | SoT for nomic embed warmer (`keep_alive:-1`, StartInterval 240) |
 | `scripts/runir_inspect.py` | On-demand inspector (`last|session|captures|errors|bridge|status`) |
 | `scripts/runir_watch.py` | Live second-pane tail (`--mode once|watch`) |
 | `skills/runir/SKILL.md` | `/runir` slash skill (SoT; user-invocable) |
+| `skills/runir-recall/SKILL.md` | Model-invocable recall skill (search/get/lineage/traces rate/store) |
 | `scripts/memory_bridge.py` | Idempotent `[memory]` config + write-only MEMORY.md bridge |
 | `tests/` | Unit tests for D1–D4 + P (+ fail-open + observability + headless) |
 

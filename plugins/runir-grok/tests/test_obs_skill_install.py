@@ -28,21 +28,24 @@ def _run_main(mod, argv: list[str]) -> tuple[int, str]:
 
 def test_install_skill_and_verify(tmp_path):
     install = load_script_module("install_skill.py")
-    dest = tmp_path / "skills" / "runir"
+    dest_root = tmp_path / "skills"
     code, out = _run_main(
         install,
         [
             "install_skill.py",
             "--dest",
-            str(dest),
+            str(dest_root),
+            "--skill",
+            "runir",
             "--plugin-root",
             str(PLUGIN_ROOT),
         ],
     )
     assert code == 0, out
     summary = json.loads(out)
-    assert summary["changed"] is True
-    skill = dest / "SKILL.md"
+    assert [s["skill"] for s in summary["skills"]] == ["runir"]
+    assert summary["skills"][0]["changed"] is True
+    skill = dest_root / "runir" / "SKILL.md"
     assert skill.is_file()
     text = skill.read_text(encoding="utf-8")
     assert "user-invocable: true" in text
