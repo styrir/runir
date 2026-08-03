@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Install the /runir Grok skill from plugin SoT → ~/.grok/skills/runir/.
+"""Install Grok skills from plugin SoT → ~/.grok/skills/<name>/.
 
-Source of truth: plugins/runir-grok/skills/runir/SKILL.md
-Does not touch install_hooks.py. Backs up existing SKILL.md to .bak on first
-overwrite (matching install_hooks.py behavior).
+Sources of truth: plugins/runir-grok/skills/<name>/SKILL.md
+Default installs every skill under skills/ (currently: runir, runir-recall);
+narrow with --skill. Does not touch install_hooks.py. Backs up an existing
+SKILL.md to .bak on first overwrite (matching install_hooks.py behavior).
 """
 
 from __future__ import annotations
@@ -25,12 +26,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--user",
         action="store_true",
-        help="Install to ~/.grok/skills/runir/SKILL.md",
+        help="Install to ~/.grok/skills/<name>/SKILL.md",
     )
     parser.add_argument(
         "--dest",
         type=Path,
-        help="Override destination directory (writes SKILL.md inside)",
+        help="Override destination root (writes <name>/SKILL.md inside)",
+    )
+    parser.add_argument(
+        "--skill",
+        action="append",
+        help="Skill name to install (repeatable; default: all under skills/)",
     )
     parser.add_argument(
         "--dry-run",
@@ -45,6 +51,48 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def discover_skills(root: Path) -> list[str]:
+    skills_dir = root / "skills"
+    if not skills_dir.is_dir():
+        return []
+    return sorted(
+        child.name
+        for child in skills_dir.iterdir()
+        if (child / "SKILL.md").is_file()
+    )
+
+
+def install_one(
+    root: Path, name: str, dest_root: Path, dry_run: bool
+) -> dict[str, Any]:
+    source = root / "skills" / name / "SKILL.md"
+    dest_dir = dest_root / name
+    dest = dest_dir / "SKILL.md"
+    desired = source.read_text(encoding="utf-8")
+    previous = dest.read_text(encoding="utf-8") if dest.is_file() else ""
+    changed = desired != previous
+    entry: dict[str, Any] = {
+        "skill": name,
+        "source": str(source),
+        "dest": str(dest),
+        "changed": changed,
+    }
+    if dry_run:
+        return entry
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    if changed:
+        if dest.is_file():
+            bak = dest.with_suffix(dest.suffix + ".bak")
+            if not bak.exists():
+                shutil.copy2(dest, bak)
+                entry["backup"] = str(bak)
+            else:
+                entry["backup"] = str(bak)
+                entry["backupNote"] = "existing .bak left in place"
+        dest.write_text(desired, encoding="utf-8")
+    return entry
+
+
 def main() -> int:
     args = parse_args()
     if not args.user and not args.dest:
@@ -52,44 +100,30 @@ def main() -> int:
         return 2
 
     root = (args.plugin_root or plugin_root()).resolve()
-    source = root / "skills" / "runir" / "SKILL.md"
-    if not source.is_file():
-        print(f"error: missing skill SoT {source}", file=sys.stderr)
+    names = args.skill or discover_skills(root)
+    if not names:
+        print(f"error: no skills found under {root / 'skills'}", file=sys.stderr)
         return 2
+    for name in names:
+        source = root / "skills" / name / "SKILL.md"
+        if not source.is_file():
+            print(f"error: missing skill SoT {source}", file=sys.stderr)
+            return 2
 
-    dest_dir = (
+    dest_root = (
         args.dest.expanduser().resolve()
         if args.dest
-        else (Path.home() / ".grok" / "skills" / "runir")
+        else (Path.home() / ".grok" / "skills")
     )
-    dest = dest_dir / "SKILL.md"
-    desired = source.read_text(encoding="utf-8")
-    previous = dest.read_text(encoding="utf-8") if dest.is_file() else ""
-    changed = desired != previous
 
     summary: dict[str, Any] = {
         "pluginRoot": str(root),
-        "source": str(source),
-        "dest": str(dest),
+        "destRoot": str(dest_root),
         "dryRun": bool(args.dry_run),
-        "changed": changed,
+        "skills": [
+            install_one(root, name, dest_root, args.dry_run) for name in names
+        ],
     }
-
-    if args.dry_run:
-        print(json.dumps(summary, indent=2))
-        return 0
-
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    if changed:
-        if dest.is_file():
-            bak = dest.with_suffix(dest.suffix + ".bak")
-            if not bak.exists():
-                shutil.copy2(dest, bak)
-                summary["backup"] = str(bak)
-            else:
-                summary["backup"] = str(bak)
-                summary["backupNote"] = "existing .bak left in place"
-        dest.write_text(desired, encoding="utf-8")
     print(json.dumps(summary, indent=2))
     return 0
 
