@@ -16,10 +16,11 @@ Rúnir is the durable cross-session memory store. Invoke its CLI:
 
 ```bash
 RUNIR_REPO="${RUNIR_REPO:-$HOME/Code/runir}"
+set -a; source "$RUNIR_REPO/.env"; set +a
 npx tsx "$RUNIR_REPO/cli/index.ts" <command> [flags]
 ```
 
-`RUNIR_URL` / `RUNIR_API_KEY` come from the environment; do not set them.
+`RUNIR_URL` / `RUNIR_API_KEY` load from `$RUNIR_REPO/.env`; never print or set them manually.
 
 ## The five flows
 
