@@ -42,8 +42,15 @@ def test_first_prompt_of_session_forces_sync(hook, monkeypatch):
         (),
         {
             "sync_once": staticmethod(
-                lambda **k: syncs.append(1)
-                or {"status": "ok", "publishedIds": [], "changed": False, "factCount": 0}
+                lambda **k: (
+                    syncs.append(1)
+                    or {
+                        "status": "ok",
+                        "publishedIds": [],
+                        "changed": False,
+                        "factCount": 0,
+                    }
+                )
             ),
             "read_managed_ids": staticmethod(lambda p: []),
         },
@@ -67,8 +74,15 @@ def test_throttle_skips_recent_sync_same_session(hook, monkeypatch):
         (),
         {
             "sync_once": staticmethod(
-                lambda **k: syncs.append(1)
-                or {"status": "ok", "publishedIds": [], "changed": False, "factCount": 0}
+                lambda **k: (
+                    syncs.append(1)
+                    or {
+                        "status": "ok",
+                        "publishedIds": [],
+                        "changed": False,
+                        "factCount": 0,
+                    }
+                )
             ),
             "read_managed_ids": staticmethod(lambda p: []),
         },
@@ -107,8 +121,15 @@ def test_throttle_expires(hook, monkeypatch):
         (),
         {
             "sync_once": staticmethod(
-                lambda **k: syncs.append(1)
-                or {"status": "ok", "publishedIds": [], "changed": False, "factCount": 0}
+                lambda **k: (
+                    syncs.append(1)
+                    or {
+                        "status": "ok",
+                        "publishedIds": [],
+                        "changed": False,
+                        "factCount": 0,
+                    }
+                )
             ),
             "read_managed_ids": staticmethod(lambda p: []),
         },
@@ -125,11 +146,7 @@ def test_throttle_expires(hook, monkeypatch):
         {
             "schema": 2,
             "lastSyncAt": 0.0,
-            "sessions": [
-                __import__("hashlib")
-                .sha256(b"sess-b")
-                .hexdigest()
-            ],
+            "sessions": [__import__("hashlib").sha256(b"sess-b").hexdigest()],
             "inFlightUntil": 0.0,
         },
     )
@@ -179,9 +196,7 @@ def test_user_prompt_submit_triggers_sync_after_recall(hook, monkeypatch):
     import io
     import sys as _sys
 
-    monkeypatch.setattr(
-        _sys, "stdin", io.StringIO(json.dumps(_event()))
-    )
+    monkeypatch.setattr(_sys, "stdin", io.StringIO(json.dumps(_event())))
     assert hook.main() == 0
     assert calls == ["recall", "sync"], "sync must run after recall prefetch"
 

@@ -121,6 +121,7 @@ def json_text(value: dict[str, Any]) -> str:
 
 
 def extract_matcher(doc: dict[str, Any] | None) -> str | None:
+    """Legacy helper: PreToolUse matcher (retired; always None on current template)."""
     if not doc:
         return None
     hooks = doc.get("hooks")
@@ -134,6 +135,61 @@ def extract_matcher(doc: dict[str, Any] | None) -> str | None:
         return None
     matcher = group.get("matcher")
     return matcher if isinstance(matcher, str) else None
+
+
+def is_runir_owned_group(group: dict[str, Any], root: Path) -> bool:
+    """True when every command in the group points at this plugin's hook SoT."""
+    sot = str((root / "hooks" / "runir-grok.py").resolve())
+    hooks = group.get("hooks")
+    if not isinstance(hooks, list) or not hooks:
+        return False
+    saw = False
+    for hook in hooks:
+        if not isinstance(hook, dict):
+            continue
+        command = hook.get("command")
+        if not isinstance(command, str) or not command:
+            continue
+        saw = True
+        if "runir-grok.py" not in command and sot not in command:
+            return False
+    return saw
+
+
+def prune_runir_pre_tool_use(doc: dict[str, Any], root: Path) -> list[str]:
+    """Audit PreToolUse groups in a copy of the previous dedicated document.
+
+    The copy retains non-Rúnir groups only so notes can distinguish ownership;
+    installation replaces the entire dedicated document with the clean template.
+    """
+    notes: list[str] = []
+    hooks = doc.get("hooks")
+    if not isinstance(hooks, dict):
+        return notes
+    groups = hooks.get("PreToolUse")
+    if not isinstance(groups, list) or not groups:
+        if "PreToolUse" in hooks:
+            del hooks["PreToolUse"]
+            notes.append("removed empty PreToolUse key")
+        return notes
+    kept: list[Any] = []
+    removed = 0
+    for group in groups:
+        if isinstance(group, dict) and is_runir_owned_group(group, root):
+            removed += 1
+            continue
+        kept.append(group)
+    if removed:
+        notes.append(f"pruned {removed} Rúnir-owned PreToolUse group(s)")
+    if kept:
+        hooks["PreToolUse"] = kept
+        notes.append(
+            f"identified {len(kept)} non-Rúnir PreToolUse group(s); "
+            "dedicated hook document replacement removes them too"
+        )
+    else:
+        hooks.pop("PreToolUse", None)
+    return notes
 
 
 def extract_commands(doc: dict[str, Any] | None) -> list[str]:
@@ -197,8 +253,17 @@ def main() -> int:
         else (Path.home() / ".grok" / "hooks" / "runir-grok.json")
     )
     desired = render_template(template, root, env_file=env_file)
-    desired_text = json_text(desired)
+    # This destination is a dedicated Rúnir hook document. Installation replaces
+    # it with the clean template; audit notes describe every prior PreToolUse
+    # group that replacement removes. A first-overwrite backup preserves the old
+    # document for recovery.
     existing = load_json(dest)
+    prune_notes: list[str] = []
+    if isinstance(existing, dict):
+        # Report what would be pruned from the previous document (audit only).
+        audit = json.loads(json.dumps(existing))  # deep copy via JSON
+        prune_notes = prune_runir_pre_tool_use(audit, root)
+    desired_text = json_text(desired)
     previous_text = dest.read_text(encoding="utf-8") if dest.exists() else ""
     changed = desired_text != previous_text
 
@@ -210,11 +275,19 @@ def main() -> int:
         "changed": changed,
         "matcher": extract_matcher(desired),
         "previousMatcher": extract_matcher(existing),
+        "preToolUseReplacement": prune_notes,
+        "events": sorted(
+            (desired.get("hooks") or {}).keys()
+            if isinstance(desired.get("hooks"), dict)
+            else []
+        ),
         "commands": extract_commands(desired),
         "warnings": warn_legacy_copies(root),
         "diffKeys": {
             "matcherChanged": extract_matcher(existing) != extract_matcher(desired),
             "commandRepath": extract_commands(existing) != extract_commands(desired),
+            "preToolUseRemoved": extract_matcher(existing) is not None
+            and extract_matcher(desired) is None,
         },
     }
 

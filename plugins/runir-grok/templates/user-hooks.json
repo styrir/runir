@@ -12,18 +12,6 @@
         ]
       }
     ],
-    "PreToolUse": [
-      {
-        "matcher": ".*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/usr/bin/env __ENV_WIRING__python3 \"__PLUGIN_ROOT__/hooks/runir-grok.py\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [

@@ -60,6 +60,41 @@ def test_recall_context_empty_prompt_or_user(core):
     assert core.recall_context("hi", user_id="") == ""
 
 
+def test_recall_result_threads_trace_and_memory_ids(core, monkeypatch):
+    monkeypatch.setattr(
+        core,
+        "post_json",
+        lambda *a, **k: (
+            200,
+            {
+                "prependContext": "fact-about-dogs",
+                "retrievalTraceId": "trace-99",
+                "memories": [{"id": "m-a"}, {"id": "m-b"}],
+            },
+        ),
+    )
+    r = core.recall_result("hello", user_id="u1", session_id="s1")
+    assert r.context == "fact-about-dogs"
+    assert r.retrieval_trace_id == "trace-99"
+    assert r.memory_ids == ["m-a", "m-b"]
+    # Delegating seam preserves string-only contract.
+    assert (
+        core.recall_context("hello", user_id="u1", session_id="s1") == "fact-about-dogs"
+    )
+
+
+def test_recall_result_fail_open_empty(core, monkeypatch):
+    monkeypatch.setattr(core, "post_json", lambda *a, **k: None)
+    r = core.recall_result("hello", user_id="u1")
+    assert r.context == ""
+    assert r.retrieval_trace_id == ""
+    assert r.memory_ids == []
+    r2 = core.recall_result("", user_id="u1")
+    assert r2.context == ""
+    r3 = core.recall_result("hi", user_id="")
+    assert r3.context == ""
+
+
 def test_capture_turn_true_on_2xx(core, monkeypatch):
     monkeypatch.setattr(core, "post_json", lambda *a, **k: (200, {"ok": True}))
     assert core.capture_turn(

@@ -34,8 +34,8 @@ RECALL_FEEDBACK_PREFIX = (
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
 
-# Hard cap on recall prependContext before PTU deny / Stop additionalContext / state.
-# Prevents multi-MB deny reasons and world-readable state bloat on hostile responses.
+# Hard cap on recall prependContext before headless inject / state.
+# Prevents multi-MB inject payloads and world-readable state bloat on hostile responses.
 MAX_PREPEND_CONTEXT_CHARS = 32 * 1024
 
 
@@ -51,9 +51,7 @@ def _request_origin(url: str) -> tuple[str, str, int | None]:
     return scheme, host, port
 
 
-def is_allowed_runir_endpoint(
-    url: str, env: Mapping[str, str] | None = None
-) -> bool:
+def is_allowed_runir_endpoint(url: str, env: Mapping[str, str] | None = None) -> bool:
     """Allow loopback http(s); non-loopback only HTTPS + RUNIR_ALLOW_REMOTE_ENDPOINTS=1."""
     if not url or not isinstance(url, str):
         return False
@@ -372,6 +370,39 @@ def normalize_content(content: Any) -> str:
     return ""
 
 
+def recall_result(
+    prompt: str,
+    *,
+    user_id: str,
+    session_id: str = "",
+    path: str | None = None,
+    timeout: float | None = None,
+    api_key: str | None = None,
+    client: str = DEFAULT_CLIENT,
+    user_agent: str = DEFAULT_USER_AGENT,
+    recall_url: str | None = None,
+) -> RecallResult:
+    """POST /hooks/recall → RecallResult (fail-open empty, never raises)."""
+    if not prompt or not user_id:
+        return RecallResult()
+    url = recall_url or os.environ.get("RUNIR_RECALL_URL", DEFAULT_RECALL_URL)
+    t = timeout if timeout is not None else env_float("RUNIR_RECALL_TIMEOUT", 5.0)
+    payload: dict[str, Any] = {
+        "prompt": prompt,
+        "userId": user_id,
+        "client": client,
+        "sessionId": session_id or None,
+        "path": path,
+    }
+    result = post_json(url, payload, t, api_key=api_key, user_agent=user_agent)
+    if not result:
+        return RecallResult()
+    status, body = result
+    if not 200 <= status < 300 or not isinstance(body, dict):
+        return RecallResult()
+    return parse_recall_body(body)
+
+
 def recall_context(
     prompt: str,
     *,
@@ -385,27 +416,17 @@ def recall_context(
     recall_url: str | None = None,
 ) -> str:
     """POST /hooks/recall → prependContext or "" (fail-open, never raises)."""
-    if not prompt or not user_id:
-        return ""
-    url = recall_url or os.environ.get("RUNIR_RECALL_URL", DEFAULT_RECALL_URL)
-    t = timeout if timeout is not None else env_float("RUNIR_RECALL_TIMEOUT", 5.0)
-    payload: dict[str, Any] = {
-        "prompt": prompt,
-        "userId": user_id,
-        "client": client,
-        "sessionId": session_id or None,
-        "path": path,
-    }
-    result = post_json(url, payload, t, api_key=api_key, user_agent=user_agent)
-    if not result:
-        return ""
-    status, body = result
-    if not 200 <= status < 300 or not isinstance(body, dict):
-        return ""
-    ctx = body.get("prependContext")
-    if not isinstance(ctx, str) or not ctx:
-        return ""
-    return _clamp_prepend_context(ctx)
+    return recall_result(
+        prompt,
+        user_id=user_id,
+        session_id=session_id,
+        path=path,
+        timeout=timeout,
+        api_key=api_key,
+        client=client,
+        user_agent=user_agent,
+        recall_url=recall_url,
+    ).context
 
 
 def capture_turn(

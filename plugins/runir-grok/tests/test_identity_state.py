@@ -1,8 +1,6 @@
-"""Rúnir-ghe.1: recall identity through state, dedupe key, and capture."""
+"""Rúnir-ghe.1 / Rúnir-ysk: turn-state identity for capture (prompt-only UPS)."""
 
 from __future__ import annotations
-
-import json
 
 
 def test_parse_recall_body_shapes(core):
@@ -50,7 +48,7 @@ def test_selection_id_order_independent_and_fallback(core):
     assert empty == core.content_hash("hello")
 
 
-def test_write_recall_state_v2_and_v1_consume(hook):
+def test_write_recall_state_v2_prompt_fields(hook):
     sid = "sess-id-v2"
     prompt = "original human prompt"
     ctx = "rendered markdown v1"
@@ -74,31 +72,23 @@ def test_write_recall_state_v2_and_v1_consume(hook):
     assert state.get("memoryIds") == ["m1"]
     assert state.get("retrievalTraceId") == "rt-99"
     assert state.get("contentHash") == digest
-    assert state.get("delivered") is False
+    assert state.get("delivered") is False  # non-empty context defaults undelivered
 
-    # v1-shaped state (no schema / new keys) still consumes cleanly.
-    v1_path = hook.recall_state_path("sess-v1")
-    hook.write_json_state(
-        v1_path,
-        {
-            "promptId": "pv1",
-            "context": "legacy ctx",
-            "delivered": False,
-            "updatedAt": 1.0,
-        },
-    )
-    got = hook.consume_recall({"sessionId": "sess-v1", "promptId": "pv1"})
-    assert got == "legacy ctx"
-    after = hook.read_json_state(v1_path)
-    assert after is not None
-    assert after.get("delivered") is True
-    assert after.get("context") == "legacy ctx"
+    # Empty context defaults delivered=True (nothing for retired TUI transports).
+    hook.write_recall_state(sid, "p2", "", prompt="next")
+    state2 = hook.read_json_state(hook.recall_state_path(sid))
+    assert state2 is not None
+    assert state2.get("delivered") is True
+    assert state2.get("prompt") == "next"
 
 
-def test_handle_recall_writes_identity(hook, monkeypatch):
+def test_handle_recall_prompt_only_no_identity(hook, monkeypatch):
+    """TUI UPS stores prompt only — no HTTP, no retrievalTraceId/memoryIds claim."""
     monkeypatch.setattr(hook, "RUNIR_USER_ID", "u1")
+    posts = []
 
     def fake_post(url, payload, timeout):
+        posts.append(url)
         return 200, {
             "prependContext": "mem body",
             "retrievalTraceId": "trace-xyz",
@@ -106,8 +96,6 @@ def test_handle_recall_writes_identity(hook, monkeypatch):
         }
 
     monkeypatch.setattr(hook, "post_json", fake_post)
-    # Empty baseline so native suppress does not fire.
-    monkeypatch.setattr(hook, "read_baseline_ids", lambda _sid: [])
     sid = "sess-recall-id"
     hook.handle_recall(
         {
@@ -116,16 +104,17 @@ def test_handle_recall_writes_identity(hook, monkeypatch):
             "prompt": "what about dark mode?",
         }
     )
+    assert posts == []
     state = hook.read_json_state(hook.recall_state_path(sid))
     assert state is not None
     assert state["prompt"] == "what about dark mode?"
-    assert state["retrievalTraceId"] == "trace-xyz"
-    assert state["memoryIds"] == ["id-a", "id-b"]
-    assert state["selectionId"] == hook.selection_id(["id-a", "id-b"], "mem body")
-    assert state["delivered"] is False
+    assert state.get("delivered") is True
+    assert not state.get("retrievalTraceId")
+    assert not state.get("memoryIds")
+    assert state.get("context") in ("", None)
 
 
-def test_capture_payload_includes_identity(hook, monkeypatch):
+def test_capture_payload_includes_identity_when_present(hook, monkeypatch):
     sid = "sess-cap-id"
     ctx = "ctx for capture"
     digest = hook.content_hash(ctx)
@@ -159,28 +148,6 @@ def test_capture_payload_includes_identity(hook, monkeypatch):
     hook.handle_capture({"sessionId": sid}, sid, "tok1")
     assert len(captured) == 1
     payload = captured[0]
-    assert payload["retrievalTraceId"] == "rt-cap"
-    assert payload["memoryIds"] == ["m9"]
     assert payload["messages"][0]["content"] == "state prompt wins"
-
-
-def test_capture_omits_identity_when_absent(hook, monkeypatch):
-    sid = "sess-cap-none"
-    hook.write_recall_state(sid, "p0", "ctx", content_hash_value=hook.content_hash("ctx"))
-    captured: list[dict] = []
-
-    def fake_post(url, payload, timeout):
-        captured.append(payload)
-        return 200, {"ok": True}
-
-    monkeypatch.setattr(hook, "post_json", fake_post)
-    monkeypatch.setattr(hook, "RUNIR_USER_ID", "u1")
-    monkeypatch.setattr(
-        hook,
-        "current_turn_messages",
-        lambda e: [{"role": "user", "content": "u"}, {"role": "assistant", "content": "a"}],
-    )
-    hook.handle_capture({}, sid, "tok2")
-    payload = captured[0]
-    assert "retrievalTraceId" not in payload
-    assert "memoryIds" not in payload
+    assert payload.get("retrievalTraceId") == "rt-cap"
+    assert payload.get("memoryIds") == ["m9"]

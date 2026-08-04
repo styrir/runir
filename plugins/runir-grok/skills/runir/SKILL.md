@@ -19,7 +19,8 @@ this skill is the on-demand slash path.
 
 ## Important limits
 
-- No secrets, prompts, or recalled context are stored in trace/status files.
+- Trace/status files do not store prompts, recalled context, headers, or credentials.
+- `recall-{sha256(sessionId)}.json` **does retain the latest original prompt** for capture. State files are owner-only (`0600`) but have no automatic TTL; remove stale files according to your local retention policy.
 - Trace ring: last 100 events per session under `~/.grok/state/runir/`.
 - Filenames use `sha256(sessionId)` digests only (no plaintext session ids on disk).
 

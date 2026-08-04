@@ -244,6 +244,7 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
     if env_file is not None and "RUNIR_ENV_FILE" not in child_env:
         child_env["RUNIR_ENV_FILE"] = str(env_file)
 
+    # Fresh turn: inject pre-generates the actual Grok session UUID and passes -s.
     proc = subprocess.run(
         [
             sys.executable,
@@ -272,7 +273,14 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
         f"GROK_HOME={grok_home}\nhooks={hooks_file}"
     )
     result = json.loads(proc.stdout)
-    assert result.get("sessionId"), "missing sessionId"
+    fresh_sid = result.get("sessionId")
+    assert fresh_sid, "missing verified Grok sessionId"
+    assert str(uuid.UUID(fresh_sid)) == fresh_sid, (
+        f"fresh sessionId is not a canonical UUID: {result!r}"
+    )
+    assert "runirSessionId" not in result, (
+        f"unexpected session identity alias: {result!r}"
+    )
     assert result.get("memoryInjected") is True, (
         f"expected memoryInjected=true, got {result!r}"
     )
@@ -280,7 +288,68 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
         f"expected modelCalls=1 (no gate re-burn / no tool loop), "
         f"got {result.get('modelCalls')}; full={result!r}"
     )
+    assert result.get("retrievalTraceId"), (
+        f"expected non-empty retrievalTraceId on memory-hit, got {result!r}"
+    )
     text = result.get("text") or ""
     assert sentinel in text, (
         f"sentinel not model-visible in assistant text:\n{text!r}\nresult={result!r}"
+    )
+
+    # Resume turn: the verified fresh Grok session UUID becomes --resume and the
+    # same identity must be returned and used for recall/capture.
+    grok_sid = result["sessionId"]
+    resume_prompt = (
+        f"session-tag={session_seed} one-time bridge token RUNIR-E2E-SENTINEL. "
+        "Answer ONLY from the injected Rúnir recall content block. "
+        f"What is the exact bridge token for session-tag={session_seed}? "
+        "Reply with only that token, nothing else."
+    )
+    proc2 = subprocess.run(
+        [
+            sys.executable,
+            str(INJECT),
+            "--prompt",
+            resume_prompt,
+            "--json",
+            "--timeout",
+            "180",
+            "--path",
+            str(PLUGIN_ROOT),
+            "--max-turns",
+            "1",
+            "--no-memory",
+            "--disable-web-search",
+            "--resume",
+            grok_sid,
+        ],
+        capture_output=True,
+        text=True,
+        env=child_env,
+        check=False,
+        timeout=240,
+    )
+    assert proc2.returncode == 0, (
+        f"resume headless_inject failed rc={proc2.returncode}\n"
+        f"stdout={proc2.stdout!r}\nstderr={proc2.stderr!r}"
+    )
+    result2 = json.loads(proc2.stdout)
+    assert result2.get("sessionId") == grok_sid, (
+        f"resume sessionId mismatch: expected {grok_sid!r}, got {result2!r}"
+    )
+    assert "runirSessionId" not in result2, (
+        f"unexpected resume session identity alias: {result2!r}"
+    )
+    assert result2.get("memoryInjected") is True, (
+        f"resume expected memoryInjected=true, got {result2!r}"
+    )
+    assert result2.get("modelCalls") == 1, (
+        f"resume expected modelCalls=1, got {result2.get('modelCalls')}; full={result2!r}"
+    )
+    assert result2.get("retrievalTraceId"), (
+        f"resume expected non-empty retrievalTraceId, got {result2!r}"
+    )
+    text2 = result2.get("text") or ""
+    assert sentinel in text2, (
+        f"resume sentinel not model-visible:\n{text2!r}\nresult={result2!r}"
     )

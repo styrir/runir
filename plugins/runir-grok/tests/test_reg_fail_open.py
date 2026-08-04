@@ -1,4 +1,4 @@
-"""U-REG: fail-open when RUNIR_USER_ID unset or Runir down."""
+"""U-REG: fail-open when RUNIR_USER_ID unset; prompt-only UPS when Runir down."""
 
 from __future__ import annotations
 
@@ -15,11 +15,12 @@ def test_reg_user_id_unset_exits_zero(hook, monkeypatch):
     assert hook.main() == 0
 
 
-def test_reg_runir_down_empty_recall_no_deny(hook, monkeypatch):
+def test_reg_ups_prompt_only_no_http_no_deny(hook, monkeypatch, capsys):
+    """TUI UPS does not call Runir; stores prompt; never emits deny JSON."""
     monkeypatch.setattr(hook, "RUNIR_USER_ID", "u1")
 
     def fail_post(url, payload, timeout):
-        return None
+        raise AssertionError("TUI UPS must not call post_json")
 
     monkeypatch.setattr(hook, "post_json", fail_post)
     event = {
@@ -30,6 +31,8 @@ def test_reg_runir_down_empty_recall_no_deny(hook, monkeypatch):
     hook.handle_recall(event)
     state = hook.read_json_state(hook.recall_state_path("s-down"))
     assert state is not None
-    assert state.get("context") == ""
+    assert state.get("context") in ("", None)
     assert state.get("delivered") is True
-    assert hook.consume_recall({"sessionId": "s-down", "promptId": "p1"}) is None
+    assert state.get("prompt") == "what do you know?"
+    # No transport stdout from handlers.
+    assert capsys.readouterr().out.strip() == ""

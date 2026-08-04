@@ -78,9 +78,8 @@ def hook(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "RUNIR_CAPTURE_STALE_S", 5.0)
     monkeypatch.setattr(mod, "RUNIR_CAPTURE_WAIT_TIMEOUT", 32.0)
     monkeypatch.setattr(mod, "RUNIR_CAPTURE_POLL_INTERVAL", 0.02)
-    monkeypatch.setattr(mod, "RUNIR_BATCH_SIBLING_S", 2.0)
-    monkeypatch.setattr(mod, "RUNIR_RECALL_DEDUPE_TTL_S", 3600.0)
-    monkeypatch.setattr(mod, "RUNIR_RECALL_DEDUPE_MAX", 32)
+    # Host may export DISABLE_GATE=1 (headless dogfood); do not inert all main() tests.
+    monkeypatch.delenv("RUNIR_GROK_DISABLE_GATE", raising=False)
     return mod
 
 
