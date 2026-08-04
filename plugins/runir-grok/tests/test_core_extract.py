@@ -100,6 +100,8 @@ def test_get_json_uses_auth_and_json_response(core, monkeypatch):
 
     class Response:
         status = 200
+        _raw = b'{"trace":{"id":"t1"}}'
+        _offset = 0
 
         def __enter__(self):
             return self
@@ -107,8 +109,16 @@ def test_get_json_uses_auth_and_json_response(core, monkeypatch):
         def __exit__(self, *args):
             return False
 
-        def read(self):
-            return b'{"trace":{"id":"t1"}}'
+        def read(self, amt=-1):
+            if self._offset >= len(self._raw):
+                return b""
+            if amt is None or amt < 0:
+                chunk = self._raw[self._offset :]
+                self._offset = len(self._raw)
+                return chunk
+            chunk = self._raw[self._offset : self._offset + amt]
+            self._offset += len(chunk)
+            return chunk
 
     def fake_open(request, timeout):
         seen["url"] = request.full_url
@@ -146,7 +156,10 @@ def test_capture_turn_requests_persisted_receipt_with_full_metadata(core, monkey
 
     monkeypatch.setattr(core, "post_json", fake_post)
     assert core.capture_turn(
-        [{"role": "user", "content": "original prompt"}, {"role": "assistant", "content": "final answer"}],
+        [
+            {"role": "user", "content": "original prompt"},
+            {"role": "assistant", "content": "final answer"},
+        ],
         user_id="u1",
         session_id="sess-1",
         retrieval_trace_id="trace-1",

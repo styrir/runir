@@ -94,7 +94,8 @@ def test_forged_id_marker_not_published(tmp_path):
 
 class _JsonResp:
     def __init__(self, payload):
-        self._payload = payload
+        self._raw = json.dumps(payload).encode("utf-8")
+        self._offset = 0
 
     def __enter__(self):
         return self
@@ -102,8 +103,16 @@ class _JsonResp:
     def __exit__(self, *args):
         return False
 
-    def read(self):
-        return json.dumps(self._payload).encode("utf-8")
+    def read(self, amt=-1):
+        if self._offset >= len(self._raw):
+            return b""
+        if amt is None or amt < 0:
+            chunk = self._raw[self._offset :]
+            self._offset = len(self._raw)
+            return chunk
+        chunk = self._raw[self._offset : self._offset + amt]
+        self._offset += len(chunk)
+        return chunk
 
 
 class _Opener:
@@ -112,6 +121,47 @@ class _Opener:
 
     def open(self, request, timeout=0):
         return _JsonResp(self._payload)
+
+
+class _OversizeResp:
+    """Streams past the transport cap without allocating multi-MB payloads."""
+
+    def __init__(self, total: int, *, content_length: str | None = None):
+        self._remaining = total
+        self._read_calls = 0
+        self._bytes_requested = 0
+        if content_length is not None:
+            self.headers = {"Content-Length": content_length}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self, amt=-1):
+        self._read_calls += 1
+        if amt is None or amt < 0:
+            # Must never be invoked by the capped reader; honor if called.
+            n = self._remaining
+        else:
+            n = min(self._remaining, amt)
+        self._bytes_requested += n if n > 0 else 0
+        if n <= 0:
+            return b""
+        self._remaining -= n
+        return b"x" * n
+
+
+class _OversizeOpener:
+    def __init__(self, total: int, *, content_length: str | None = None):
+        self.total = total
+        self.content_length = content_length
+        self.last_resp: _OversizeResp | None = None
+
+    def open(self, request, timeout=0):
+        self.last_resp = _OversizeResp(self.total, content_length=self.content_length)
+        return self.last_resp
 
 
 def test_fetch_error_json_is_not_ok_empty(monkeypatch):
@@ -262,3 +312,57 @@ def test_malformed_list_envelope_preserves_managed_block(tmp_path, monkeypatch):
         after_state = bridge.read_json(bridge.bridge_sync_state_path(state_dir))
         assert after_state.get("lastSyncAt") == last, payload
         assert after_state.get("lastStatus") == "preserved", payload
+
+
+def test_fetch_oversize_returns_error_oversize(monkeypatch):
+    """Oversize list body maps to the literal error:oversize token."""
+    bridge = load_bridge()
+    cap = 256
+    monkeypatch.setattr(bridge._core, "MAX_RESPONSE_BYTES", cap)
+    monkeypatch.setattr(bridge, "OPENER", _OversizeOpener(cap + 5000))
+    facts, status = bridge.fetch_runir_facts("http://127.0.0.1:9", "user-1", None)
+    assert facts == []
+    assert status == "error:oversize"
+
+
+def test_oversize_preserves_managed_block_and_throttle(tmp_path, monkeypatch):
+    """error:oversize fail-preserves managed block and does not advance lastSyncAt."""
+    bridge = load_bridge()
+    memory_root = tmp_path / "memory"
+    state_dir = tmp_path / "state" / "runir"
+    memory_root.mkdir(parents=True)
+    state_dir.mkdir(parents=True)
+    facts = [
+        {"id": "f1", "text": "keep-oversize-one"},
+        {"id": "f2", "text": "keep-oversize-two"},
+    ]
+    path = memory_root / "MEMORY.md"
+    once = bridge.sync_once(
+        memory_root=memory_root,
+        facts=facts,
+        state_dir=state_dir,
+        record_throttle=True,
+    )
+    assert once["status"] == "ok"
+    before = path.read_bytes()
+    last = bridge.read_json(bridge.bridge_sync_state_path(state_dir)).get("lastSyncAt")
+    assert isinstance(last, (int, float)) and last > 0
+
+    cap = 256
+    monkeypatch.setattr(bridge._core, "MAX_RESPONSE_BYTES", cap)
+    monkeypatch.setattr(bridge, "OPENER", _OversizeOpener(cap + 1))
+    time.sleep(0.01)
+    failed = bridge.sync_once(
+        memory_root=memory_root,
+        user_id="u1",
+        runir_base="http://127.0.0.1:9",
+        state_dir=state_dir,
+        record_throttle=True,
+    )
+    assert failed["status"] == "preserved"
+    assert failed.get("reason") == "error:oversize"
+    assert path.read_bytes() == before
+    assert "keep-oversize-one" in path.read_text(encoding="utf-8")
+    after_state = bridge.read_json(bridge.bridge_sync_state_path(state_dir))
+    assert after_state.get("lastSyncAt") == last
+    assert after_state.get("lastStatus") == "preserved"

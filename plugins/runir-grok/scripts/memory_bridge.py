@@ -35,9 +35,11 @@ if str(_LIB) not in sys.path:
 import runir_core as _core  # noqa: E402
 from runir_core import (  # noqa: E402
     OPENER,
+    ResponseTooLarge,
     exclusive_lock,
     grok_home,
     is_allowed_runir_endpoint,
+    read_capped_body,
     read_json,
     write_json_atomic,
 )
@@ -278,7 +280,10 @@ def fetch_runir_facts(
         )
         # OPENER: ProxyHandler({}) + _SafeRedirectHandler (no cross-origin Bearer).
         with OPENER.open(request, timeout=timeout) as response:
-            body = json.loads(response.read() or b"{}")
+            body = json.loads(read_capped_body(response) or b"{}")
+    except ResponseTooLarge:
+        print("warn: Runir list response exceeded byte cap", file=sys.stderr)
+        return [], "error:oversize"
     except Exception as exc:
         print(f"warn: Runir list failed open: {exc}", file=sys.stderr)
         return [], f"error:{type(exc).__name__}"

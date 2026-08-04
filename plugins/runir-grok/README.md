@@ -49,6 +49,7 @@ Native Grok lifecycle adapter for Rúnir (thin HTTP client).
 - **D1** — Stale capture bail: pending markers older than `RUNIR_CAPTURE_STALE_S` (5s) are marked `stale` and UPS continues.
 - **flock** — advisory locks on turn state / bridge RMW (local FS only).
 - **Bridge** — Global-only projection into `<!-- runir-bridge:begin/end -->`. Fetch failure **preserves** the prior managed block (never wipe). Full read-modify-write under advisory lock with pre-image stat re-check (max 3 attempts → `preserved`). `lastSyncAt` advances **only after successful sync**; the hook holds a short in-flight lease (`RUNIR_SYNC_LEASE_S`) instead of burning the throttle window on failed spawn. Advisory lock does not bind Grok's own writer — best-effort only.
+- **Transport body cap** — `read_capped_body` in `lib/runir_core.py` bounds every plugin HTTP response (`get_json` / `post_json` / bridge `fetch_runir_facts`) to `MAX_RESPONSE_BYTES` (1 MiB); oversize fails open (hooks → `None`) or fail-preserves (`error:oversize`).
 
 ## Install (machine-local)
 
