@@ -95,6 +95,40 @@ def test_recall_result_fail_open_empty(core, monkeypatch):
     assert r3.context == ""
 
 
+def test_get_json_uses_auth_and_json_response(core, monkeypatch):
+    seen = {}
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"trace":{"id":"t1"}}'
+
+    def fake_open(request, timeout):
+        seen["url"] = request.full_url
+        seen["auth"] = request.get_header("Authorization")
+        seen["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(core.OPENER, "open", fake_open)
+    assert core.get_json(
+        "http://127.0.0.1:7700/hooks/traces/t1?userId=u1",
+        3.0,
+        api_key="secret",
+    ) == (200, {"trace": {"id": "t1"}})
+    assert seen == {
+        "url": "http://127.0.0.1:7700/hooks/traces/t1?userId=u1",
+        "auth": "Bearer secret",
+        "timeout": 3.0,
+    }
+
+
 def test_capture_turn_true_on_2xx(core, monkeypatch):
     monkeypatch.setattr(core, "post_json", lambda *a, **k: (200, {"ok": True}))
     assert core.capture_turn(
@@ -103,11 +137,68 @@ def test_capture_turn_true_on_2xx(core, monkeypatch):
     )
 
 
+def test_capture_turn_requests_persisted_receipt_with_full_metadata(core, monkeypatch):
+    seen = {}
+
+    def fake_post(url, payload, timeout, **kwargs):
+        seen.update(payload)
+        return 200, {"ok": True}
+
+    monkeypatch.setattr(core, "post_json", fake_post)
+    assert core.capture_turn(
+        [{"role": "user", "content": "original prompt"}, {"role": "assistant", "content": "final answer"}],
+        user_id="u1",
+        session_id="sess-1",
+        retrieval_trace_id="trace-1",
+        memory_ids=["m1", "m2"],
+        capture_receipt=True,
+    )
+    assert seen["sessionId"] == "sess-1"
+    assert seen["retrievalTraceId"] == "trace-1"
+    assert seen["memoryIds"] == ["m1", "m2"]
+    assert seen["captureReceipt"] is True
+    assert seen["messages"] == [
+        {"role": "user", "content": "original prompt"},
+        {"role": "assistant", "content": "final answer"},
+    ]
+
+
 def test_capture_turn_false_on_error_body(core, monkeypatch):
     monkeypatch.setattr(core, "post_json", lambda *a, **k: (200, {"error": "x"}))
     assert not core.capture_turn(
         [{"role": "user", "content": "q"}],
         user_id="u1",
+    )
+
+
+def test_capture_turn_preserves_legacy_success_on_skipped_body(core, monkeypatch):
+    monkeypatch.setattr(
+        core,
+        "post_json",
+        lambda *a, **k: (200, {"skipped": True, "reason": "no capture API key"}),
+    )
+    assert core.capture_turn(
+        [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}],
+        user_id="u1",
+        session_id="s1",
+        retrieval_trace_id="t1",
+        memory_ids=["m1"],
+    )
+
+
+def test_capture_turn_receipt_mode_rejects_skipped_body(core, monkeypatch):
+    monkeypatch.setattr(
+        core,
+        "post_json",
+        lambda *a, **k: (200, {"skipped": True, "reason": "no capture API key"}),
+    )
+    assert not core.capture_turn(
+        [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}],
+        user_id="u1",
+        session_id="s1",
+        retrieval_trace_id="t1",
+        memory_ids=["m1"],
+        capture_receipt=True,
     )
 
 

@@ -136,6 +136,7 @@ vi.mock("../storage/surreal/surreal-store.js", () => ({
 vi.mock("../storage/surreal/phase2-store.js", () => ({
   createRetrievalTrace: mocks.createRetrievalTrace,
   getRetrievalTrace: vi.fn(),
+  patchRetrievalTraceCaptureReceipt: vi.fn(),
   markSemiotesFoldedIntoProjectState: vi.fn(),
   patchSemioteUsefulness: vi.fn(),
   promoteSemioteToNoema: vi.fn(),

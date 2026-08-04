@@ -34,6 +34,16 @@ export interface TraceView {
   responseResolution?: string;
   correctedIds?: string[];
   feedbackReceivedAt?: string;
+  captureReceipt?: {
+    retrievalTraceId: string;
+    sessionId: string;
+    memoryIds: string[];
+    prompt: string;
+    answer: string;
+    client?: string;
+    path?: string;
+    receivedAt: string;
+  };
   /** THIN human recall-quality label (helped|hurt|unused|missing|stale), set via `runir traces rate`. */
   rating?: string;
   ratingNote?: string;
@@ -125,7 +135,10 @@ export function formatTraceReceipt(trace: TraceView): string {
   lines.push("");
 
   lines.push("  model answer:");
-  lines.push(indent(trace.answer ?? "(no feedback received yet)", "    "));
+  lines.push(indent(trace.captureReceipt?.answer ?? trace.answer ?? "(no captured answer or feedback received yet)", "    "));
+  if (trace.captureReceipt) {
+    lines.push(`    captured: ${trace.captureReceipt.receivedAt}`);
+  }
   lines.push("");
 
   lines.push("  feedback:");

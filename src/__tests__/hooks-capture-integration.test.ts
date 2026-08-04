@@ -230,6 +230,8 @@ vi.mock("../storage/surreal/phase2-store.js", () => ({
   getPrimaryMemoryRowsByIds: vi.fn().mockResolvedValue([]),
   getRetrievalFootprintFromTrace: vi.fn().mockResolvedValue(null),
   getRetrievalTrace: vi.fn().mockResolvedValue(null),
+  listRetrievalTraces: vi.fn().mockResolvedValue([]),
+  patchRetrievalTraceCaptureReceipt: vi.fn().mockResolvedValue(undefined),
   patchSemioteProvenance: vi.fn().mockResolvedValue(undefined),
   markSemiotesFoldedIntoProjectState: vi.fn().mockResolvedValue(undefined),
   patchSemioteUsefulness: vi.fn().mockResolvedValue(undefined),
@@ -256,7 +258,7 @@ vi.mock("../storage/surreal/phase2-store.js", () => ({
 import { extractMemories } from "../capture/extraction/capture.js";
 import { arbitrateWrite } from "../storage/writes/write-arbitrator.js";
 import { resolveCaptureApiKey } from "../shared/config.js";
-import { getPrimaryMemoryRowsByIds, getRetrievalFootprintFromTrace, patchSemioteProvenance, retrievalFootprintIdentityMatches, upsertSemioteRelation } from "../storage/surreal/phase2-store.js";
+import { getPrimaryMemoryRowsByIds, getRetrievalFootprintFromTrace, getRetrievalTrace, listRetrievalTraces, patchRetrievalTraceCaptureReceipt, patchSemioteProvenance, retrievalFootprintIdentityMatches, upsertSemioteRelation } from "../storage/surreal/phase2-store.js";
 import { normalizeCaptureMessages } from "../capture/extraction/capture.js";
 import { createApp } from "../../index.js";
 
@@ -438,6 +440,153 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
       },
     });
     expect(arbitrateWrite).not.toHaveBeenCalled();
+  });
+
+  it("POST /hooks/capture persists an exact headless capture receipt on the retrieval trace", async () => {
+    const prompt = "Which deployment target did we choose?";
+    const answer = "production";
+    (getRetrievalTrace as Mock).mockResolvedValue({
+      id: "trace-headless",
+      userId: "agent-hermes",
+      sessionId: "00000000-0000-4000-8000-000000000123",
+      prompt,
+      intentLabel: "fact",
+      laneLabel: "fact",
+      retrievalPath: "hybrid",
+      accessTrackedIds: ["semiote:m1", "semiote:m2"],
+      items: [
+        { id: "semiote:m1", score: 0.9 },
+        { id: "semiote:m2", score: 0.8 },
+      ],
+      createdAt: "2026-08-04T00:00:00.000Z",
+    });
+
+    const app = getApp();
+    const res = await app.request("/hooks/capture", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: "agent-hermes",
+        client: "grok",
+        sessionId: "00000000-0000-4000-8000-000000000123",
+        path: "/repo",
+        retrievalTraceId: "trace-headless",
+        memoryIds: ["semiote:m1", "semiote:m2"],
+        captureReceipt: true,
+        messages: [
+          { role: "user", content: prompt },
+          { role: "assistant", content: answer },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(patchRetrievalTraceCaptureReceipt).toHaveBeenCalledWith(
+      expect.anything(),
+      "trace-headless",
+      "agent-hermes",
+      {
+        sessionId: "00000000-0000-4000-8000-000000000123",
+        memoryIds: ["semiote:m1", "semiote:m2"],
+        prompt,
+        answer,
+        client: undefined,
+        path: undefined,
+      },
+    );
+  });
+
+  it("POST /hooks/capture ignores malformed memoryIds for legacy non-receipt clients", async () => {
+    const app = getApp();
+    const res = await app.request("/hooks/capture", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: "agent-hermes",
+        memoryIds: "legacy-non-array-value",
+        messages: [
+          { role: "user", content: "legacy prompt" },
+          { role: "assistant", content: "legacy answer" },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(extractMemories).toHaveBeenCalled();
+  });
+
+  it("POST /hooks/capture rejects a headless receipt whose memory identities do not exactly match the trace", async () => {
+    (getRetrievalTrace as Mock).mockResolvedValueOnce({
+      id: "trace-headless",
+      userId: "agent-hermes",
+      sessionId: "sess-1",
+      prompt: "original prompt",
+      intentLabel: "fact",
+      laneLabel: "fact",
+      retrievalPath: "hybrid",
+      accessTrackedIds: ["semiote:m1"],
+      items: [{ id: "semiote:m1", score: 0.9 }],
+      createdAt: "2026-08-04T00:00:00.000Z",
+    });
+
+    const app = getApp();
+    const res = await app.request("/hooks/capture", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: "agent-hermes",
+        sessionId: "sess-1",
+        retrievalTraceId: "trace-headless",
+        memoryIds: ["m2"],
+        captureReceipt: true,
+        messages: [
+          { role: "user", content: "original prompt" },
+          { role: "assistant", content: "final answer" },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: "capture receipt memoryIds mismatch" });
+    expect(listRetrievalTraces).not.toHaveBeenCalled();
+    expect(extractMemories).not.toHaveBeenCalled();
+    expect(patchRetrievalTraceCaptureReceipt).not.toHaveBeenCalled();
+  });
+
+  it("POST /hooks/capture rejects prefix-normalized memoryIds instead of rewriting the receipt", async () => {
+    (getRetrievalTrace as Mock).mockResolvedValueOnce({
+      id: "trace-headless",
+      userId: "agent-hermes",
+      sessionId: "sess-1",
+      prompt: "original prompt",
+      intentLabel: "fact",
+      laneLabel: "fact",
+      retrievalPath: "hybrid",
+      accessTrackedIds: ["semiote:m1"],
+      items: [{ id: "semiote:m1", score: 0.9 }],
+      createdAt: "2026-08-04T00:00:00.000Z",
+    });
+
+    const app = getApp();
+    const res = await app.request("/hooks/capture", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: "agent-hermes",
+        sessionId: "sess-1",
+        retrievalTraceId: "trace-headless",
+        memoryIds: ["m1"],
+        captureReceipt: true,
+        messages: [
+          { role: "user", content: "original prompt" },
+          { role: "assistant", content: "final answer" },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: "capture receipt memoryIds mismatch" });
+    expect(patchRetrievalTraceCaptureReceipt).not.toHaveBeenCalled();
   });
 
   it("POST /hooks/capture skips when normalization yields no eligible messages", async () => {

@@ -155,6 +155,35 @@ def event_value(event: dict[str, Any], *names: str, default: Any = None) -> Any:
     return default
 
 
+def get_json(
+    url: str,
+    timeout: float,
+    *,
+    api_key: str | None = None,
+    user_agent: str = DEFAULT_USER_AGENT,
+) -> tuple[int, dict[str, Any]] | None:
+    """GET JSON under the same endpoint/auth/redirect policy as post_json."""
+    if not is_allowed_runir_endpoint(url):
+        return None
+    try:
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": user_agent,
+        }
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        request = urllib.request.Request(url, headers=headers, method="GET")
+        with OPENER.open(request, timeout=timeout) as response:
+            raw = response.read()
+            try:
+                body = json.loads(raw) if raw else {}
+            except (json.JSONDecodeError, ValueError):
+                return None
+            return response.status, body if isinstance(body, dict) else {}
+    except Exception:
+        return None
+
+
 def post_json(
     url: str,
     payload: dict[str, Any],
@@ -442,8 +471,9 @@ def capture_turn(
     capture_url: str | None = None,
     retrieval_trace_id: str = "",
     memory_ids: list[str] | None = None,
+    capture_receipt: bool = False,
 ) -> bool:
-    """POST /hooks/capture. True on 2xx without error key; fail-open False."""
+    """POST /hooks/capture. Legacy 2xx acceptance; receipt mode rejects skips."""
     if not messages or not user_id:
         return False
     url = capture_url or os.environ.get("RUNIR_CAPTURE_URL", DEFAULT_CAPTURE_URL)
@@ -459,13 +489,16 @@ def capture_turn(
         payload["retrievalTraceId"] = retrieval_trace_id
     if memory_ids:
         payload["memoryIds"] = list(memory_ids)
+    if capture_receipt:
+        payload["captureReceipt"] = True
+        payload["memoryIds"] = list(memory_ids or [])
     result = post_json(url, payload, t, api_key=api_key, user_agent=user_agent)
     if not result:
         return False
     status, body = result
     if not 200 <= status < 300 or not isinstance(body, dict):
         return False
-    if "error" in body:
+    if "error" in body or (capture_receipt and body.get("skipped") is True):
         return False
     return True
 

@@ -166,8 +166,12 @@ Flow:
    mismatched ID fails closed before capture. Expect `modelCalls == 1` when no
    gate re-burn or tool loop occurs under `--max-turns 1`.
 6. `POST /hooks/capture` with the **original** user text + assistant reply,
-   plus the verified real Grok `sessionId`, `retrievalTraceId`, and `memoryIds`
-   (skipped under `--no-capture`; capture failure is non-fatal).
+   plus the verified real Grok `sessionId`, `retrievalTraceId`, and `memoryIds`.
+   The headless client requests an opt-in capture receipt; Rúnir validates those
+   fields against the owner-scoped retrieval trace and persists the exact prompt
+   and answer on that trace for `GET /hooks/traces/:id` readback. This is capture
+   evidence, not usefulness feedback. Skipped under `--no-capture`; capture failure
+   remains non-fatal to the returned model answer.
 
 ### Flags
 
@@ -229,6 +233,8 @@ pytest plugins/runir-grok/tests -q
 # Isolated GROK_HOME canaries (no real ~/.grok writes) are included above.
 # Live canary (needs running Rúnir + grok + credentials):
 RUNIR_E2E=1 pytest plugins/runir-grok/tests/test_e2e_headless_live.py -q
+# The live canary hard-requires fresh + resumed receipt readback for the exact
+# sessionId, retrievalTraceId, memoryIds, original prompt, and final answer.
 ```
 
 ## Non-goals

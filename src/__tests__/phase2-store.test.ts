@@ -8,6 +8,7 @@ import {
   initializeSemioteSemiosis,
   listRetrievalTraces,
   patchRetrievalTraceAnswer,
+  patchRetrievalTraceCaptureReceipt,
   patchRetrievalTraceRating,
   patchSemioteUsefulness,
   patchSemioteProvenance,
@@ -580,6 +581,9 @@ describe("retrieval_trace persistence augmentation (A′ step 1 — Memory Impac
     expect(db.query).toHaveBeenCalledWith(
       expect.stringContaining("DEFINE FIELD IF NOT EXISTS feedback_received_at ON TABLE retrieval_trace TYPE option<datetime>;"),
     );
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining("DEFINE FIELD IF NOT EXISTS capture_receipt ON TABLE retrieval_trace TYPE option<object>;"),
+    );
   });
 
   it("createRetrievalTrace persists the verbatim prependContext but not the feedback-only fields", async () => {
@@ -624,6 +628,16 @@ describe("retrieval_trace persistence augmentation (A′ step 1 — Memory Impac
         response_resolution: "explicit_success",
         corrected_ids: ["m2"],
         feedback_received_at: "2026-06-01T10:00:00.000Z",
+        capture_receipt: {
+          retrievalTraceId: "trace-9",
+          sessionId: "sess-9",
+          memoryIds: ["semiote:m1"],
+          prompt: "status?",
+          answer: "Yes, it writes semiote rows.",
+          client: "grok",
+          path: "/repo",
+          receivedAt: "2026-06-01T10:00:01.000Z",
+        },
         created_at: "2026-06-01T09:59:00.000Z",
       },
     ]]);
@@ -635,6 +649,16 @@ describe("retrieval_trace persistence augmentation (A′ step 1 — Memory Impac
       responseResolution: "explicit_success",
       correctedIds: ["m2"],
       feedbackReceivedAt: "2026-06-01T10:00:00.000Z",
+      captureReceipt: {
+        retrievalTraceId: "trace-9",
+        sessionId: "sess-9",
+        memoryIds: ["semiote:m1"],
+        prompt: "status?",
+        answer: "Yes, it writes semiote rows.",
+        client: "grok",
+        path: "/repo",
+        receivedAt: "2026-06-01T10:00:01.000Z",
+      },
       items: [{ id: "semiote:m1", score: 0.9 }],
     });
 
@@ -657,6 +681,7 @@ describe("retrieval_trace persistence augmentation (A′ step 1 — Memory Impac
     expect(oldRow?.responseResolution).toBeUndefined();
     expect(oldRow?.correctedIds).toBeUndefined();
     expect(oldRow?.feedbackReceivedAt).toBeUndefined();
+    expect(oldRow?.captureReceipt).toBeUndefined();
     // existing projection still intact (protects the getRetrievalFootprintFromTrace consumer)
     expect(oldRow?.items).toEqual([]);
     expect(oldRow?.id).toBe("trace-old");
@@ -691,6 +716,37 @@ describe("retrieval_trace persistence augmentation (A′ step 1 — Memory Impac
     const vars = (db.query as any).mock.calls[0][1];
     expect(vars.responseResolution).toBeUndefined();
     expect(vars.correctedIds).toBeUndefined();
+  });
+
+  it("patchRetrievalTraceCaptureReceipt persists the bound headless turn metadata", async () => {
+    const db = mockDb();
+    await patchRetrievalTraceCaptureReceipt(db, "trace-9", "u1", {
+      sessionId: "sess-9",
+      memoryIds: ["semiote:m1", "semiote:m2"],
+      prompt: "original prompt",
+      answer: "final answer",
+      client: "grok",
+      path: "/repo",
+    });
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining("capture_receipt ="),
+      expect.objectContaining({
+        id: "trace-9",
+        userId: "u1",
+        sessionId: "sess-9",
+        memoryIds: ["semiote:m1", "semiote:m2"],
+        prompt: "original prompt",
+        answer: "final answer",
+        client: "grok",
+        path: "/repo",
+      }),
+    );
+    const sql = (db.query as any).mock.calls[0][0] as string;
+    expect(sql).not.toContain("feedback_received_at");
+    expect(sql).not.toMatch(/SET\s+answer\s*=/);
+    expect(sql).toContain("retrievalTraceId: $id");
+    expect(sql).toContain("receivedAt: time::now()");
+    expect(sql).toContain("WHERE user_id = $userId");
   });
 
   it("listRetrievalTraces returns latest-N by user, omitting the heavy prepend_context/answer columns", async () => {

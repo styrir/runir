@@ -57,6 +57,7 @@ import {
   getRetrievalTrace,
   listRetrievalTraces,
   patchRetrievalTraceAnswer,
+  patchRetrievalTraceCaptureReceipt,
   patchRetrievalTraceRating,
   patchSemioteUsefulness,
   promoteSemioteToNoema,
@@ -107,6 +108,94 @@ function entityMentionOverlapsWithFact(mention: EntityMention, factText: string)
  * two status counters — no hexis* fields, no access counters, no other
  * ranking-feeding field.
  */
+function parseCaptureReceiptMemoryIds(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  if (!value.every((item) => typeof item === "string" && item.trim().length > 0)) {
+    return undefined;
+  }
+  // Preserve order, prefixes, whitespace, and duplicates exactly as submitted.
+  // Receipt validation proves byte-for-byte array equality with the trace.
+  return [...value] as string[];
+}
+
+function sameMemoryIds(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((id, index) => id === right[index]);
+}
+
+class CaptureReceiptRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: 400 | 404 | 409,
+  ) {
+    super(message);
+  }
+}
+
+type ValidatedCaptureReceipt = {
+  retrievalTraceId: string;
+  sessionId: string;
+  memoryIds: string[];
+  prompt: string;
+  answer: string;
+  client?: string;
+  path?: string;
+};
+
+async function validateCaptureTraceReceipt(args: {
+  userId: string;
+  retrievalTraceId?: string;
+  sessionId?: string;
+  memoryIds: string[];
+  messages: unknown[];
+  client?: string;
+  path?: string;
+}): Promise<ValidatedCaptureReceipt> {
+  if (!args.retrievalTraceId) throw new CaptureReceiptRequestError("capture receipt requires retrievalTraceId", 400);
+  if (!args.sessionId) throw new CaptureReceiptRequestError("capture receipt requires sessionId", 400);
+
+  const captureText = (message: unknown, role: "user" | "assistant"): string => {
+    if (!message || typeof message !== "object") return "";
+    const row = message as Record<string, unknown>;
+    return row.role === role && typeof row.content === "string" ? row.content : "";
+  };
+  const prompt = args.messages.map((message) => captureText(message, "user")).find(Boolean) ?? "";
+  const answer = args.messages.map((message) => captureText(message, "assistant")).reverse().find(Boolean) ?? "";
+  if (!prompt.trim() || !answer.trim()) {
+    throw new CaptureReceiptRequestError("capture receipt requires original prompt and final answer", 400);
+  }
+
+  const trace = await getRetrievalTrace(runtime.db, args.retrievalTraceId, args.userId);
+  if (!trace) throw new CaptureReceiptRequestError("capture receipt retrieval trace not found", 404);
+  if (trace.sessionId !== args.sessionId) throw new CaptureReceiptRequestError("capture receipt sessionId mismatch", 409);
+  if (trace.prompt !== prompt) throw new CaptureReceiptRequestError("capture receipt prompt mismatch", 409);
+  const traceMemoryIds = trace.items.map((item) => item.id);
+  if (!sameMemoryIds(traceMemoryIds, args.memoryIds)) {
+    throw new CaptureReceiptRequestError("capture receipt memoryIds mismatch", 409);
+  }
+
+  return {
+    retrievalTraceId: args.retrievalTraceId,
+    sessionId: args.sessionId,
+    memoryIds: args.memoryIds,
+    prompt,
+    answer,
+    client: args.client,
+    path: args.path,
+  };
+}
+
+async function persistCaptureTraceReceipt(userId: string, receipt: ValidatedCaptureReceipt): Promise<void> {
+  await patchRetrievalTraceCaptureReceipt(runtime.db, receipt.retrievalTraceId, userId, {
+    sessionId: receipt.sessionId,
+    memoryIds: receipt.memoryIds,
+    prompt: receipt.prompt,
+    answer: receipt.answer,
+    client: receipt.client,
+    path: receipt.path,
+  });
+}
+
 function fireUsefulnessAccrual(args: {
   userId: string;
   sessionId?: string;
@@ -956,15 +1045,22 @@ export function registerHookRoutes(app: Hono) {
       timer.mark("resolve_identity_session_hexis");
       const formatted = normalizeCaptureMessages(messages);
       if (formatted.length === 0) return c.json({ skipped: true, reason: "no normalizable messages", ...debugTimings() });
-      // Usefulness auto-accrual (Rúnir-mmg2.2): when this batch's last turn is the
-      // assistant's answer, evaluate the most recent retrieval trace for the
-      // session against it and persist usefulness + status-noise counters. Pure
-      // lexical (no LLM), fire-and-forget, never fails/delays capture (R1).
-      fireUsefulnessAccrual({ userId: uid, sessionId: body.sessionId, messages: formatted });
+      const captureReceiptRequested = body.captureReceipt === true;
       const retrievalTraceId = typeof body.retrievalTraceId === "string" && body.retrievalTraceId.trim()
-        ? body.retrievalTraceId.trim()
+        ? (captureReceiptRequested ? body.retrievalTraceId : body.retrievalTraceId.trim())
         : undefined;
-      timer.mark("normalize_and_schedule_usefulness");
+      const memoryIds = captureReceiptRequested
+        ? parseCaptureReceiptMemoryIds(body.memoryIds)
+        : undefined;
+      if (captureReceiptRequested && memoryIds === undefined) {
+        return c.json({ error: "capture receipt requires memoryIds as a non-empty string array", ...debugTimings() }, 400);
+      }
+      // Preserve legacy capture scheduling. Receipt-enabled requests defer this
+      // side effect until their trace/session/prompt/memory binding is valid.
+      if (!captureReceiptRequested) {
+        fireUsefulnessAccrual({ userId: uid, sessionId: body.sessionId, messages: formatted });
+        timer.mark("normalize_and_schedule_usefulness");
+      }
       const captureContextPacket = await buildCaptureContextPacket({
         db: runtime.db,
         userId: uid,
@@ -973,6 +1069,25 @@ export function registerHookRoutes(app: Hono) {
         onTiming: (name, durationMs) => timer.markNested("build_capture_context", name, durationMs),
       });
       timer.mark("build_capture_context");
+      let validatedCaptureReceipt: ValidatedCaptureReceipt | undefined;
+      if (captureReceiptRequested) {
+        if (captureContextPacket.debug.identityMatchedFootprint === false) {
+          throw new CaptureReceiptRequestError("capture receipt context identity mismatch", 409);
+        }
+        validatedCaptureReceipt = await validateCaptureTraceReceipt({
+          userId: uid,
+          retrievalTraceId,
+          sessionId: typeof body.sessionId === "string" ? body.sessionId : undefined,
+          memoryIds: memoryIds ?? [],
+          messages: Array.isArray(messages) ? messages : [],
+          client: captureClient,
+          path: capturePath,
+        });
+        // Validation must precede every mutating capture side effect. Keep the
+        // established fire-and-forget accrual behavior once the receipt binds.
+        fireUsefulnessAccrual({ userId: uid, sessionId: body.sessionId, messages: formatted });
+        timer.mark("validate_receipt_and_schedule_usefulness");
+      }
 
       const salience = await scoreSessionSalience(
         runtime.db,
@@ -1046,6 +1161,10 @@ export function registerHookRoutes(app: Hono) {
       };
 
       if (rawFacts.length === 0) {
+        if (validatedCaptureReceipt) {
+          await persistCaptureTraceReceipt(uid, validatedCaptureReceipt);
+          timer.mark("persist_capture_receipt");
+        }
         if (noiseBank.initialized && !salience.hardOverride && salience.score < 0.25) {
           try {
             const fullText = formatted.map((m) => m.content).join("\n");
@@ -1260,6 +1379,10 @@ export function registerHookRoutes(app: Hono) {
         timestamp: r.timestamp,
         ...(r.fact.raw_source_text !== undefined ? { raw_source_text: r.fact.raw_source_text } : {}),
       }));
+      if (validatedCaptureReceipt) {
+        await persistCaptureTraceReceipt(uid, validatedCaptureReceipt);
+        timer.mark("persist_capture_receipt");
+      }
       timer.mark("build_response_payload");
       return c.json({
         skipped: false,
@@ -1288,6 +1411,9 @@ export function registerHookRoutes(app: Hono) {
         } : {}),
       });
     } catch (err) {
+      if (err instanceof CaptureReceiptRequestError) {
+        return c.json({ error: err.message, ...debugTimings() }, err.status);
+      }
       return c.json({ error: String(err), ...debugTimings() }, 500);
     }
   });

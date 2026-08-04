@@ -307,6 +307,7 @@ def run_inject(
                 user_agent=user_agent,
                 retrieval_trace_id=recall.retrieval_trace_id,
                 memory_ids=list(recall.memory_ids) if recall.memory_ids else None,
+                capture_receipt=bool(recall.retrieval_trace_id),
             )
             if not ok:
                 print("warn: capture failed (non-fatal)", file=sys.stderr)
