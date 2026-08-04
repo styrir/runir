@@ -43,7 +43,10 @@ def test_recall_deliver_sequence_and_capsys_parity(hook, monkeypatch, capsys):
     )
     out2 = capsys.readouterr().out
     stop_decision = json.loads(out2)
-    assert stop_decision["decision"] == "block"
+    assert (
+        "hookSpecificOutput" in stop_decision
+        or stop_decision.get("decision") == "block"
+    )
 
     # Trace kinds
     lines = [

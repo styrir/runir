@@ -35,41 +35,138 @@ def _event(sid: str = "sess-sync", prompt: str = "hello world question") -> dict
 
 
 def test_first_prompt_of_session_forces_sync(hook, monkeypatch):
-    spawned = []
-    monkeypatch.setattr(hook, "spawn_bridge_sync", lambda: spawned.append(1))
+    """First UPS uses synchronous sync_once (not spawn)."""
+    syncs = []
+    bridge = type(
+        "B",
+        (),
+        {
+            "sync_once": staticmethod(
+                lambda **k: syncs.append(1)
+                or {"status": "ok", "publishedIds": [], "changed": False, "factCount": 0}
+            ),
+            "read_managed_ids": staticmethod(lambda p: []),
+        },
+    )
+    monkeypatch.setattr(hook, "_load_memory_bridge", lambda: bridge)
     # Simulate a very recent prior sync from another session.
     hook.write_json_state(
         hook.bridge_sync_state_path(),
-        {"lastSyncAt": time.time(), "sessions": []},
+        {"schema": 2, "lastSyncAt": time.time(), "sessions": [], "inFlightUntil": 0.0},
     )
+    hook.ensure_session_baseline(_event("fresh-session"))
     hook.maybe_sync_bridge(_event("fresh-session"))
-    assert spawned == [1], "first prompt of a new session must bypass the throttle"
+    assert syncs == [1], "first prompt of a new session must sync_once"
 
 
 def test_throttle_skips_recent_sync_same_session(hook, monkeypatch):
+    syncs = []
     spawned = []
+    bridge = type(
+        "B",
+        (),
+        {
+            "sync_once": staticmethod(
+                lambda **k: syncs.append(1)
+                or {"status": "ok", "publishedIds": [], "changed": False, "factCount": 0}
+            ),
+            "read_managed_ids": staticmethod(lambda p: []),
+        },
+    )
+    monkeypatch.setattr(hook, "_load_memory_bridge", lambda: bridge)
     monkeypatch.setattr(hook, "spawn_bridge_sync", lambda: spawned.append(1))
-    hook.maybe_sync_bridge(_event("sess-a"))
-    hook.maybe_sync_bridge(_event("sess-a"))
-    assert spawned == [1], "second prompt within RUNIR_SYNC_MIN_S must be throttled"
+    monkeypatch.setattr(hook, "RUNIR_SYNC_LEASE_S", 60.0)
+    monkeypatch.setattr(hook, "RUNIR_SYNC_MIN_S", 300.0)
+    # Seed successful lastSyncAt so later should_sync throttles.
+    hook.write_json_state(
+        hook.bridge_sync_state_path(),
+        {
+            "schema": 2,
+            "lastSyncAt": time.time(),
+            "sessions": [],
+            "inFlightUntil": 0.0,
+        },
+    )
+    hook.ensure_session_baseline(_event("sess-a"))
+    hook.maybe_sync_bridge(_event("sess-a"))  # first turn sync_once
+    # Mark lastSyncAt recent again (sync_once may not have run real bridge)
+    st = hook.read_json_state(hook.bridge_sync_state_path()) or {}
+    st["lastSyncAt"] = time.time()
+    st["inFlightUntil"] = time.time() + 60
+    hook.write_json_state(hook.bridge_sync_state_path(), st)
+    hook.maybe_sync_bridge(_event("sess-a"))  # second turn throttled
+    assert syncs == [1]
+    assert spawned == [], "second prompt within lease/throttle must not spawn"
 
 
 def test_throttle_expires(hook, monkeypatch):
+    syncs = []
     spawned = []
+    bridge = type(
+        "B",
+        (),
+        {
+            "sync_once": staticmethod(
+                lambda **k: syncs.append(1)
+                or {"status": "ok", "publishedIds": [], "changed": False, "factCount": 0}
+            ),
+            "read_managed_ids": staticmethod(lambda p: []),
+        },
+    )
+    monkeypatch.setattr(hook, "_load_memory_bridge", lambda: bridge)
     monkeypatch.setattr(hook, "spawn_bridge_sync", lambda: spawned.append(1))
     monkeypatch.setattr(hook, "RUNIR_SYNC_MIN_S", 0.05)
+    monkeypatch.setattr(hook, "RUNIR_SYNC_LEASE_S", 0.05)
+    hook.ensure_session_baseline(_event("sess-b"))
     hook.maybe_sync_bridge(_event("sess-b"))
+    # Clear lastSyncAt so only lease matters; expire lease
+    hook.write_json_state(
+        hook.bridge_sync_state_path(),
+        {
+            "schema": 2,
+            "lastSyncAt": 0.0,
+            "sessions": [
+                __import__("hashlib")
+                .sha256(b"sess-b")
+                .hexdigest()
+            ],
+            "inFlightUntil": 0.0,
+        },
+    )
+    # Mark first publish done
+    npath = hook.native_state_path("sess-b")
+    native = hook.read_json_state(npath) or {"schema": 1, "baselineIds": []}
+    native["publishedAt"] = time.time()
+    native["publishStatus"] = "ok"
+    hook.write_json_state(npath, native)
     time.sleep(0.06)
     hook.maybe_sync_bridge(_event("sess-b"))
-    assert spawned == [1, 1]
+    assert syncs == [1]
+    assert spawned == [1]
 
 
 def test_spawn_failure_fails_open(hook, monkeypatch):
+    # Force later-turn path
+    npath = hook.native_state_path("sess-c")
+    hook.write_json_state(
+        npath,
+        {
+            "schema": 1,
+            "baselineIds": [],
+            "publishedAt": time.time(),
+            "publishStatus": "ok",
+            "updatedAt": time.time(),
+        },
+    )
+    hook.write_json_state(
+        hook.bridge_sync_state_path(),
+        {"schema": 2, "lastSyncAt": 0.0, "sessions": [], "inFlightUntil": 0.0},
+    )
+
     def boom():
         raise OSError("no fork for you")
 
     monkeypatch.setattr(hook, "spawn_bridge_sync", boom)
-    # Must not raise.
     hook.maybe_sync_bridge(_event("sess-c"))
 
 
@@ -90,14 +187,28 @@ def test_user_prompt_submit_triggers_sync_after_recall(hook, monkeypatch):
 
 
 def test_state_file_records_claim(hook, monkeypatch):
+    """should_sync sets inFlight lease + sessions; does not advance lastSyncAt."""
+    npath = hook.native_state_path("sess-d")
+    hook.write_json_state(
+        npath,
+        {
+            "schema": 1,
+            "baselineIds": [],
+            "publishedAt": time.time(),
+            "publishStatus": "ok",
+            "updatedAt": time.time(),
+        },
+    )
     monkeypatch.setattr(hook, "spawn_bridge_sync", lambda: None)
-    hook.maybe_sync_bridge(_event("sess-d"))
+    assert hook.should_sync("sess-d") is True
     state = hook.read_json_state(hook.bridge_sync_state_path())
     assert state is not None
-    assert isinstance(state.get("lastSyncAt"), float)
+    assert isinstance(state.get("inFlightUntil"), float)
+    assert state.get("inFlightUntil") > time.time()
     assert len(state.get("sessions", [])) == 1
-    # Session ids stored as sha256 digests only (no plaintext ids on disk).
     assert "sess-d" not in json.dumps(state)
+    # Within lease → False
+    assert hook.should_sync("sess-d") is False
 
 
 def test_upsert_managed_reasserts_on_corrupted_block():

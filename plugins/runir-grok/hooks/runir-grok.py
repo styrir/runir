@@ -48,10 +48,16 @@ from runir_core import (  # noqa: E402
     env_float,
     env_int,
     event_value,
+    exclusive_lock,
+    grok_home,
     normalize_content,
+    parse_recall_body,
     read_dotenv_value,
+    read_json,
     resolve_credential,
+    selection_id,
     unwrap_user_query,
+    write_json_atomic,
 )
 
 
@@ -88,8 +94,10 @@ RUNIR_BATCH_SIBLING_S = env_float("RUNIR_BATCH_SIBLING_S", 2.0)
 RUNIR_RECALL_DEDUPE_TTL_S = env_float("RUNIR_RECALL_DEDUPE_TTL_S", 3600.0)
 RUNIR_RECALL_DEDUPE_MAX = env_int("RUNIR_RECALL_DEDUPE_MAX", 32)
 RUNIR_SYNC_MIN_S = env_float("RUNIR_SYNC_MIN_S", 300.0)
+RUNIR_SYNC_LEASE_S = env_float("RUNIR_SYNC_LEASE_S", 60.0)
+RUNIR_SYNC_FIRST_TURN_TIMEOUT_S = env_float("RUNIR_SYNC_FIRST_TURN_TIMEOUT_S", 8.0)
 BRIDGE_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "memory_bridge.py"
-STATE_DIR = Path.home() / ".grok" / "state" / "runir"
+STATE_DIR = grok_home() / "state" / "runir"
 # Observability ring retention (Pi TRACE_LIMIT parity). Hard cap: keep last TRACE_LIMIT.
 TRACE_LIMIT = 100
 
@@ -99,11 +107,19 @@ def debug(message: str) -> None:
         print(f"[runir-grok] {message}", file=sys.stderr)
 
 
+def resolved_state_dir() -> Path:
+    """Prefer $GROK_HOME/state/runir when set; else module STATE_DIR (tests monkeypatch)."""
+    raw = (os.environ.get("GROK_HOME") or "").strip()
+    if raw:
+        return Path(raw).expanduser() / "state" / "runir"
+    return STATE_DIR
+
+
 def state_path(kind: str, session_id: str, suffix: str = ".json") -> Path | None:
     if not session_id:
         return None
     digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-    return STATE_DIR / f"{kind}-{digest}{suffix}"
+    return resolved_state_dir() / f"{kind}-{digest}{suffix}"
 
 
 def capture_marker_path(session_id: str) -> Path | None:
@@ -135,7 +151,7 @@ def append_trace_event(session_id: str, event: dict[str, Any]) -> None:
     path = trace_path(session_id)
     if path is None:
         return
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    resolved_state_dir().mkdir(parents=True, exist_ok=True)
     line = json.dumps(event, separators=(",", ":")) + "\n"
     with exclusive_state_lock(path):
         with open(path, "a", encoding="utf-8") as handle:
@@ -251,48 +267,23 @@ def record_event(
 
 
 def read_json_state(path: Path | None) -> dict[str, Any] | None:
-    if path is None:
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else None
-    except (OSError, json.JSONDecodeError, ValueError):
-        return None
+    return read_json(path)
 
 
 def write_json_state(path: Path | None, data: dict[str, Any]) -> None:
     if path is None:
         return
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    try:
-        temporary.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
-        os.replace(temporary, path)
-    finally:
-        try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
+    resolved_state_dir().mkdir(parents=True, exist_ok=True)
+    write_json_atomic(path, data)
 
 
 @contextlib.contextmanager
 def exclusive_state_lock(path: Path | None) -> Iterator[None]:
     """D2: advisory exclusive lock beside a state file (fcntl flock; local FS only)."""
-    if path is None:
+    if path is not None:
+        resolved_state_dir().mkdir(parents=True, exist_ok=True)
+    with exclusive_lock(path):
         yield
-        return
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_name(path.name + ".lock")
-    handle = open(lock_path, "a+", encoding="utf-8")
-    try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        yield
-    finally:
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        except OSError:
-            pass
-        handle.close()
 
 
 def read_capture_marker(session_id: str) -> dict[str, Any] | None:
@@ -303,7 +294,7 @@ def mark_capture(session_id: str, token: str, status: str) -> None:
     path = capture_marker_path(session_id)
     if path is None:
         return
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    resolved_state_dir().mkdir(parents=True, exist_ok=True)
     current = read_capture_marker(session_id)
     if (
         status != "pending"
@@ -374,9 +365,14 @@ def write_recall_state(
     *,
     delivered: bool | None = None,
     content_hash_value: str | None = None,
+    prompt: str | None = None,
+    selection_id_value: str | None = None,
+    memory_ids: list[str] | None = None,
+    retrieval_trace_id: str | None = None,
 ) -> None:
     path = recall_state_path(session_id)
     payload: dict[str, Any] = {
+        "schema": 2,
         "promptId": prompt_id,
         "context": context,
         "delivered": (not bool(context)) if delivered is None else delivered,
@@ -384,6 +380,14 @@ def write_recall_state(
     }
     if content_hash_value:
         payload["contentHash"] = content_hash_value
+    if prompt:
+        payload["prompt"] = prompt
+    if selection_id_value:
+        payload["selectionId"] = selection_id_value
+    if memory_ids:
+        payload["memoryIds"] = list(memory_ids)
+    if retrieval_trace_id:
+        payload["retrievalTraceId"] = retrieval_trace_id
     with exclusive_state_lock(path):
         write_json_state(path, payload)
 
@@ -608,7 +612,7 @@ def handle_recall(event: dict[str, Any]) -> None:
             promptId=prompt_id or None,
             durationMs=duration_ms,
         )
-        write_recall_state(session_id, prompt_id, "")
+        write_recall_state(session_id, prompt_id, "", prompt=prompt)
         record_event(
             session_id,
             "skip",
@@ -630,7 +634,7 @@ def handle_recall(event: dict[str, Any]) -> None:
             promptId=prompt_id or None,
             durationMs=duration_ms,
         )
-        write_recall_state(session_id, prompt_id, "")
+        write_recall_state(session_id, prompt_id, "", prompt=prompt)
         record_event(
             session_id,
             "skip",
@@ -640,10 +644,14 @@ def handle_recall(event: dict[str, Any]) -> None:
             durationMs=duration_ms,
         )
         return
-    recalled = body.get("prependContext")
-    context = recalled if isinstance(recalled, str) else ""
+    parsed = parse_recall_body(body if isinstance(body, dict) else {})
+    context = parsed.context
+    memory_ids = list(parsed.memory_ids)
+    retrieval_trace_id = parsed.retrieval_trace_id
     digest = content_hash(context) if context else ""
+    sel = selection_id(memory_ids, context) if context else ""
     hash12 = digest[:12] if digest else None
+    selection12 = sel[:12] if sel else None
     record_event(
         session_id,
         "recall",
@@ -651,25 +659,67 @@ def handle_recall(event: dict[str, Any]) -> None:
         httpStatus=http_status,
         contextChars=len(context),
         hash12=hash12,
+        selection12=selection12,
+        retrievalTraceId=retrieval_trace_id or None,
         durationMs=duration_ms,
     )
-    # D3: suppress gate if same context was recently delivered this session.
-    if context and session_id and was_recently_delivered(session_id, digest):
+    # D3: suppress gate if same selection was recently delivered this session.
+    if context and session_id and was_recently_delivered(session_id, sel):
         write_recall_state(
             session_id,
             prompt_id,
             context,
             delivered=True,
             content_hash_value=digest,
+            prompt=prompt,
+            selection_id_value=sel,
+            memory_ids=memory_ids,
+            retrieval_trace_id=retrieval_trace_id or None,
         )
-        debug(f"dedupe hit for session={session_id} hash={digest[:12]}")
+        debug(f"dedupe hit for session={session_id} selection={sel[:12]}")
         record_event(
             session_id,
             "skip",
             reason="dedupe",
             promptId=prompt_id or None,
             hash12=hash12,
+            selection12=selection12,
+            retrievalTraceId=retrieval_trace_id or None,
             contextChars=len(context),
+        )
+        return
+    # Native baseline suppression: selection ⊆ session-start managed ids.
+    baseline_ids = read_baseline_ids(session_id)
+    native_suppress = os.environ.get("RUNIR_GROK_NATIVE_SUPPRESS", "1") != "0"
+    if (
+        context
+        and native_suppress
+        and memory_ids
+        and set(memory_ids) <= set(baseline_ids)
+    ):
+        write_recall_state(
+            session_id,
+            prompt_id,
+            context,
+            delivered=True,
+            content_hash_value=digest,
+            prompt=prompt,
+            selection_id_value=sel,
+            memory_ids=memory_ids,
+            retrieval_trace_id=retrieval_trace_id or None,
+        )
+        if session_id and sel:
+            remember_delivered_hash(session_id, sel)
+        record_event(
+            session_id,
+            "skip",
+            reason="native_baseline",
+            promptId=prompt_id or None,
+            hash12=hash12,
+            selection12=selection12,
+            retrievalTraceId=retrieval_trace_id or None,
+            contextChars=len(context),
+            channel="native",
         )
         return
     write_recall_state(
@@ -677,6 +727,10 @@ def handle_recall(event: dict[str, Any]) -> None:
         prompt_id,
         context,
         content_hash_value=digest if digest else None,
+        prompt=prompt,
+        selection_id_value=sel if sel else None,
+        memory_ids=memory_ids or None,
+        retrieval_trace_id=retrieval_trace_id or None,
     )
     if not context:
         record_event(
@@ -687,14 +741,23 @@ def handle_recall(event: dict[str, Any]) -> None:
         )
 
 
+def _selection_from_state(session_id: str, context: str) -> str:
+    state = read_json_state(recall_state_path(session_id)) or {}
+    sel = state.get("selectionId")
+    if isinstance(sel, str) and sel:
+        return sel
+    return content_hash(context)
+
+
 def handle_pre_tool_use(event: dict[str, Any]) -> None:
     context = consume_recall(event)
     if not context:
         context = sibling_recall_context(event)
     if context:
         session_id = str(event_value(event, "sessionId", "session_id", default=""))
+        sel = _selection_from_state(session_id, context) if session_id else content_hash(context)
         if session_id:
-            remember_delivered_hash(session_id, content_hash(context))
+            remember_delivered_hash(session_id, sel)
         json.dump(
             {"decision": "deny", "reason": RECALL_FEEDBACK_PREFIX + context}, sys.stdout
         )
@@ -707,6 +770,7 @@ def handle_pre_tool_use(event: dict[str, Any]) -> None:
             channel="pre_tool_use",
             contextChars=len(context),
             hash12=digest[:12] if digest else None,
+            selection12=sel[:12] if sel else None,
             promptId=deliver_prompt_id(event, session_id, digest),
         )
 
@@ -742,13 +806,31 @@ def handle_capture(event: dict[str, Any], session_id: str, token: str) -> None:
         if not messages:
             status_name = "empty"
             return
-        payload = {
+        state = read_json_state(recall_state_path(session_id)) or {}
+        state_prompt = state.get("prompt")
+        if isinstance(state_prompt, str) and state_prompt.strip():
+            # Prefer original unwrapped human prompt over host-wrapped transcript text.
+            replaced = False
+            for i, msg in enumerate(messages):
+                if msg.get("role") == "user":
+                    messages[i] = {"role": "user", "content": state_prompt.strip()}
+                    replaced = True
+                    break
+            if not replaced:
+                messages = [{"role": "user", "content": state_prompt.strip()}] + messages
+        payload: dict[str, Any] = {
             "messages": messages,
             "userId": RUNIR_USER_ID,
             "client": RUNIR_CLIENT,
             "sessionId": session_id or None,
             "path": event_value(event, "workspaceRoot", "workspace_root", "cwd"),
         }
+        rtid = state.get("retrievalTraceId")
+        if isinstance(rtid, str) and rtid:
+            payload["retrievalTraceId"] = rtid
+        mids = state.get("memoryIds")
+        if isinstance(mids, list) and mids:
+            payload["memoryIds"] = [str(x) for x in mids if str(x)]
         result = post_json(RUNIR_CAPTURE_URL, payload, RUNIR_CAPTURE_TIMEOUT)
         if not result:
             err_type = "request_failed"
@@ -788,6 +870,7 @@ def handle_stop(event: dict[str, Any]) -> None:
         return
     # Continuation after a prior Stop block must not re-burn a draft (≤1 draft).
     # stopHookActive is set by the host when Stop previously blocked this turn.
+    # Under additional_context mode no re-burn occurs; guard is belt-and-braces.
     if event_value(event, "stopHookActive", "stop_hook_active"):
         detach_capture(event)
         return
@@ -796,15 +879,24 @@ def handle_stop(event: dict[str, Any]) -> None:
     context = consume_recall(event)
     if context:
         session_id = str(event_value(event, "sessionId", "session_id", default=""))
+        sel = _selection_from_state(session_id, context) if session_id else content_hash(context)
         if session_id:
-            remember_delivered_hash(session_id, content_hash(context))
-        json.dump(
-            {
+            remember_delivered_hash(session_id, sel)
+        stop_mode = (os.environ.get("RUNIR_GROK_STOP_MODE") or "additional_context").strip()
+        if stop_mode == "block":
+            decision_obj: dict[str, Any] = {
                 "decision": "block",
                 "reason": RECALL_FEEDBACK_PREFIX + context,
-            },
-            sys.stdout,
-        )
+            }
+        else:
+            stop_mode = "additional_context"
+            decision_obj = {
+                "hookSpecificOutput": {
+                    "hookEventName": "Stop",
+                    "additionalContext": RECALL_FEEDBACK_PREFIX + context,
+                }
+            }
+        json.dump(decision_obj, sys.stdout)
         # Host reads decision JSON before hook exit; flush before any LOCK_EX work.
         sys.stdout.flush()
         digest = content_hash(context)
@@ -812,8 +904,10 @@ def handle_stop(event: dict[str, Any]) -> None:
             session_id,
             "deliver",
             channel="stop",
+            mode=stop_mode,
             contextChars=len(context),
             hash12=digest[:12] if digest else None,
+            selection12=sel[:12] if sel else None,
             promptId=deliver_prompt_id(event, session_id, digest),
         )
         return
@@ -847,14 +941,117 @@ def detach_capture(event: dict[str, Any]) -> None:
 
 
 def bridge_sync_state_path() -> Path:
-    return STATE_DIR / "bridge-sync.json"
+    return resolved_state_dir() / "bridge-sync.json"
 
 
-def claim_bridge_sync(session_id: str) -> bool:
-    """Throttle gate for projection sync. First prompt of a session forces a
-    sync; otherwise skip while the last successful claim is younger than
-    RUNIR_SYNC_MIN_S. Claim is recorded up-front (fail-open: a failed spawn
-    just waits out the throttle window)."""
+def native_state_path(session_id: str) -> Path | None:
+    return state_path("native", session_id)
+
+
+def _load_memory_bridge():
+    """Path-load memory_bridge.py (same pattern as tests)."""
+    import importlib.util
+
+    name = "runir_grok_memory_bridge_runtime"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, BRIDGE_SCRIPT)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {BRIDGE_SCRIPT}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def ensure_session_baseline(event: dict[str, Any]) -> list[str]:
+    """First UPS of a session: snapshot managed-block ids before publish. Fail-open."""
+    session_id = str(event_value(event, "sessionId", "session_id", default=""))
+    path = native_state_path(session_id)
+    if path is None:
+        return []
+    try:
+        with exclusive_state_lock(path):
+            existing = read_json_state(path)
+            if isinstance(existing, dict) and "baselineIds" in existing:
+                ids = existing.get("baselineIds")
+                return [str(x) for x in ids] if isinstance(ids, list) else []
+            baseline: list[str] = []
+            try:
+                bridge = _load_memory_bridge()
+                mem_path = grok_home() / "memory" / "MEMORY.md"
+                baseline = list(bridge.read_managed_ids(mem_path) or [])
+            except Exception as exc:
+                debug(f"baseline read failed open: {exc}")
+                baseline = []
+            write_json_state(
+                path,
+                {
+                    "schema": 1,
+                    "baselineIds": baseline,
+                    "publishedAt": 0.0,
+                    "publishStatus": "",
+                    "updatedAt": time.time(),
+                },
+            )
+            # Register session digest in bridge-sync sessions without burning lastSyncAt.
+            _register_session_digest(session_id)
+            return baseline
+    except Exception as exc:
+        debug(f"ensure_session_baseline failed open: {exc}")
+        return []
+
+
+def read_baseline_ids(session_id: str) -> list[str]:
+    path = native_state_path(session_id)
+    state = read_json_state(path) if path else None
+    if not state:
+        return []
+    ids = state.get("baselineIds")
+    if not isinstance(ids, list):
+        return []
+    return [str(x) for x in ids if str(x)]
+
+
+def _register_session_digest(session_id: str) -> None:
+    path = bridge_sync_state_path()
+    digest = (
+        hashlib.sha256(session_id.encode("utf-8")).hexdigest() if session_id else ""
+    )
+    if not digest:
+        return
+    with exclusive_state_lock(path):
+        state = read_json_state(path) or {}
+        sessions = state.get("sessions")
+        if not isinstance(sessions, list):
+            sessions = []
+        if digest not in sessions:
+            sessions = (sessions + [digest])[-32:]
+        now = time.time()
+        write_json_state(
+            path,
+            {
+                "schema": 2,
+                "lastSyncAt": state.get("lastSyncAt")
+                if isinstance(state.get("lastSyncAt"), (int, float))
+                else 0.0,
+                "lastAttemptAt": state.get("lastAttemptAt")
+                if isinstance(state.get("lastAttemptAt"), (int, float))
+                else 0.0,
+                "lastStatus": state.get("lastStatus") or "",
+                "inFlightUntil": state.get("inFlightUntil")
+                if isinstance(state.get("inFlightUntil"), (int, float))
+                else 0.0,
+                "sessions": sessions,
+                "factCount": int(state.get("factCount") or 0),
+                "updatedAt": now,
+            },
+        )
+
+
+def should_sync(session_id: str) -> bool:
+    """Throttle gate: first-of-session forces True; else skip while lastSyncAt is
+    young or an in-flight lease is active. Does NOT write lastSyncAt (bridge does)."""
     path = bridge_sync_state_path()
     digest = (
         hashlib.sha256(session_id.encode("utf-8")).hexdigest() if session_id else ""
@@ -867,15 +1064,38 @@ def claim_bridge_sync(session_id: str) -> bool:
             sessions = []
         first_of_session = bool(digest) and digest not in sessions
         last = state.get("lastSyncAt")
-        recent = isinstance(last, (int, float)) and (now - last) < RUNIR_SYNC_MIN_S
+        recent = isinstance(last, (int, float)) and last > 0 and (now - float(last)) < RUNIR_SYNC_MIN_S
+        inflight_until = state.get("inFlightUntil")
+        in_flight = (
+            isinstance(inflight_until, (int, float)) and now < float(inflight_until)
+        )
+        if in_flight and not first_of_session:
+            return False
         if recent and not first_of_session:
             return False
         if digest and first_of_session:
             sessions = (sessions + [digest])[-32:]
         write_json_state(
-            path, {"lastSyncAt": now, "sessions": sessions, "updatedAt": now}
+            path,
+            {
+                "schema": 2,
+                "lastSyncAt": float(last) if isinstance(last, (int, float)) else 0.0,
+                "lastAttemptAt": state.get("lastAttemptAt")
+                if isinstance(state.get("lastAttemptAt"), (int, float))
+                else 0.0,
+                "lastStatus": state.get("lastStatus") or "",
+                "inFlightUntil": now + RUNIR_SYNC_LEASE_S,
+                "sessions": sessions,
+                "factCount": int(state.get("factCount") or 0),
+                "updatedAt": now,
+            },
         )
         return True
+
+
+# Back-compat alias for older tests/callers.
+def claim_bridge_sync(session_id: str) -> bool:
+    return should_sync(session_id)
 
 
 def spawn_bridge_sync() -> None:
@@ -885,6 +1105,9 @@ def spawn_bridge_sync() -> None:
         env.setdefault("RUNIR_USER_ID", RUNIR_USER_ID)
     if RUNIR_API_KEY:
         env.setdefault("RUNIR_API_KEY", RUNIR_API_KEY)
+    gh = (os.environ.get("GROK_HOME") or "").strip()
+    if gh:
+        env["GROK_HOME"] = gh
     subprocess.Popen(
         [sys.executable, str(BRIDGE_SCRIPT), "--sync"],
         stdin=subprocess.DEVNULL,
@@ -895,17 +1118,80 @@ def spawn_bridge_sync() -> None:
     )
 
 
-def maybe_sync_bridge(event: dict[str, Any]) -> None:
-    """Fail-open projection sync trigger (global MEMORY.md managed block)."""
+def native_publish_or_spawn(event: dict[str, Any]) -> None:
+    """First UPS: synchronous global MEMORY.md publish; later turns: detached throttle."""
     try:
         session_id = str(event_value(event, "sessionId", "session_id", default=""))
-        if not claim_bridge_sync(session_id):
+        path = native_state_path(session_id)
+        native = read_json_state(path) if path else None
+        first_turn = True
+        if isinstance(native, dict):
+            published_at = native.get("publishedAt")
+            if isinstance(published_at, (int, float)) and float(published_at) > 0:
+                first_turn = False
+            elif native.get("publishStatus"):
+                first_turn = False
+
+        if first_turn:
+            publish_status = "error"
+            published_count = 0
+            try:
+                bridge = _load_memory_bridge()
+                timeout = RUNIR_SYNC_FIRST_TURN_TIMEOUT_S
+                result = bridge.sync_once(
+                    memory_root=grok_home() / "memory",
+                    runir_base=RUNIR_BASE,
+                    user_id=RUNIR_USER_ID,
+                    api_key=RUNIR_API_KEY,
+                    canary=False,
+                    timeout=timeout,
+                    state_dir=resolved_state_dir(),
+                    record_throttle=True,
+                )
+                publish_status = str(result.get("status") or "error")
+                published_count = len(result.get("publishedIds") or [])
+            except Exception as exc:
+                debug(f"native sync_once failed open: {exc}")
+                publish_status = "error"
+                record_event(
+                    session_id,
+                    "error",
+                    where="native_publish",
+                    type=type(exc).__name__,
+                    channel="native",
+                )
+            if path is not None:
+                with exclusive_state_lock(path):
+                    cur = read_json_state(path) or {
+                        "schema": 1,
+                        "baselineIds": [],
+                    }
+                    cur["publishedAt"] = time.time()
+                    cur["publishStatus"] = publish_status
+                    cur["updatedAt"] = time.time()
+                    write_json_state(path, cur)
+            record_event(
+                session_id,
+                "recall" if publish_status == "ok" else "skip",
+                reason=None if publish_status == "ok" else f"native_{publish_status}",
+                channel="native",
+                publishStatus=publish_status,
+                publishedCount=published_count,
+            )
+            return
+
+        if not should_sync(session_id):
             debug("bridge sync throttled")
             return
         spawn_bridge_sync()
         debug("bridge sync spawned")
     except Exception as exc:
-        debug(f"bridge sync failed open: {exc}")
+        debug(f"native_publish_or_spawn failed open: {exc}")
+
+
+def maybe_sync_bridge(event: dict[str, Any]) -> None:
+    """Fail-open projection sync trigger (global MEMORY.md managed block)."""
+    native_publish_or_spawn(event)
 
 
 def main() -> int:
@@ -928,6 +1214,7 @@ def main() -> int:
             event_value(event, "hookEventName", "hook_event_name", default="")
         ).lower()
         if name == "user_prompt_submit":
+            ensure_session_baseline(event)
             handle_recall(event)
             maybe_sync_bridge(event)
         elif name == "pre_tool_use":

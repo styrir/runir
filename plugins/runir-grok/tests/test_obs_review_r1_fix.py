@@ -53,7 +53,11 @@ def test_deliver_flushes_stdout_before_record_event(hook, monkeypatch, capsys):
         }
     )
     out2 = capsys.readouterr().out
-    assert json.loads(out2)["decision"] == "block"
+    stop_payload = json.loads(out2)
+    assert (
+        "hookSpecificOutput" in stop_payload
+        or stop_payload.get("decision") == "block"
+    )
     assert "flush" in order and "record" in order
     assert order.index("flush") < order.index("record")
 

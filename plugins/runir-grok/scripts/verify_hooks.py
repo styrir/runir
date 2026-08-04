@@ -4,7 +4,7 @@
 Exit 0 when:
 - UserPromptSubmit, PreToolUse, Stop are present
 - command path resolves to an existing file (plugin SoT)
-- PreToolUse matcher is non-empty and != ".*"
+- PreToolUse matcher equals templates/user-hooks.json and matches MCP tool names
 - timeouts meet floors: UPS >= 15, PreToolUse >= 5, Stop >= 5
 
 With --live (after static checks pass):
@@ -567,7 +567,7 @@ def main() -> int:
                 errors.append(f"{event}: timeout {timeout!r} below floor {floor}")
             details["events"][event] = event_detail
 
-        # PreToolUse matcher
+        # PreToolUse matcher — SoT is templates/user-hooks.json (match-all for MCP).
         matcher = None
         ptu_groups = hooks.get("PreToolUse")
         if (
@@ -577,14 +577,46 @@ def main() -> int:
         ):
             matcher = ptu_groups[0].get("matcher")
         details["matcher"] = matcher
+        template_path = root / "templates" / "user-hooks.json"
+        template_matcher = None
+        try:
+            template_data = json.loads(template_path.read_text(encoding="utf-8"))
+            template_matcher = (
+                template_data.get("hooks", {})
+                .get("PreToolUse", [{}])[0]
+                .get("matcher")
+            )
+        except (OSError, json.JSONDecodeError, TypeError, IndexError, AttributeError):
+            template_matcher = None
+        details["templateMatcher"] = template_matcher
+        details["templatePath"] = str(template_path)
         if not isinstance(matcher, str) or not matcher.strip():
             errors.append("PreToolUse matcher missing or empty")
-        elif matcher == ".*":
-            errors.append('PreToolUse matcher must not be ".*"')
+        elif template_matcher is not None and matcher != template_matcher:
+            errors.append(
+                f"PreToolUse matcher {matcher!r} != template {template_matcher!r} "
+                f"({template_path})"
+            )
         else:
             try:
-                re.compile(matcher)
+                compiled = re.compile(matcher)
                 details["matcherCompiles"] = True
+                # Representative set must all match (incl. MCP-qualified names).
+                sample_names = (
+                    "Bash",
+                    "Read",
+                    "Edit",
+                    "mcp__runir__search",
+                    "runir__search",
+                    "some_new_tool",
+                )
+                failed = [n for n in sample_names if compiled.fullmatch(n) is None]
+                details["matcherSamples"] = list(sample_names)
+                if failed:
+                    errors.append(
+                        f"PreToolUse matcher does not match samples {failed} "
+                        f"(template SoT: {template_path})"
+                    )
             except re.error as exc:
                 errors.append(f"PreToolUse matcher does not compile: {exc}")
                 details["matcherCompiles"] = False

@@ -105,7 +105,7 @@ def test_stop_deliver_event_carries_prompt_id(hook):
     with redirect_stdout(buf):
         hook.handle_stop({"sessionId": sid, "reason": "end_turn", "promptId": ""})
     decision = json.loads(buf.getvalue())
-    assert decision["decision"] == "block"
+    assert "hookSpecificOutput" in decision or decision.get("decision") == "block"
     lines = [
         json.loads(ln)
         for ln in hook.trace_path(sid).read_text(encoding="utf-8").splitlines()

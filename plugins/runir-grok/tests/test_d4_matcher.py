@@ -1,4 +1,4 @@
-"""U-D4: templates/user-hooks.json matcher contract."""
+"""U-D4: templates/user-hooks.json matcher equals SoT and matches MCP names."""
 
 from __future__ import annotations
 
@@ -8,6 +8,15 @@ from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = PLUGIN_ROOT / "templates" / "user-hooks.json"
+
+SAMPLE_NAMES = (
+    "Bash",
+    "Read",
+    "Edit",
+    "mcp__runir__search",
+    "runir__search",
+    "some_new_tool",
+)
 
 
 def test_d4_template_matcher_and_events():
@@ -21,16 +30,11 @@ def test_d4_template_matcher_and_events():
 
     ptu = hooks["PreToolUse"][0]
     matcher = ptu["matcher"]
-    assert matcher != ".*"
-    assert matcher
+    assert matcher == ".*"
     compiled = re.compile(matcher)
-    assert compiled.fullmatch("Bash")
-    assert compiled.fullmatch("read_file")
-    assert compiled.fullmatch("search_replace")
-    assert compiled.fullmatch("todo_write")
-    assert not compiled.fullmatch("SomeMcp__tool")
+    for name in SAMPLE_NAMES:
+        assert compiled.fullmatch(name), name
 
-    # Timeouts match live proven values.
     ups_timeout = hooks["UserPromptSubmit"][0]["hooks"][0]["timeout"]
     ptu_timeout = ptu["hooks"][0]["timeout"]
     stop_timeout = hooks["Stop"][0]["hooks"][0]["timeout"]

@@ -7,12 +7,12 @@ Native Grok lifecycle adapter for Rúnir (thin HTTP client).
 | Path | Role |
 |------|------|
 | `hooks/runir-grok.py` | Source of truth for UserPromptSubmit / PreToolUse / Stop |
-| `lib/runir_core.py` | Shared auth/HTTP/envelope/recall+capture leaves (path-loaded) |
+| `lib/runir_core.py` | Shared auth/HTTP/envelope/identity/lock leaves (path-loaded) |
 | `scripts/headless_inject.py` | Headless one-shot: recall → `--prompt-json` → grok → capture |
 | `scripts/runir_ask.sh` | Thin ask.sh-compatible wrapper → `headless_inject.py` |
-| `templates/user-hooks.json` | Hooks document template (`__PLUGIN_ROOT__`, narrowed PreToolUse matcher) |
+| `templates/user-hooks.json` | Hooks document template (`__PLUGIN_ROOT__`, PreToolUse matcher `.*`) |
 | `scripts/install_hooks.py` | Deploy template → `~/.grok/hooks/runir-grok.json` |
-| `scripts/verify_hooks.py` | Assert matcher ≠ `.*`, command path, timeout floors; `--skill`; `--launch-agent` |
+| `scripts/verify_hooks.py` | Matcher-equals-template + representative matches; timeouts; `--skill`; `--launch-agent` |
 | `scripts/install_skill.py` | Deploy all `skills/*/SKILL.md` → `~/.grok/skills/<name>/` (`--skill` to narrow) |
 | `scripts/install_launch_agent.py` | Deploy embed-warm LaunchAgent SoT → `~/Library/LaunchAgents/` |
 | `launchd/com.runir.embed-warm.plist` | SoT for nomic embed warmer (`keep_alive:-1`, StartInterval 240) |
@@ -20,16 +20,30 @@ Native Grok lifecycle adapter for Rúnir (thin HTTP client).
 | `scripts/runir_watch.py` | Live second-pane tail (`--mode once|watch`) |
 | `skills/runir/SKILL.md` | `/runir` slash skill (SoT; user-invocable) |
 | `skills/runir-recall/SKILL.md` | Model-invocable recall skill (search/get/lineage/traces rate/store) |
-| `scripts/memory_bridge.py` | Idempotent `[memory]` config + write-only MEMORY.md bridge |
-| `tests/` | Unit tests for D1–D4 + P (+ fail-open + observability + headless) |
+| `scripts/memory_bridge.py` | Idempotent `[memory]` config + write-only **global** MEMORY.md bridge |
+| `tests/` | Unit/integration + isolated-`GROK_HOME` canaries (D1–D4 + P + identity/native/bridge) |
+
+## Lifecycle (hybrid native + correction)
+
+| Turn | What happens |
+|------|----------------|
+| **Session turn 1 (UPS)** | Snapshot managed-block ids → `native-{digest}.json` **baseline** → live Rúnir recall → write recall-state v2 (prompt, `selectionId`, `memoryIds`, `retrievalTraceId`) → **synchronous** `memory_bridge.sync_once()` into global `MEMORY.md` (bounded by `RUNIR_SYNC_FIRST_TURN_TIMEOUT_S`) → gate armed unless selection ⊆ baseline |
+| **Later tool turns** | PreToolUse matcher `.*` (includes qualified MCP names) may deny once with untrusted envelope; D3 selection dedupe + native baseline suppress bound re-burn |
+| **Later no-tool turns** | Stop emits `hookSpecificOutput.additionalContext` (default) rather than error-style `decision:block` (escape hatch: `RUNIR_GROK_STOP_MODE=block`) |
+| **Capture** | Posts original state prompt when present, plus `retrievalTraceId` / `memoryIds` when non-empty |
+
+**Honest caveat — mid-session MEMORY.md re-read:** Whether Grok re-reads the global `MEMORY.md` mid-session is **not verified**. Suppression therefore keys on the managed-block contents **as of session start** (`baselineIds`), so newly published facts are only assumed visible from the **next** session. Set `RUNIR_GROK_NATIVE_SUPPRESS=0` to disable suppression entirely (correction gate always armed when context is present).
+
+**Honest caveat — Stop additionalContext:** Host support for `hookSpecificOutput.additionalContext` on Stop is **unverified**. If ignored, memory is silently dropped on the Stop channel. Use `RUNIR_GROK_STOP_MODE=block` for the legacy deny/block shape; deliver trace events record `mode=…`.
 
 ## Hardening
 
 - **D1** — Stale capture bail: pending markers older than `RUNIR_CAPTURE_STALE_S` (5s) are marked `stale` and UPS continues.
-- **D2** — `fcntl.flock` on recall consume / write / dedupe (local `~/.grok/state/runir` only).
-- **D3** — `sha256(context)` cross-turn dedupe (TTL 3600s, max 32).
-- **D4** — PreToolUse matcher is a frozen tool-name regex (not `.*`). MCP `server__tool` first-tools skip the gate; Stop still delivers later.
+- **D2** — `fcntl.flock` on recall consume / write / dedupe / bridge RMW (local state + MEMORY lock files).
+- **D3** — Selection-identity dedupe (`selectionId` = sha256 of sorted unique memory ids; falls back to `sha256(context)` when ids empty). TTL 3600s, max 32. Legacy content-hash entries simply miss — at most one extra delivery.
+- **D4** — PreToolUse matcher is `.*` (template is SoT) so MCP `server__tool` / `mcp__server__tool` first-tools are covered. Re-burn bounded by selection dedupe + native baseline suppress. `verify_hooks` checks matcher **equals template** and matches a representative set including MCP names.
 - **P** — Batch sibling re-deny within `RUNIR_BATCH_SIBLING_S` (2s) so multi-tool drafts all see the same correction once.
+- **Bridge** — Global-only projection into `<!-- runir-bridge:begin/end -->`. Fetch failure **preserves** the prior managed block (never wipe). Full read-modify-write under advisory lock with pre-image stat re-check (max 3 attempts → `preserved`). `lastSyncAt` advances **only after successful sync**; the hook holds a short in-flight lease (`RUNIR_SYNC_LEASE_S`) instead of burning the throttle window on failed spawn. Advisory lock does not bind Grok's own writer — best-effort only.
 
 ## Install (machine-local)
 
@@ -80,22 +94,28 @@ in-chat chrome for recall/delivery. Use:
 
 ### State files (digest-only, no secrets)
 
-Under `~/.grok/state/runir/`:
+Under `$GROK_HOME/state/runir/` (default `~/.grok/state/runir/`):
 
 - `trace-{sha256(sessionId)}.jsonl` — ring of last **100** events (hard cap; rewrite when over limit)
 - `status-{sha256(sessionId)}.json` — latest turn phase/counts
+- `recall-{digest}.json` — undelivered/delivered context for the turn (**includes original prompt** + rendered context + identity fields)
+- `native-{digest}.json` — session baseline managed ids + first-turn publish status
+- `bridge-sync.json` — throttle / lease / `lastStatus` (schema v2)
+- `dedupe-{digest}.json` — recent selection ids
 
-Event kinds: `recall`, `deliver`, `skip`, `capture`, `error`. Bodies store
-counts, `hash12` (contentHash prefix), durations, HTTP status, phase, and
-exception **class names** only — never prompts, recalled context, headers,
-credentials, or plaintext session ids.
+Event kinds: `recall`, `deliver`, `skip`, `capture`, `error`. Trace/status bodies store
+counts, `hash12` (contentHash prefix), `selection12`, opaque `retrievalTraceId`,
+durations, HTTP status, phase, and exception **class names** only — never prompts,
+recalled context, headers, credentials, or plaintext session ids. The original
+prompt lives only in `recall-*.json` (already held recalled context).
 
 **Deliver `promptId` self-attribution:** Grok PreToolUse/Stop payloads often
 omit `promptId`, which used to bucket delivers under `promptId=_none` in
 `/runir session`. The adapter now prefers any event `promptId`, else reads
 the turn's `promptId` from the recall-state file (hash-verified against the
 delivered `contentHash` when present; fail-open to no promptId if state is
-missing/corrupt/mismatched).
+missing/corrupt/mismatched). `contentHash` remains `sha256(context)` and is
+**not** repointed at `selectionId`.
 
 ### Inspector
 
@@ -140,7 +160,8 @@ Flow:
    `RECALL_FEEDBACK_PREFIX` untrusted envelope), **user prompt second**. Never
    sets `systemPromptOverride`.
 3. Spawns `grok --prompt-json … --output-format json` with
-   `RUNIR_GROK_DISABLE_GATE=1` so installed TUI hooks no-op for this child.
+   `RUNIR_GROK_DISABLE_GATE=1` so installed TUI hooks no-op for this child
+   (including first-turn native publish).
 4. Parses `sessionId` + `modelUsage.*.modelCalls` (expect `1` when no gate re-burn).
 5. `POST /hooks/capture` with the **original** user text + assistant reply
    (skipped under `--no-capture`; capture failure is non-fatal).
@@ -171,24 +192,32 @@ until the CLI gains a path/`@file` form.
 
 | Variable | Role |
 |----------|------|
+| `GROK_HOME` | Grok host root (default `~/.grok`); state + global memory paths derive from this at call time |
 | `RUNIR_USER_ID` | Required (process env or `RUNIR_ENV_FILE`) |
 | `RUNIR_API_KEY` | Optional bearer for Rúnir HTTP (parent process only; stripped from headless grok child env) |
 | `RUNIR_BASE` / `RUNIR_RECALL_URL` / `RUNIR_CAPTURE_URL` | Endpoints (loopback http(s) by default; non-loopback requires HTTPS + `RUNIR_ALLOW_REMOTE_ENDPOINTS=1`) |
 | `RUNIR_ENV_FILE` | dotenv fallback for credentials (stripped from headless grok child env) |
 | `RUNIR_ALLOW_REMOTE_ENDPOINTS=1` | Opt-in: allow non-loopback HTTPS recall/capture URLs |
-| `RUNIR_GROK_DISABLE_GATE=1` | Full no-op of hook `main()` (all events). Set automatically on the headless child; also usable for manual suppression. Exact `"1"` only. |
+| `RUNIR_GROK_DISABLE_GATE=1` | Full no-op of hook `main()` (all events, including first-turn publish). Set automatically on the headless child; also usable for manual suppression. Exact `"1"` only. |
+| `RUNIR_GROK_NATIVE_SUPPRESS` | Default on; set to `0` to never suppress the correction gate against session baseline |
+| `RUNIR_GROK_STOP_MODE` | `additional_context` (default) or `block` |
+| `RUNIR_SYNC_MIN_S` | Min seconds between successful bridge syncs (default 300); first session prompt always eligible after lease |
+| `RUNIR_SYNC_LEASE_S` | In-flight lease after hook claims a later-turn sync (default 60) |
+| `RUNIR_SYNC_FIRST_TURN_TIMEOUT_S` | Bound for synchronous first-turn `sync_once` (default 8; UPS timeout is 45s) |
 | `RUNIR_E2E=1` | Opt-in live canary `tests/test_e2e_headless_live.py` |
 
 ## Tests
 
 ```bash
 pytest plugins/runir-grok/tests -q
+# Isolated GROK_HOME canaries (no real ~/.grok writes) are included above.
 # Live canary (needs running Rúnir + grok + credentials):
 RUNIR_E2E=1 pytest plugins/runir-grok/tests/test_e2e_headless_live.py -q
 ```
 
 ## Non-goals
 
-ACP multi-turn wrapper (deferred), embeddings (`[memory.embedding]` unset), Stop UX A/B,
+ACP multi-turn wrapper (deferred), embeddings (`[memory.embedding]` unset), Stop UX A/B beyond the documented mode switch,
 host chrome / Pi ExtensionAPI footer parity, OpenMemory views, edits to external
-`ask.sh`, `systemPromptOverride` for per-turn memory.
+`ask.sh`, `systemPromptOverride` for per-turn memory, **workspace `MEMORY.md` writes**,
+product-name hardcodes, Leit/Dolt schema changes.
