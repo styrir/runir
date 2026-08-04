@@ -1,5 +1,5 @@
 {
-  "description": "Native Rúnir lifecycle hooks for Grok.",
+  "description": "Native R\u00fanir lifecycle hooks for Grok.",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -14,7 +14,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|run_terminal_command|Read|read_file|Edit|Write|MultiEdit|search_replace|Grep|grep|Glob|ListDir|list_dir|WebSearch|web_search|Task|spawn_subagent|todo_write|TodoWrite",
+        "matcher": ".*",
         "hooks": [
           {
             "type": "command",

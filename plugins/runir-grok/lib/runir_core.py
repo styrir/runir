@@ -6,13 +6,18 @@ STATE_DIR / gate / handlers stay in hooks/runir-grok.py (monkeypatch surface).
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
 import re
 import urllib.error
 import urllib.request
-from typing import Any, Mapping
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Iterator, Mapping
 from urllib.parse import urlparse
 
 RUNIR_BASE = os.environ.get("RUNIR_BASE", "http://127.0.0.1:7700").rstrip("/")
@@ -28,6 +33,10 @@ RECALL_FEEDBACK_PREFIX = (
 )
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
+
+# Hard cap on recall prependContext before PTU deny / Stop additionalContext / state.
+# Prevents multi-MB deny reasons and world-readable state bloat on hostile responses.
+MAX_PREPEND_CONTEXT_CHARS = 32 * 1024
 
 
 def _request_origin(url: str) -> tuple[str, str, int | None]:
@@ -197,6 +206,153 @@ def content_hash(context: str) -> str:
     return hashlib.sha256(context.encode("utf-8")).hexdigest()
 
 
+def grok_home() -> Path:
+    """Grok host root: $GROK_HOME when set, else ~/.grok. Read at call time."""
+    raw = (os.environ.get("GROK_HOME") or "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".grok"
+
+
+def read_json(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        return None
+
+
+def write_json_atomic(path: Path | None, data: dict[str, Any]) -> None:
+    """Atomically write JSON with mode 0600 (schema-v2 state may hold full prompts)."""
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    payload = json.dumps(data, separators=(",", ":"))
+    try:
+        fd = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(payload)
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+        os.replace(temporary, path)
+        # Some filesystems preserve destination mode across replace; force owner-only.
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+@contextlib.contextmanager
+def exclusive_lock(path: Path | None) -> Iterator[None]:
+    """Advisory exclusive lock beside a path (fcntl flock; local FS only)."""
+    if path is None:
+        yield
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(path.name + ".lock")
+    handle = open(lock_path, "a+", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        handle.close()
+
+
+@dataclass
+class RecallResult:
+    context: str = ""
+    retrieval_trace_id: str = ""
+    memory_ids: list[str] = field(default_factory=list)
+
+
+def _clamp_prepend_context(ctx: str) -> str:
+    if len(ctx) <= MAX_PREPEND_CONTEXT_CHARS:
+        return ctx
+    return ctx[:MAX_PREPEND_CONTEXT_CHARS]
+
+
+def parse_recall_body(body: dict[str, Any] | None) -> RecallResult:
+    """Extract prependContext, retrievalTraceId, and selected-memory ids. Never raises."""
+    result = RecallResult()
+    if not isinstance(body, dict):
+        return result
+    try:
+        ctx = body.get("prependContext")
+        if isinstance(ctx, str):
+            result.context = _clamp_prepend_context(ctx)
+        else:
+            result.context = ""
+        for key in ("retrievalTraceId", "retrieval_trace_id", "traceId", "trace_id"):
+            val = body.get(key)
+            if isinstance(val, str) and val.strip():
+                result.retrieval_trace_id = val.strip()
+                break
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                result.retrieval_trace_id = str(val)
+                break
+        rows = None
+        for key in ("memories", "items", "selected", "results"):
+            candidate = body.get(key)
+            if isinstance(candidate, list):
+                rows = candidate
+                break
+        ids: list[str] = []
+        seen: set[str] = set()
+        if rows is not None:
+            for row in rows:
+                mid = None
+                if isinstance(row, dict):
+                    raw = row.get("id")
+                    if raw is None:
+                        raw = row.get("semioteId")
+                    if isinstance(raw, str) and raw.strip():
+                        mid = raw.strip()
+                    elif isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                        mid = str(raw)
+                # bare strings are not ids
+                if mid and mid not in seen:
+                    seen.add(mid)
+                    ids.append(mid)
+        result.memory_ids = ids
+    except Exception:
+        return RecallResult(
+            context=result.context if isinstance(result.context, str) else "",
+            retrieval_trace_id="",
+            memory_ids=[],
+        )
+    return result
+
+
+def selection_id(memory_ids: list[str] | None, context: str) -> str:
+    """Stable selected-memory identity; falls back to content_hash when ids empty."""
+    ids = [str(x) for x in (memory_ids or []) if str(x)]
+    if ids:
+        joined = "\n".join(sorted(set(ids)))
+        return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+    return content_hash(context or "")
+
+
 def normalize_content(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -247,7 +403,9 @@ def recall_context(
     if not 200 <= status < 300 or not isinstance(body, dict):
         return ""
     ctx = body.get("prependContext")
-    return ctx if isinstance(ctx, str) and ctx else ""
+    if not isinstance(ctx, str) or not ctx:
+        return ""
+    return _clamp_prepend_context(ctx)
 
 
 def capture_turn(
@@ -261,6 +419,8 @@ def capture_turn(
     client: str = DEFAULT_CLIENT,
     user_agent: str = DEFAULT_USER_AGENT,
     capture_url: str | None = None,
+    retrieval_trace_id: str = "",
+    memory_ids: list[str] | None = None,
 ) -> bool:
     """POST /hooks/capture. True on 2xx without error key; fail-open False."""
     if not messages or not user_id:
@@ -274,6 +434,10 @@ def capture_turn(
         "sessionId": session_id or None,
         "path": path,
     }
+    if retrieval_trace_id:
+        payload["retrievalTraceId"] = retrieval_trace_id
+    if memory_ids:
+        payload["memoryIds"] = list(memory_ids)
     result = post_json(url, payload, t, api_key=api_key, user_agent=user_agent)
     if not result:
         return False
