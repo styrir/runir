@@ -319,7 +319,7 @@ def _repo_state() -> tuple[str, str, bool]:
     )
 
     status_proc = subprocess.run(
-        ["git", "status", "--porcelain"],
+        ["git", "status", "--porcelain", "--untracked-files=all"],
         cwd=repo_root,
         capture_output=True,
         text=True,
@@ -372,7 +372,12 @@ def test_repo_state_requires_clean_worktree_including_untracked(monkeypatch):
         seen.append(argv)
         if argv == ["git", "rev-parse", "HEAD"]:
             return subprocess.CompletedProcess(argv, 0, f"{expected_head}\n", "")
-        assert argv == ["git", "status", "--porcelain"]
+        assert argv == [
+            "git",
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ]
         return subprocess.CompletedProcess(argv, 0, "?? live-proof.json\n", "")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -380,7 +385,7 @@ def test_repo_state_requires_clean_worktree_including_untracked(monkeypatch):
         _repo_state()
     assert seen == [
         ["git", "rev-parse", "HEAD"],
-        ["git", "status", "--porcelain"],
+        ["git", "status", "--porcelain", "--untracked-files=all"],
     ]
 
 
@@ -391,7 +396,12 @@ def test_repo_state_returns_required_exact_match(monkeypatch):
     def fake_run(argv, **kwargs):
         if argv == ["git", "rev-parse", "HEAD"]:
             return subprocess.CompletedProcess(argv, 0, f"{expected_head}\n", "")
-        assert argv == ["git", "status", "--porcelain"]
+        assert argv == [
+            "git",
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ]
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
