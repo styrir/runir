@@ -39,6 +39,27 @@ describe("formatTraceReceipt", () => {
     expect(out).toContain("corrected:  m2");
   });
 
+  it("renders a capture-owned answer without labeling it as feedback", () => {
+    const out = formatTraceReceipt({
+      ...fullTrace,
+      answer: undefined,
+      feedbackReceivedAt: undefined,
+      captureReceipt: {
+        retrievalTraceId: "trace-9",
+        sessionId: "sess-a",
+        memoryIds: ["semiote:m1", "semiote:m2"],
+        prompt: fullTrace.prompt!,
+        answer: "Captured directly through /hooks/capture.",
+        client: "grok",
+        path: "/repo",
+        receivedAt: "2026-06-01T10:00:01.000Z",
+      },
+    });
+    expect(out).toContain("Captured directly through /hooks/capture.");
+    expect(out).toContain("captured: 2026-06-01T10:00:01.000Z");
+    expect(out).toContain("received:   —");
+  });
+
   it("marks a trace that has no feedback / no stored injection clearly", () => {
     const bare: TraceView = {
       id: "trace-old",
@@ -53,7 +74,7 @@ describe("formatTraceReceipt", () => {
     expect(out).toContain("recalled 0 memories:");
     expect(out).toContain("(none)");
     expect(out).toContain("(not stored — trace predates receipt capture, or nothing was injected)");
-    expect(out).toContain("(no feedback received yet)");
+    expect(out).toContain("(no captured answer or feedback received yet)");
     expect(out).toContain("resolution: —");
     expect(out).toContain("corrected:  none");
     // an unrated trace surfaces the prompt to rate it

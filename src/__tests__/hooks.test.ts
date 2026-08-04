@@ -276,6 +276,7 @@ vi.mock("../storage/surreal/phase2-store.js", () => ({
   getRetrievalTrace: vi.fn().mockResolvedValue(null),
   listRetrievalTraces: vi.fn().mockResolvedValue([]),
   patchRetrievalTraceAnswer: vi.fn().mockResolvedValue(undefined),
+  patchRetrievalTraceCaptureReceipt: vi.fn().mockResolvedValue(undefined),
   patchRetrievalTraceRating: vi.fn().mockResolvedValue(undefined),
   TRACE_RATINGS: ["helped", "hurt", "unused", "missing", "stale"],
   patchSemioteProvenance: vi.fn().mockResolvedValue(undefined),

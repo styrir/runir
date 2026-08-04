@@ -53,6 +53,17 @@ export type RetrievalFootprint = {
 export const TRACE_RATINGS = ["helped", "hurt", "unused", "missing", "stale"] as const;
 export type TraceRating = (typeof TRACE_RATINGS)[number];
 
+export type CaptureTraceReceipt = {
+  retrievalTraceId: string;
+  sessionId: string;
+  memoryIds: string[];
+  prompt: string;
+  answer: string;
+  client?: string;
+  path?: string;
+  receivedAt: string;
+};
+
 export type RetrievalTraceRecord = {
   id: string;
   userId: string;
@@ -83,6 +94,8 @@ export type RetrievalTraceRecord = {
   correctedIds?: string[];
   /** When feedback (answer + rating) arrived. Distinguishes answered vs unanswered traces. */
   feedbackReceivedAt?: string;
+  /** Capture-path receipt proving the client POST reached /hooks/capture with the bound turn metadata. */
+  captureReceipt?: CaptureTraceReceipt;
   /** THIN human recall-quality label (helped|hurt|unused|missing|stale). Separate from the usefulness loop. Set at /hooks/traces/:id/rate. */
   rating?: TraceRating;
   /** Optional free-text note accompanying the rating. */
@@ -465,6 +478,7 @@ export async function ensurePhase2Schema(db: SurrealClient, embeddingDim = 768):
     DEFINE FIELD IF NOT EXISTS response_resolution ON TABLE retrieval_trace TYPE option<string>;
     DEFINE FIELD IF NOT EXISTS corrected_ids ON TABLE retrieval_trace TYPE option<array<string>>;
     DEFINE FIELD IF NOT EXISTS feedback_received_at ON TABLE retrieval_trace TYPE option<datetime>;
+    DEFINE FIELD IF NOT EXISTS capture_receipt ON TABLE retrieval_trace TYPE option<object>;
     DEFINE FIELD IF NOT EXISTS rating ON TABLE retrieval_trace TYPE option<string>;
     DEFINE FIELD IF NOT EXISTS rating_note ON TABLE retrieval_trace TYPE option<string>;
     DEFINE FIELD IF NOT EXISTS rated_at ON TABLE retrieval_trace TYPE option<datetime>;
@@ -574,6 +588,7 @@ function mapRetrievalTraceRow(row: any): RetrievalTraceRecord {
     responseResolution: row.response_resolution ?? undefined,
     correctedIds: row.corrected_ids ?? undefined,
     feedbackReceivedAt: row.feedback_received_at ?? undefined,
+    captureReceipt: row.capture_receipt ?? undefined,
     rating: row.rating ?? undefined,
     ratingNote: row.rating_note ?? undefined,
     ratedAt: row.rated_at ?? undefined,
@@ -588,7 +603,7 @@ export async function getRetrievalTrace(
   userId: string,
 ): Promise<RetrievalTraceRecord | null> {
   const results = await db.query<any>(
-    `SELECT id, user_id, session_id, prompt, intent_label, lane_label, retrieval_path, requested_path, hexis_id, hexis_version, hexis_label, footprint_kind, canonical_identity, access_tracked_ids, retrieval_audit, prepend_context, answer, response_resolution, corrected_ids, feedback_received_at, rating, rating_note, rated_at, items, created_at
+    `SELECT id, user_id, session_id, prompt, intent_label, lane_label, retrieval_path, requested_path, hexis_id, hexis_version, hexis_label, footprint_kind, canonical_identity, access_tracked_ids, retrieval_audit, prepend_context, answer, response_resolution, corrected_ids, feedback_received_at, capture_receipt, rating, rating_note, rated_at, items, created_at
      FROM type::record('retrieval_trace', $id)
      WHERE user_id = $userId;`,
     { id, userId },
@@ -623,6 +638,42 @@ export async function patchRetrievalTraceAnswer(
       answer: patch.answer,
       responseResolution: patch.responseResolution ?? undefined,
       correctedIds: patch.correctedIds ?? undefined,
+    },
+  );
+}
+
+/**
+ * Binds a completed capture turn to its recall receipt. The caller must validate
+ * trace ownership/session/prompt/memory identities before this user-scoped write.
+ */
+export async function patchRetrievalTraceCaptureReceipt(
+  db: SurrealClient,
+  id: string,
+  userId: string,
+  receipt: Omit<CaptureTraceReceipt, "retrievalTraceId" | "receivedAt">,
+): Promise<void> {
+  await db.query(
+    `UPDATE type::record('retrieval_trace', $id) SET
+       capture_receipt = {
+         retrievalTraceId: $id,
+         sessionId: $sessionId,
+         memoryIds: $memoryIds,
+         prompt: $prompt,
+         answer: $answer,
+         client: $client,
+         path: $path,
+         receivedAt: time::now()
+       }
+     WHERE user_id = $userId;`,
+    {
+      id,
+      userId,
+      sessionId: receipt.sessionId,
+      memoryIds: receipt.memoryIds,
+      prompt: receipt.prompt,
+      answer: receipt.answer,
+      client: receipt.client ?? undefined,
+      path: receipt.path ?? undefined,
     },
   );
 }

@@ -19,6 +19,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import quote, urlparse
 
 import pytest
 
@@ -122,6 +123,91 @@ def _seed_isolated_grok_home(tmp: Path) -> Path:
     return grok_home
 
 
+def _configured_endpoint_origin(core) -> str:
+    for key, default in (
+        ("RUNIR_RECALL_URL", core.DEFAULT_RECALL_URL),
+        ("RUNIR_CAPTURE_URL", core.DEFAULT_CAPTURE_URL),
+    ):
+        endpoint = os.environ.get(key) or default
+        parsed = urlparse(endpoint)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+    return (os.environ.get("RUNIR_BASE") or core.RUNIR_BASE).rstrip("/")
+
+
+def _read_trace(core, *, trace_id: str, user_id: str, api_key: str | None) -> dict:
+    base = _configured_endpoint_origin(core)
+    url = f"{base}/hooks/traces/{quote(trace_id, safe='')}?userId={quote(user_id, safe='')}"
+    result = core.get_json(url, timeout=20.0, api_key=api_key)
+    assert result, f"trace read failed for {trace_id!r}"
+    status, body = result
+    assert 200 <= status < 300, f"trace read status={status}: {body!r}"
+    trace = body.get("trace")
+    assert isinstance(trace, dict), f"trace read missing trace object: {body!r}"
+    return trace
+
+
+def _assert_capture_receipt(
+    core,
+    *,
+    result: dict,
+    prompt: str,
+    user_id: str,
+    api_key: str | None,
+) -> None:
+    trace_id = result.get("retrievalTraceId")
+    assert trace_id, f"missing retrievalTraceId: {result!r}"
+    expected_memory_ids = list(result.get("memoryIds") or [])
+    assert expected_memory_ids, f"expected live recall memoryIds: {result!r}"
+
+    trace = _read_trace(
+        core,
+        trace_id=trace_id,
+        user_id=user_id,
+        api_key=api_key,
+    )
+    receipt = trace.get("captureReceipt")
+    assert isinstance(receipt, dict), f"capture receipt not persisted: {trace!r}"
+    assert receipt.get("retrievalTraceId") == trace_id
+    assert receipt.get("sessionId") == result.get("sessionId")
+    assert receipt.get("memoryIds") == expected_memory_ids
+    assert receipt.get("prompt") == prompt
+    assert receipt.get("answer") == result.get("text")
+    assert trace.get("sessionId") == result.get("sessionId")
+    assert trace.get("prompt") == prompt
+    assert [item.get("id") for item in trace.get("items") or []] == expected_memory_ids
+
+
+def _seed_fact(
+    core,
+    *,
+    messages: list[dict[str, str]],
+    user_id: str,
+    session_id: str,
+    path: str,
+    api_key: str | None,
+) -> dict:
+    result = core.post_json(
+        os.environ.get("RUNIR_CAPTURE_URL", core.DEFAULT_CAPTURE_URL),
+        {
+            "messages": messages,
+            "userId": user_id,
+            "client": core.DEFAULT_CLIENT,
+            "sessionId": session_id,
+            "path": path,
+        },
+        60.0,
+        api_key=api_key,
+    )
+    assert result, "seed capture request failed — is Rúnir running?"
+    status, body = result
+    assert 200 <= status < 300, f"seed capture status={status}: {body!r}"
+    assert body.get("skipped") is not True, f"seed capture skipped: {body!r}"
+    assert "error" not in body, f"seed capture error: {body!r}"
+    assert body.get("factsFound", 0) > 0, f"seed capture extracted no facts: {body!r}"
+    return body
+
+
 def _recall_until_sentinel(
     core,
     *,
@@ -169,6 +255,8 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
 
     sentinel = f"RUNIR-E2E-SENTINEL-{uuid.uuid4().hex[:12]}"
     session_seed = f"e2e-{uuid.uuid4().hex[:8]}"
+    canary_path = tmp_path / f"workspace-{uuid.uuid4().hex}"
+    canary_path.mkdir()
 
     # Isolate child grok from machine ~/.grok hooks (main-tree, no kill-switch).
     grok_home = _seed_isolated_grok_home(tmp_path)
@@ -179,8 +267,9 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
 
     # Seed distinctive fact via capture — unique token + session tag so retrieval
     # does not prefer an older E2E seed (prior runs leave RUNIR-E2E-SENTINEL-*).
-    ok = core.capture_turn(
-        [
+    _seed_fact(
+        core,
+        messages=[
             {
                 "role": "user",
                 "content": (
@@ -199,10 +288,9 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
         ],
         user_id=user_id,
         session_id=session_seed,
-        path=str(PLUGIN_ROOT),
+        path=str(canary_path),
         api_key=api_key,
     )
-    assert ok, "seed capture failed — is Rúnir running?"
 
     # Retrieval-friendly probe (same shape as inject prompt) — wait for index.
     probe = f"session-tag={session_seed} one-time bridge token RUNIR-E2E-SENTINEL"
@@ -212,8 +300,8 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
         sentinel=sentinel,
         user_id=user_id,
         api_key=api_key,
-        path=str(PLUGIN_ROOT),
-        attempts=6,
+        path=str(canary_path),
+        attempts=8,
         sleep_s=2.0,
     )
     assert sentinel in (pre or ""), (
@@ -255,7 +343,7 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
             "--timeout",
             "180",
             "--path",
-            str(PLUGIN_ROOT),
+            str(canary_path),
             "--max-turns",
             "1",
             "--no-memory",
@@ -295,6 +383,14 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
     assert sentinel in text, (
         f"sentinel not model-visible in assistant text:\n{text!r}\nresult={result!r}"
     )
+    assert "warn: capture failed" not in proc.stderr
+    _assert_capture_receipt(
+        core,
+        result=result,
+        prompt=prompt,
+        user_id=user_id,
+        api_key=api_key,
+    )
 
     # Resume turn: the verified fresh Grok session UUID becomes --resume and the
     # same identity must be returned and used for recall/capture.
@@ -315,7 +411,7 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
             "--timeout",
             "180",
             "--path",
-            str(PLUGIN_ROOT),
+            str(canary_path),
             "--max-turns",
             "1",
             "--no-memory",
@@ -352,4 +448,12 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
     text2 = result2.get("text") or ""
     assert sentinel in text2, (
         f"resume sentinel not model-visible:\n{text2!r}\nresult={result2!r}"
+    )
+    assert "warn: capture failed" not in proc2.stderr
+    _assert_capture_receipt(
+        core,
+        result=result2,
+        prompt=resume_prompt,
+        user_id=user_id,
+        api_key=api_key,
     )
