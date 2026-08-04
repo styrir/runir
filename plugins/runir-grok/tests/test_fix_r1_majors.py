@@ -69,20 +69,32 @@ def test_memory_list_row_shape_reads_memory_field(bridge):
 
 def test_fetch_runir_facts_parses_service_memory_field(bridge, monkeypatch):
     class _Resp:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def read(self):
-            return json.dumps(
+        def __init__(self):
+            self._raw = json.dumps(
                 {
                     "memories": [
                         {"id": "abc", "memory": "durable fact from service"},
                     ]
                 }
             ).encode("utf-8")
+            self._offset = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, amt=-1):
+            if self._offset >= len(self._raw):
+                return b""
+            if amt is None or amt < 0:
+                chunk = self._raw[self._offset :]
+                self._offset = len(self._raw)
+                return chunk
+            chunk = self._raw[self._offset : self._offset + amt]
+            self._offset += len(chunk)
+            return chunk
 
     class _Opener:
         def open(self, request, timeout=0):
@@ -207,14 +219,28 @@ def test_fetch_runir_facts_uses_safe_opener(bridge, monkeypatch):
     seen: list[object] = []
 
     class _Resp:
+        def __init__(self):
+            self._raw = json.dumps(
+                {"items": [{"id": "m1", "memory": "ok fact"}]}
+            ).encode()
+            self._offset = 0
+
         def __enter__(self):
             return self
 
         def __exit__(self, *a):
             return False
 
-        def read(self):
-            return json.dumps({"items": [{"id": "m1", "memory": "ok fact"}]}).encode()
+        def read(self, amt=-1):
+            if self._offset >= len(self._raw):
+                return b""
+            if amt is None or amt < 0:
+                chunk = self._raw[self._offset :]
+                self._offset = len(self._raw)
+                return chunk
+            chunk = self._raw[self._offset : self._offset + amt]
+            self._offset += len(chunk)
+            return chunk
 
     class _Opener:
         def open(self, req, timeout=None):

@@ -38,6 +38,11 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
 # Prevents multi-MB inject payloads and world-readable state bloat on hostile responses.
 MAX_PREPEND_CONTEXT_CHARS = 32 * 1024
 
+# Transport-level cap on a single HTTP response body, applied before JSON decode.
+# Distinct from MAX_PREPEND_CONTEXT_CHARS (post-parse char clamp) and the
+# bridge's MAX_MANAGED_BYTES (MEMORY.md projection budget).
+MAX_RESPONSE_BYTES = 1024 * 1024  # 1 MiB
+
 
 def _request_origin(url: str) -> tuple[str, str, int | None]:
     parsed = urlparse(url)
@@ -155,6 +160,77 @@ def event_value(event: dict[str, Any], *names: str, default: Any = None) -> Any:
     return default
 
 
+class ResponseTooLarge(Exception):
+    """Response body exceeded the transport byte cap (declared or observed)."""
+
+
+def _declared_content_length(response: Any) -> int | None:
+    """Best-effort Content-Length probe. Never raises; missing/invalid → None."""
+    raw: Any = None
+    headers = getattr(response, "headers", None)
+    if headers is not None:
+        try:
+            get = getattr(headers, "get", None)
+            if callable(get):
+                raw = get("Content-Length")
+            elif isinstance(headers, Mapping):
+                raw = headers.get("Content-Length")
+        except Exception:
+            raw = None
+    if raw is None:
+        getheader = getattr(response, "getheader", None)
+        if callable(getheader):
+            try:
+                raw = getheader("Content-Length")
+            except Exception:
+                raw = None
+    if raw is None or raw is False:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if value < 0:
+        return None
+    return value
+
+
+def read_capped_body(response: Any, limit: int | None = None) -> bytes:
+    """Read at most `limit` bytes from an HTTP response.
+
+    Raises ResponseTooLarge when Content-Length declares more than the cap
+    (before any body read) or when the observed body exceeds the cap.
+    Accumulates at most ``limit + 1`` bytes so exact-cap bodies are accepted
+    while oversize is detected without an unbounded ``read()``.
+    """
+    if limit is None:
+        limit = MAX_RESPONSE_BYTES
+    if limit < 0:
+        raise ValueError("limit must be non-negative")
+
+    declared = _declared_content_length(response)
+    if declared is not None and declared > limit:
+        raise ResponseTooLarge(
+            f"declared Content-Length {declared} exceeds cap {limit}"
+        )
+
+    remaining = limit + 1
+    chunks: list[bytes] = []
+    while remaining > 0:
+        to_read = min(65536, remaining)
+        chunk = response.read(to_read)
+        if not chunk:
+            break
+        if not isinstance(chunk, (bytes, bytearray)):
+            chunk = bytes(chunk)
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    body = b"".join(chunks)
+    if len(body) > limit:
+        raise ResponseTooLarge(f"response body exceeds cap {limit}")
+    return body
+
+
 def get_json(
     url: str,
     timeout: float,
@@ -174,7 +250,7 @@ def get_json(
             headers["Authorization"] = f"Bearer {api_key}"
         request = urllib.request.Request(url, headers=headers, method="GET")
         with OPENER.open(request, timeout=timeout) as response:
-            raw = response.read()
+            raw = read_capped_body(response)
             try:
                 body = json.loads(raw) if raw else {}
             except (json.JSONDecodeError, ValueError):
@@ -214,7 +290,7 @@ def post_json(
             method="POST",
         )
         with OPENER.open(request, timeout=timeout) as response:
-            raw = response.read()
+            raw = read_capped_body(response)
             try:
                 body = json.loads(raw) if raw else {}
             except (json.JSONDecodeError, ValueError):
