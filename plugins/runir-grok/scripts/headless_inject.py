@@ -8,7 +8,7 @@ Exit codes:
   0  ok (incl. recall fail-open, capture failure)
   2  usage / missing RUNIR_USER_ID
   3  grok spawn failure or non-zero exit
-  4  grok stdout unparseable
+  4  grok stdout unparseable or session identity mismatch
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -53,15 +54,20 @@ def build_grok_argv(
     prompt_json: str,
     *,
     resume: str | None = None,
+    session_id: str | None = None,
     path: str | None = None,
     yolo: bool = False,
     max_turns: int | None = None,
     no_memory: bool = False,
     disable_web_search: bool = False,
 ) -> list[str]:
+    if resume and session_id:
+        raise ValueError("--session-id cannot be combined with --resume")
     argv = ["grok", "--prompt-json", prompt_json, "--output-format", "json"]
     if resume:
         argv.extend(["--resume", resume])
+    elif session_id:
+        argv.extend(["--session-id", session_id])
     if path:
         argv.extend(["--cwd", path])
     if yolo:
@@ -145,6 +151,14 @@ def extract_assistant_text(result: dict[str, Any]) -> str:
     return ""
 
 
+def resolve_session_id(*, resume: str | None = None) -> str:
+    """Return the real Grok session UUID used by recall, Grok, and capture."""
+    resume_value = (resume or "").strip()
+    if resume_value:
+        return resume_value
+    return str(uuid.uuid4())
+
+
 def recall_with_retry(
     prompt: str,
     *,
@@ -155,12 +169,12 @@ def recall_with_retry(
     client: str = core.DEFAULT_CLIENT,
     user_agent: str = core.DEFAULT_USER_AGENT,
     attempts: int = 2,
-) -> str:
-    """Recall once, retry once on empty (cold embedder / short timeout)."""
-    last = ""
+) -> core.RecallResult:
+    """Recall once, retry once on empty context (cold embedder / short timeout)."""
+    last = core.RecallResult()
     for i in range(max(1, attempts)):
         try:
-            last = core.recall_context(
+            last = core.recall_result(
                 prompt,
                 user_id=user_id,
                 session_id=session_id,
@@ -171,8 +185,8 @@ def recall_with_retry(
             )
         except Exception as exc:
             print(f"warn: recall failed open: {exc}", file=sys.stderr)
-            last = ""
-        if last:
+            last = core.RecallResult()
+        if last.context:
             return last
         if i + 1 < attempts:
             # Brief pause so ollama nomic-embed can finish cold start.
@@ -182,7 +196,7 @@ def recall_with_retry(
                 time.sleep(2.0)
             except Exception:
                 pass
-    return last or ""
+    return last
 
 
 def run_inject(
@@ -208,16 +222,21 @@ def run_inject(
     user_agent = os.environ.get("RUNIR_GROK_USER_AGENT", core.DEFAULT_USER_AGENT)
     cwd = path or os.getcwd()
 
-    memory = recall_with_retry(
+    # Fresh turns pre-generate the actual Grok UUID; resume turns reuse the real
+    # Grok session ID. The same identity threads recall, Grok, and capture.
+    session_id = resolve_session_id(resume=resume)
+
+    recall = recall_with_retry(
         prompt,
         user_id=user_id,
-        session_id=resume or "",
+        session_id=session_id,
         path=cwd,
         api_key=api_key,
         client=client,
         user_agent=user_agent,
         attempts=2,
     )
+    memory = recall.context
 
     blocks = core.build_prompt_blocks(prompt, memory)
 
@@ -228,6 +247,7 @@ def run_inject(
         argv = build_grok_argv(
             prompt_json,
             resume=resume,
+            session_id=None if resume else session_id,
             path=cwd,
             yolo=yolo,
             max_turns=max_turns,
@@ -261,7 +281,14 @@ def run_inject(
                 print(proc.stdout, file=sys.stderr, end="")
             return 4
 
-        session_id = str(result.get("sessionId") or resume or "")
+        returned_session_id = str(result.get("sessionId") or "").strip()
+        if returned_session_id != session_id:
+            print(
+                "error: grok sessionId mismatch: "
+                f"expected {session_id!r}, got {returned_session_id!r}",
+                file=sys.stderr,
+            )
+            return 4
         model_calls = extract_model_calls(result)
         assistant = extract_assistant_text(result)
 
@@ -278,6 +305,8 @@ def run_inject(
                 api_key=api_key,
                 client=client,
                 user_agent=user_agent,
+                retrieval_trace_id=recall.retrieval_trace_id,
+                memory_ids=list(recall.memory_ids) if recall.memory_ids else None,
             )
             if not ok:
                 print("warn: capture failed (non-fatal)", file=sys.stderr)
@@ -287,6 +316,8 @@ def run_inject(
             "modelCalls": model_calls,
             "text": assistant,
             "memoryInjected": bool(memory),
+            "retrievalTraceId": recall.retrieval_trace_id or "",
+            "memoryIds": list(recall.memory_ids),
             "stopReason": result.get("stopReason"),
         }
         if as_json:
@@ -330,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
     src = parser.add_mutually_exclusive_group(required=True)
     src.add_argument("--prompt", help="User prompt text")
     src.add_argument("--prompt-file", type=Path, help="Read user prompt from file")
-    parser.add_argument("--resume", help="Grok session id to resume")
+    parser.add_argument("--resume", help="Existing Grok session UUID to resume")
     parser.add_argument("--path", help="Workspace cwd for recall/capture/grok")
     parser.add_argument(
         "--no-capture",

@@ -33,15 +33,15 @@ def install_mod():
     return load_install_module()
 
 
-def test_render_template_injects_env_file_into_all_three_commands(
-    tmp_path, install_mod
-):
+def test_render_template_injects_env_file_into_ups_and_stop(tmp_path, install_mod):
+    """UPS + Stop only (PreToolUse retired) — both get RUNIR_ENV_FILE wiring."""
     env_file = tmp_path / "runir.env"
     env_file.write_text("RUNIR_API_KEY=should-not-appear\n", encoding="utf-8")
     root = PLUGIN_ROOT
     doc = install_mod.render_template(TEMPLATE, root, env_file=env_file.resolve())
     commands = install_mod.extract_commands(doc)
-    assert len(commands) == 3
+    assert len(commands) == 2
+    assert set((doc.get("hooks") or {}).keys()) == {"UserPromptSubmit", "Stop"}
     # Shell-safe: shlex.quote → single-quoted path (no $() expansion).
     expected_frag = f"RUNIR_ENV_FILE={shlex.quote(str(env_file.resolve()))}"
     for cmd in commands:
@@ -57,7 +57,7 @@ def test_render_template_injects_env_file_into_all_three_commands(
 def test_render_template_without_env_file_leaves_plain_env_python(install_mod):
     doc = install_mod.render_template(TEMPLATE, PLUGIN_ROOT, env_file=None)
     commands = install_mod.extract_commands(doc)
-    assert len(commands) == 3
+    assert len(commands) == 2
     for cmd in commands:
         assert "RUNIR_ENV_FILE=" not in cmd
         assert cmd.startswith("/usr/bin/env python3 ")
@@ -138,3 +138,50 @@ def test_install_idempotent_with_env_file(tmp_path):
     assert second.returncode == 0, second.stderr
     summary2 = json.loads(second.stdout)
     assert summary2["changed"] is False
+
+
+def test_install_reports_dedicated_document_replacement_accurately(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("RUNIR_API_KEY=fake\n", encoding="utf-8")
+    hooks_file = tmp_path / "runir-grok.json"
+    hooks_file.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": ".*",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "/usr/bin/env python3 /other/plugin.py",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    cmd = [
+        sys.executable,
+        str(INSTALL_SCRIPT),
+        "--hooks-file",
+        str(hooks_file),
+        "--plugin-root",
+        str(PLUGIN_ROOT),
+        "--env-file",
+        str(env_file),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    assert proc.returncode == 0, proc.stderr
+    summary = json.loads(proc.stdout)
+    notes = summary["preToolUseReplacement"]
+    assert any("non-Rúnir" in note and "removes them too" in note for note in notes)
+    assert "preToolUsePruned" not in summary
+    installed = json.loads(hooks_file.read_text(encoding="utf-8"))
+    assert set(installed["hooks"]) == {"UserPromptSubmit", "Stop"}
+    backup = hooks_file.with_suffix(".json.bak")
+    assert backup.exists()
+    assert "PreToolUse" in json.loads(backup.read_text(encoding="utf-8"))["hooks"]

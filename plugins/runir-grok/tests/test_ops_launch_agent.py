@@ -272,9 +272,7 @@ def test_install_exit_zero_when_loaded_after_bootstrap(tmp_path, monkeypatch):
     monkeypatch.setattr(install, "launchctl_bootstrap", lambda _dest: (True, ""))
     # not currently loaded → bootstrap path; then final print → loaded
     states = iter([False, True])
-    monkeypatch.setattr(
-        install, "launchctl_print_loaded", lambda _label: next(states)
-    )
+    monkeypatch.setattr(install, "launchctl_print_loaded", lambda _label: next(states))
     code, out = _run_main(
         install,
         [

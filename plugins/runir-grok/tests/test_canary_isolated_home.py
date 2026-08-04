@@ -120,8 +120,11 @@ def test_canary_hook(tmp_path, monkeypatch):
     hook.native_publish_or_spawn(event)
     state = hook.read_json_state(hook.recall_state_path("canary-sess"))
     assert state is not None
-    assert "CANARY_RECALL_SENTINEL" in state.get("context", "")
-    assert state.get("retrievalTraceId") == "canary-trace"
+    # TUI UPS is prompt-only (Rúnir-ysk): no HTTP recall context/trace binding.
+    assert state.get("prompt") == "canary prompt"
+    assert state.get("context") in ("", None)
+    assert state.get("delivered") is True
+    assert not state.get("retrievalTraceId")
     assert (tmp_path / "memory" / "MEMORY.md").is_file()
     assert any(state_dir.glob("trace-*.jsonl"))
 

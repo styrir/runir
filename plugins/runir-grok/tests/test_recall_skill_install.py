@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from conftest import PLUGIN_ROOT, load_script_module  # noqa: E402
 
 SKILL_PATH = PLUGIN_ROOT / "skills" / "runir-recall" / "SKILL.md"
+INSPECT_SKILL_PATH = PLUGIN_ROOT / "skills" / "runir" / "SKILL.md"
 
 REQUIRED_VERBS = ["search", "get", "lineage", "traces rate", "store"]
 FORBIDDEN_VERBS = ["forget", "think", "graph", "restore"]
@@ -73,6 +74,14 @@ def test_recall_skill_teaches_five_verbs_only():
     assert "RUNIR_URL" in body and "RUNIR_API_KEY" in body
 
 
+def test_inspect_skill_discloses_prompt_retention():
+    text = INSPECT_SKILL_PATH.read_text(encoding="utf-8")
+    assert "latest original prompt" in text
+    assert "owner-only (`0600`)" in text
+    assert "no automatic TTL" in text
+    assert "No secrets, prompts" not in text
+
+
 def test_install_skill_installs_both(tmp_path):
     install = load_script_module("install_skill.py")
     dest_root = tmp_path / "skills"
@@ -92,9 +101,7 @@ def test_install_skill_installs_both(tmp_path):
     assert "runir" in names and "runir-recall" in names
     for name in names:
         assert (dest_root / name / "SKILL.md").is_file()
-    recall_text = (dest_root / "runir-recall" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
+    recall_text = (dest_root / "runir-recall" / "SKILL.md").read_text(encoding="utf-8")
     assert "disable-model-invocation" not in recall_text
 
 

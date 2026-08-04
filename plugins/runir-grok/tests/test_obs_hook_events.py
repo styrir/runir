@@ -1,4 +1,4 @@
-"""Observability: hook call sites write trace kinds; decision JSON unchanged."""
+"""Observability: hook call sites write trace kinds; no deny/deliver stdout."""
 
 from __future__ import annotations
 
@@ -6,13 +6,13 @@ import io
 import json
 
 
-def test_recall_deliver_sequence_and_capsys_parity(hook, monkeypatch, capsys):
+def test_ups_prompt_only_trace_and_empty_stdout(hook, monkeypatch, capsys):
     monkeypatch.setattr(hook, "RUNIR_USER_ID", "u1")
-    context = "memory fact alpha"
-    digest = hook.content_hash(context)
+    posts = []
 
     def fake_post(url, payload, timeout):
-        return 200, {"prependContext": context}
+        posts.append(url)
+        return 200, {"prependContext": "should not be fetched"}
 
     monkeypatch.setattr(hook, "post_json", fake_post)
 
@@ -22,18 +22,30 @@ def test_recall_deliver_sequence_and_capsys_parity(hook, monkeypatch, capsys):
         "prompt": "what do you know?",
     }
     hook.handle_recall(event)
+    assert posts == []
 
-    # Capture stdout decision bytes from pre_tool_use
-    hook.handle_pre_tool_use({"sessionId": "s-obs-1", "promptId": "p1"})
-    out1 = capsys.readouterr().out
-    assert out1
-    decision = json.loads(out1)
-    assert decision["decision"] == "deny"
-    assert context in decision["reason"]
+    # PreToolUse retired — no deny JSON even if invoked directly via main.
+    import sys
 
-    # Second deliver path: re-seed undelivered recall for stop
-    hook.write_recall_state("s-obs-1", "p2", context, content_hash_value=digest)
-    # Clear delivered so consume works — write_recall_state with context sets delivered=False
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "hookEventName": "pre_tool_use",
+                    "sessionId": "s-obs-1",
+                    "promptId": "p1",
+                    "toolName": "Bash",
+                }
+            )
+        ),
+    )
+    assert hook.main() == 0
+    assert capsys.readouterr().out.strip() == ""
+
+    # Stop is capture-only.
+    monkeypatch.setattr(hook, "detach_capture", lambda e: None)
     hook.handle_stop(
         {
             "sessionId": "s-obs-1",
@@ -41,78 +53,36 @@ def test_recall_deliver_sequence_and_capsys_parity(hook, monkeypatch, capsys):
             "reason": "end_turn",
         }
     )
-    out2 = capsys.readouterr().out
-    stop_decision = json.loads(out2)
-    assert (
-        "hookSpecificOutput" in stop_decision
-        or stop_decision.get("decision") == "block"
-    )
+    assert capsys.readouterr().out.strip() == ""
 
-    # Trace kinds
     lines = [
         ln
         for ln in hook.trace_path("s-obs-1").read_text(encoding="utf-8").splitlines()
         if ln.strip()
     ]
     kinds = [json.loads(ln)["kind"] for ln in lines]
-    assert "recall" in kinds
-    assert kinds.count("deliver") >= 2
-    channels = [
-        json.loads(ln).get("channel")
-        for ln in lines
-        if json.loads(ln).get("kind") == "deliver"
-    ]
-    assert "pre_tool_use" in channels
-    assert "stop" in channels
+    assert "skip" in kinds
+    assert "deliver" not in kinds
+    assert "recall" not in kinds  # no HTTP recall event on TUI UPS
+    skips = [json.loads(ln) for ln in lines if json.loads(ln).get("kind") == "skip"]
+    assert any(s.get("reason") == "prompt_only" for s in skips)
 
     status = hook.read_json_state(hook.status_path("s-obs-1"))
     assert status is not None
-    assert status["lastKind"] == "deliver"
-    assert status["phase"] == "delivered"
-    assert status["counts"]["recall"] >= 1
-    assert status["counts"]["deliver"] >= 2
-
-    # Decision payloads must remain valid JSON objects (instrumentation after dump)
-    assert json.loads(out1) == decision
-    assert "schema" not in out1  # no trace leak on stdout
+    assert status["lastKind"] == "skip"
 
 
-def test_skip_dedupe_and_no_context(hook, monkeypatch):
+def test_empty_prompt_skip(hook, monkeypatch):
     monkeypatch.setattr(hook, "RUNIR_USER_ID", "u1")
-    context = "same memory"
-
-    def fake_post(url, payload, timeout):
-        return 200, {"prependContext": context}
-
-    monkeypatch.setattr(hook, "post_json", fake_post)
-    sid = "s-obs-dedupe"
-    hook.remember_delivered_hash(sid, hook.content_hash(context))
-    hook.handle_recall({"sessionId": sid, "promptId": "p1", "prompt": "again please"})
-    lines = [
+    sid = "s-obs-empty"
+    hook.handle_recall({"sessionId": sid, "promptId": "p2", "prompt": "   "})
+    lines2 = [
         json.loads(ln)
         for ln in hook.trace_path(sid).read_text(encoding="utf-8").splitlines()
         if ln.strip()
     ]
-    kinds = [e["kind"] for e in lines]
-    assert "recall" in kinds
-    assert "skip" in kinds
-    skip = next(e for e in lines if e["kind"] == "skip")
-    assert skip["reason"] == "dedupe"
-
-    # empty context path
-    def empty_post(url, payload, timeout):
-        return 200, {"prependContext": ""}
-
-    monkeypatch.setattr(hook, "post_json", empty_post)
-    sid2 = "s-obs-empty"
-    hook.handle_recall({"sessionId": sid2, "promptId": "p2", "prompt": "nothing here"})
-    lines2 = [
-        json.loads(ln)
-        for ln in hook.trace_path(sid2).read_text(encoding="utf-8").splitlines()
-        if ln.strip()
-    ]
     skips = [e for e in lines2 if e["kind"] == "skip"]
-    assert any(e.get("reason") == "no_context" for e in skips)
+    assert any(e.get("reason") == "empty_prompt" for e in skips)
 
 
 def test_error_event_on_handler_exception(hook, monkeypatch):
@@ -127,7 +97,6 @@ def test_error_event_on_handler_exception(hook, monkeypatch):
         io.StringIO(
             json.dumps(
                 {
-                    # Runtime event name matches main()'s snake_case branch.
                     "hookEventName": "user_prompt_submit",
                     "sessionId": "s-err",
                     "prompt": "x",

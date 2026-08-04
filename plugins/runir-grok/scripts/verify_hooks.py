@@ -2,10 +2,10 @@
 """Verify Rúnir Grok hooks installation at ~/.grok/hooks/runir-grok.json.
 
 Exit 0 when:
-- UserPromptSubmit, PreToolUse, Stop are present
+- UserPromptSubmit and Stop are present (capture + ambient bridge path)
 - command path resolves to an existing file (plugin SoT)
-- PreToolUse matcher equals templates/user-hooks.json and matches MCP tool names
-- timeouts meet floors: UPS >= 15, PreToolUse >= 5, Stop >= 5
+- no Rúnir-owned PreToolUse group remains (deny transport retired)
+- timeouts meet floors: UPS >= 15, Stop >= 5
 
 With --live (after static checks pass):
 - POST authed /hooks/recall using the same credential order as the adapter
@@ -30,10 +30,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-EXPECTED_EVENTS = ("UserPromptSubmit", "PreToolUse", "Stop")
+EXPECTED_EVENTS = ("UserPromptSubmit", "Stop")
 TIMEOUT_FLOORS = {
     "UserPromptSubmit": 15,
-    "PreToolUse": 5,
     "Stop": 5,
 }
 DEFAULT_ENV_FILE = Path.home() / "Code" / "runir" / ".env"
@@ -567,59 +566,43 @@ def main() -> int:
                 errors.append(f"{event}: timeout {timeout!r} below floor {floor}")
             details["events"][event] = event_detail
 
-        # PreToolUse matcher — SoT is templates/user-hooks.json (match-all for MCP).
-        matcher = None
+        # PreToolUse deny transport retired — hard error if Rúnir still registered.
         ptu_groups = hooks.get("PreToolUse")
-        if (
-            isinstance(ptu_groups, list)
-            and ptu_groups
-            and isinstance(ptu_groups[0], dict)
-        ):
-            matcher = ptu_groups[0].get("matcher")
-        details["matcher"] = matcher
+        details["preToolUse"] = ptu_groups
         template_path = root / "templates" / "user-hooks.json"
-        template_matcher = None
+        details["templatePath"] = str(template_path)
         try:
             template_data = json.loads(template_path.read_text(encoding="utf-8"))
-            template_matcher = (
-                template_data.get("hooks", {})
-                .get("PreToolUse", [{}])[0]
-                .get("matcher")
-            )
-        except (OSError, json.JSONDecodeError, TypeError, IndexError, AttributeError):
-            template_matcher = None
-        details["templateMatcher"] = template_matcher
-        details["templatePath"] = str(template_path)
-        if not isinstance(matcher, str) or not matcher.strip():
-            errors.append("PreToolUse matcher missing or empty")
-        elif template_matcher is not None and matcher != template_matcher:
+            template_has_ptu = "PreToolUse" in (template_data.get("hooks") or {})
+        except (OSError, json.JSONDecodeError, TypeError, AttributeError):
+            template_has_ptu = False
+        details["templateHasPreToolUse"] = template_has_ptu
+        if template_has_ptu:
             errors.append(
-                f"PreToolUse matcher {matcher!r} != template {template_matcher!r} "
-                f"({template_path})"
+                "templates/user-hooks.json still registers PreToolUse "
+                "(deny transport must stay retired)"
             )
-        else:
-            try:
-                compiled = re.compile(matcher)
-                details["matcherCompiles"] = True
-                # Representative set must all match (incl. MCP-qualified names).
-                sample_names = (
-                    "Bash",
-                    "Read",
-                    "Edit",
-                    "mcp__runir__search",
-                    "runir__search",
-                    "some_new_tool",
+        if isinstance(ptu_groups, list) and ptu_groups:
+            runir_owned = False
+            for group in ptu_groups:
+                if not isinstance(group, dict):
+                    continue
+                for hook in group.get("hooks") or []:
+                    if not isinstance(hook, dict):
+                        continue
+                    command = hook.get("command") or ""
+                    if "runir-grok.py" in str(command):
+                        runir_owned = True
+                        break
+                if runir_owned:
+                    break
+            if runir_owned:
+                errors.append(
+                    "Rúnir PreToolUse still registered after install "
+                    "(re-run install_hooks.py --user to prune deny transport)"
                 )
-                failed = [n for n in sample_names if compiled.fullmatch(n) is None]
-                details["matcherSamples"] = list(sample_names)
-                if failed:
-                    errors.append(
-                        f"PreToolUse matcher does not match samples {failed} "
-                        f"(template SoT: {template_path})"
-                    )
-            except re.error as exc:
-                errors.append(f"PreToolUse matcher does not compile: {exc}")
-                details["matcherCompiles"] = False
+            else:
+                details["preToolUseForeignOnly"] = True
 
     if args.skill:
         skills_root = (

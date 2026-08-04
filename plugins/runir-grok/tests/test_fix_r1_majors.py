@@ -124,8 +124,8 @@ def test_upsert_managed_neutralizes_embedded_end_marker(bridge):
     assert bridge.END not in body
 
 
-def test_stop_no_sibling_reblock(hook, monkeypatch, capsys):
-    """Stop claims once; second Stop within sibling window fails open (≤1 draft)."""
+def test_stop_capture_only_never_transports_memory(hook, monkeypatch, capsys):
+    """Rúnir-ysk: Stop is capture-only — no additionalContext/block stdout."""
     sid = "sess-stop-r1"
     pid = "prompt-stop"
     ctx = "stop recall once"
@@ -137,7 +137,6 @@ def test_stop_no_sibling_reblock(hook, monkeypatch, capsys):
     monkeypatch.setattr(hook, "detach_capture", _capture)
     hook.write_recall_state(sid, pid, ctx)
 
-    # First Stop: consume + block.
     hook.handle_stop(
         {
             "reason": "end_turn",
@@ -147,10 +146,10 @@ def test_stop_no_sibling_reblock(hook, monkeypatch, capsys):
         }
     )
     out1 = capsys.readouterr().out
-    assert ctx in out1
-    assert ("additionalContext" in out1) or ("block" in out1)
+    assert out1.strip() == ""
+    assert "additionalContext" not in out1
+    assert "block" not in out1
 
-    # Immediate second Stop (sibling window still open): must NOT re-block.
     hook.handle_stop(
         {
             "reason": "end_turn",
@@ -161,18 +160,17 @@ def test_stop_no_sibling_reblock(hook, monkeypatch, capsys):
     )
     out2 = capsys.readouterr().out
     assert out2.strip() == ""
-    assert calls == ["capture"]
+    assert calls == ["capture", "capture"]
 
 
-def test_stop_hook_active_fails_open(hook, monkeypatch, capsys):
+def test_stop_hook_active_still_captures(hook, monkeypatch, capsys):
+    """stopHookActive no longer special-cases delivery; always capture-only."""
     sid = "sess-stop-active"
     pid = "prompt-active"
     ctx = "should not redeliver on active"
     calls: list[str] = []
     monkeypatch.setattr(hook, "detach_capture", lambda e: calls.append("capture"))
-    # Undelivered recall present, but stopHookActive means continuation.
     hook.write_recall_state(sid, pid, ctx)
-    # Force undelivered for this edge case (continuation with undelivered state).
     path = hook.recall_state_path(sid)
     state = hook.read_json_state(path)
     assert state is not None
@@ -189,10 +187,7 @@ def test_stop_hook_active_fails_open(hook, monkeypatch, capsys):
     )
     assert capsys.readouterr().out.strip() == ""
     assert calls == ["capture"]
-    # Still undelivered (we skipped claim).
-    state2 = hook.read_json_state(path)
-    assert state2 is not None
-    assert state2.get("delivered") is False
+
 
 # --- Security review r1 majors (Rúnir-ghe security-r1) ---
 
@@ -264,8 +259,7 @@ def test_id_marker_breakout_sanitized(bridge):
         assert " " not in pid
     assert "ok-id.123" in published
     # Managed block still parses cleanly for id extraction.
-    path_style = section  # in-memory
-    # count of id markers == published
+    # Count of id markers == published.
     assert len(bridge.ID_MARKER_RE.findall(section)) == len(published)
 
 

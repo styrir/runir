@@ -20,46 +20,20 @@ def _digest(sid: str) -> str:
     return hashlib.sha256(sid.encode("utf-8")).hexdigest()
 
 
-def test_deliver_flushes_stdout_before_record_event(hook, monkeypatch, capsys):
-    """Blocking: decision JSON must leave stdout before LOCK_EX on deliver."""
-    order: list[str] = []
-    real_flush = sys.stdout.flush
-
-    def tracking_flush() -> None:
-        order.append("flush")
-        real_flush()
-
-    def tracking_record(*_a, **_k):
-        order.append("record")
-
-    monkeypatch.setattr(sys.stdout, "flush", tracking_flush)
-    monkeypatch.setattr(hook, "record_event", tracking_record)
-    ctx = "flush-before-lock"
-    hook.write_recall_state("sess-flush", "p-flush", ctx)
-    hook.handle_pre_tool_use({"sessionId": "sess-flush", "promptId": "p-flush"})
-    out = capsys.readouterr().out
-    assert json.loads(out)["decision"] == "deny"
-    # flush may fire again under capsys; require first record after a flush.
-    assert "flush" in order and "record" in order
-    assert order.index("flush") < order.index("record")
-
-    order.clear()
-    hook.write_recall_state("sess-flush", "p-flush2", ctx)
+def test_stop_capture_only_no_stdout_transport(hook, monkeypatch, capsys):
+    """Rúnir-ysk: Stop never emits memory decision JSON (capture-only)."""
+    called = []
+    monkeypatch.setattr(hook, "detach_capture", lambda e: called.append("cap"))
+    hook.write_recall_state("sess-flush", "p-flush", "flush-before-lock")
     hook.handle_stop(
         {
             "sessionId": "sess-flush",
-            "promptId": "p-flush2",
+            "promptId": "p-flush",
             "reason": "end_turn",
         }
     )
-    out2 = capsys.readouterr().out
-    stop_payload = json.loads(out2)
-    assert (
-        "hookSpecificOutput" in stop_payload
-        or stop_payload.get("decision") == "block"
-    )
-    assert "flush" in order and "record" in order
-    assert order.index("flush") < order.index("record")
+    assert capsys.readouterr().out.strip() == ""
+    assert called == ["cap"]
 
 
 def test_ring_hard_cap_never_exceeds_trace_limit(hook, monkeypatch):
@@ -206,44 +180,28 @@ def test_bare_errors_captures_scan_all_sessions(tmp_path):
         sys.argv = old
 
 
-def test_recall_http_and_network_emit_error(hook, monkeypatch):
-    """Major: HTTP/network failures are kind=error, not only skip/recall."""
+def test_tui_ups_never_calls_recall_http(hook, monkeypatch):
+    """Rúnir-ysk: TUI UPS is prompt-only — post_json unused even on failure mocks."""
     monkeypatch.setattr(hook, "RUNIR_USER_ID", "u1")
     sid = "sess-http-err"
+    posts = []
 
-    monkeypatch.setattr(hook, "post_json", lambda *a, **k: None)
+    def boom(*a, **k):
+        posts.append(1)
+        return None
+
+    monkeypatch.setattr(hook, "post_json", boom)
     hook.handle_recall(
         {"sessionId": sid, "promptId": "p-net", "prompt": "hello network"}
     )
+    assert posts == []
     events = [
         json.loads(ln)
         for ln in hook.trace_path(sid).read_text(encoding="utf-8").splitlines()
         if ln.strip()
     ]
-    kinds = [e["kind"] for e in events]
-    assert "error" in kinds
-    err = next(e for e in events if e["kind"] == "error")
-    assert err["where"] == "recall"
-    assert err["type"] == "request_failed"
-    assert err.get("promptId") == "p-net"
-    assert any(
-        e.get("reason") == "request_failed" for e in events if e["kind"] == "skip"
-    )
-
-    sid2 = "sess-http-500"
-    monkeypatch.setattr(hook, "post_json", lambda *a, **k: (500, {"error": "nope"}))
-    hook.handle_recall(
-        {"sessionId": sid2, "promptId": "p-http", "prompt": "hello http"}
-    )
-    events2 = [
-        json.loads(ln)
-        for ln in hook.trace_path(sid2).read_text(encoding="utf-8").splitlines()
-        if ln.strip()
-    ]
-    err2 = next(e for e in events2 if e["kind"] == "error")
-    assert err2["type"] == "http_error"
-    assert err2["httpStatus"] == 500
-    assert err2.get("promptId") == "p-http"
+    assert any(e.get("reason") == "prompt_only" for e in events if e["kind"] == "skip")
+    assert not any(e["kind"] == "error" for e in events)
 
 
 def test_capture_and_handler_error_include_prompt_id(hook, monkeypatch):

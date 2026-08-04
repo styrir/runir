@@ -34,7 +34,9 @@ def test_retry_preserves_out_of_block_append(tmp_path, monkeypatch):
         record_throttle=False,
     )
     assert seed["status"] == "ok"
-    path.write_text(path.read_text(encoding="utf-8") + "\npeer note survives\n", encoding="utf-8")
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\npeer note survives\n", encoding="utf-8"
+    )
 
     reads = {"n": 0}
     real_read = Path.read_text
@@ -73,7 +75,6 @@ def test_three_losses_preserve(tmp_path, monkeypatch):
         facts=[{"id": "x", "text": "original"}],
         record_throttle=False,
     )
-    original = path.read_bytes()
 
     def always_mutate_fingerprint(p):
         # Force pre/post mismatch every attempt by bumping mtime via rewrite.
@@ -109,7 +110,9 @@ def test_three_losses_preserve(tmp_path, monkeypatch):
     assert "should not land" not in text
 
 
-def test_content_cas_preserves_append_between_read_and_fingerprint(tmp_path, monkeypatch):
+def test_content_cas_preserves_append_between_read_and_fingerprint(
+    tmp_path, monkeypatch
+):
     """security-r4 major: read-then-fingerprint TOCTOU must not clobber appends.
 
     Simulates external append after content is read but before any pre-image

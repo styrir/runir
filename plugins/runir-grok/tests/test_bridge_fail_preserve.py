@@ -117,9 +117,7 @@ class _Opener:
 def test_fetch_error_json_is_not_ok_empty(monkeypatch):
     """{"error":…} must return error status, not ([], ok) which would wipe MEMORY.md."""
     bridge = load_bridge()
-    monkeypatch.setattr(
-        bridge, "OPENER", _Opener({"error": "temporary failure"})
-    )
+    monkeypatch.setattr(bridge, "OPENER", _Opener({"error": "temporary failure"}))
     facts, status = bridge.fetch_runir_facts("http://127.0.0.1:9", "user-1", None)
     assert facts == []
     assert status.startswith("error:")
@@ -158,9 +156,7 @@ def test_error_json_preserves_managed_block(tmp_path, monkeypatch):
     last = bridge.read_json(bridge.bridge_sync_state_path(state_dir)).get("lastSyncAt")
     assert isinstance(last, (int, float)) and last > 0
 
-    monkeypatch.setattr(
-        bridge, "OPENER", _Opener({"error": "temporary failure"})
-    )
+    monkeypatch.setattr(bridge, "OPENER", _Opener({"error": "temporary failure"}))
     time.sleep(0.01)
     failed = bridge.sync_once(
         memory_root=memory_root,

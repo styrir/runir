@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
 """Native Grok lifecycle adapter for Rúnir.
 
-- UserPromptSubmit: prefetch relevant memory before inference.
-- PreToolUse: deliver prefetched memory before the first substantive tool action.
-- Stop (reason=end_turn): deliver memory before a direct answer, then capture the
-  completed memory-informed user/assistant turn in the background.
+TUI floor (honest):
+- UserPromptSubmit: record turn prompt for capture + ambient MEMORY.md bridge
+  publish (prompt-blind / session-stale — no pre-inference TUI memory inject).
+- Stop (reason=end_turn): capture-only (no additionalContext / decision:block).
+- PreToolUse deny-for-memory transport is retired (handler removed).
 
-Hardening (D1–D4 + P):
-- D1: stale capture-marker bail (RUNIR_CAPTURE_STALE_S, default 5.0s)
-- D2: fcntl flock on consume_recall / write_recall_state / dedupe
-- D3: sha256(context) cross-turn dedupe (TTL 3600s, last 32)
-- D4: narrow PreToolUse matcher lives in templates/user-hooks.json (not this file)
-- P: batch-coherent sibling re-deny within RUNIR_BATCH_SIBLING_S (default 2.0s)
+Hardening retained:
+- D1: stale capture-marker bail (RUNIR_CAPTURE_STALE_S) before UPS continues
+- flock on state / bridge RMW (local FS only)
+- ambient memory_bridge managed block + explicit runir-recall skill
+
+Headless inject (scripts/headless_inject.py) still uses /hooks/recall +
+RECALL_FEEDBACK_PREFIX for pre-inference memory. TUI cannot surface that
+channel before the model runs.
 
 No terminal-session hook is registered: durable memory is turn-based because
 sessions may crash, disappear, or resume without a clean terminal event.
 
-The adapter is intentionally thin: Rúnir owns retrieval, extraction, ranking,
-and write arbitration. Hook failures are fail-open and silent unless
-RUNIR_DEBUG=1.
+Hook failures are fail-open and silent unless RUNIR_DEBUG=1.
 """
 
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import hashlib
 import json
 import os
@@ -34,7 +34,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator
 
 # Shared leaves live in lib/runir_core.py (path-loaded, no package install).
 _LIB = Path(__file__).resolve().parents[1] / "lib"
@@ -42,23 +42,21 @@ if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
 import runir_core as _core  # noqa: E402
 from runir_core import (  # noqa: E402
-    RECALL_FEEDBACK_PREFIX,
     RUNIR_BASE,
-    content_hash,
     env_float,
-    env_int,
     event_value,
     exclusive_lock,
     grok_home,
     normalize_content,
-    parse_recall_body,
-    read_dotenv_value,
+    read_dotenv_value as read_dotenv_value,
     read_json,
     resolve_credential,
-    selection_id,
     unwrap_user_query,
     write_json_atomic,
 )
+
+# Re-export for tests/headless that still import via the hook module.
+from runir_core import RECALL_FEEDBACK_PREFIX, content_hash, selection_id  # noqa: E402,F401
 
 
 def post_json(
@@ -90,9 +88,6 @@ RUNIR_CAPTURE_TIMEOUT = env_float("RUNIR_CAPTURE_TIMEOUT", 30.0)
 RUNIR_CAPTURE_WAIT_TIMEOUT = env_float("RUNIR_CAPTURE_WAIT_TIMEOUT", 32.0)
 RUNIR_CAPTURE_POLL_INTERVAL = env_float("RUNIR_CAPTURE_POLL_INTERVAL", 0.05)
 RUNIR_CAPTURE_STALE_S = env_float("RUNIR_CAPTURE_STALE_S", 5.0)
-RUNIR_BATCH_SIBLING_S = env_float("RUNIR_BATCH_SIBLING_S", 2.0)
-RUNIR_RECALL_DEDUPE_TTL_S = env_float("RUNIR_RECALL_DEDUPE_TTL_S", 3600.0)
-RUNIR_RECALL_DEDUPE_MAX = env_int("RUNIR_RECALL_DEDUPE_MAX", 32)
 RUNIR_SYNC_MIN_S = env_float("RUNIR_SYNC_MIN_S", 300.0)
 RUNIR_SYNC_LEASE_S = env_float("RUNIR_SYNC_LEASE_S", 60.0)
 RUNIR_SYNC_FIRST_TURN_TIMEOUT_S = env_float("RUNIR_SYNC_FIRST_TURN_TIMEOUT_S", 8.0)
@@ -128,10 +123,6 @@ def capture_marker_path(session_id: str) -> Path | None:
 
 def recall_state_path(session_id: str) -> Path | None:
     return state_path("recall", session_id)
-
-
-def dedupe_path(session_id: str) -> Path | None:
-    return state_path("dedupe", session_id)
 
 
 def trace_path(session_id: str) -> Path | None:
@@ -279,7 +270,7 @@ def write_json_state(path: Path | None, data: dict[str, Any]) -> None:
 
 @contextlib.contextmanager
 def exclusive_state_lock(path: Path | None) -> Iterator[None]:
-    """D2: advisory exclusive lock beside a state file (fcntl flock; local FS only)."""
+    """Advisory exclusive lock beside a state file (fcntl flock; local FS only)."""
     if path is not None:
         resolved_state_dir().mkdir(parents=True, exist_ok=True)
     with exclusive_lock(path):
@@ -305,63 +296,10 @@ def mark_capture(session_id: str, token: str, status: str) -> None:
     write_json_state(path, {"token": token, "status": status, "updatedAt": time.time()})
 
 
-def prune_dedupe(
-    entries: list[dict[str, Any]], now: float | None = None
-) -> list[dict[str, Any]]:
-    """Keep newest RUNIR_RECALL_DEDUPE_MAX entries within TTL."""
-    now = time.time() if now is None else now
-    ttl = RUNIR_RECALL_DEDUPE_TTL_S
-    kept: list[dict[str, Any]] = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        ts = entry.get("at")
-        digest = entry.get("hash")
-        if not isinstance(digest, str) or not digest:
-            continue
-        if not isinstance(ts, (int, float)):
-            continue
-        if now - float(ts) > ttl:
-            continue
-        kept.append({"hash": digest, "at": float(ts)})
-    kept.sort(key=lambda e: e["at"], reverse=True)
-    return kept[:RUNIR_RECALL_DEDUPE_MAX]
-
-
-def was_recently_delivered(session_id: str, digest: str) -> bool:
-    path = dedupe_path(session_id)
-    with exclusive_state_lock(path):
-        state = read_json_state(path) or {}
-        entries = state.get("entries")
-        if not isinstance(entries, list):
-            entries = []
-        pruned = prune_dedupe(entries)
-        if pruned != entries:
-            write_json_state(path, {"entries": pruned, "updatedAt": time.time()})
-        return any(e.get("hash") == digest for e in pruned)
-
-
-def remember_delivered_hash(session_id: str, digest: str) -> None:
-    path = dedupe_path(session_id)
-    with exclusive_state_lock(path):
-        state = read_json_state(path) or {}
-        entries = state.get("entries")
-        if not isinstance(entries, list):
-            entries = []
-        now = time.time()
-        entries = [
-            e for e in entries if isinstance(e, dict) and e.get("hash") != digest
-        ]
-        entries.append({"hash": digest, "at": now})
-        write_json_state(
-            path, {"entries": prune_dedupe(entries, now=now), "updatedAt": now}
-        )
-
-
 def write_recall_state(
     session_id: str,
     prompt_id: str,
-    context: str,
+    context: str = "",
     *,
     delivered: bool | None = None,
     content_hash_value: str | None = None,
@@ -370,12 +308,16 @@ def write_recall_state(
     memory_ids: list[str] | None = None,
     retrieval_trace_id: str | None = None,
 ) -> None:
+    """Persist turn state for capture (prompt). Context/identity optional (headless)."""
     path = recall_state_path(session_id)
+    # Default: empty context is already "delivered" (nothing for retired TUI transports).
+    if delivered is None:
+        delivered = not bool(context)
     payload: dict[str, Any] = {
         "schema": 2,
         "promptId": prompt_id,
-        "context": context,
-        "delivered": (not bool(context)) if delivered is None else delivered,
+        "context": context or "",
+        "delivered": delivered,
         "updatedAt": time.time(),
     }
     if content_hash_value:
@@ -390,109 +332,6 @@ def write_recall_state(
         payload["retrievalTraceId"] = retrieval_trace_id
     with exclusive_state_lock(path):
         write_json_state(path, payload)
-
-
-def pending_recall(event: dict[str, Any]) -> tuple[Path, dict[str, Any]] | None:
-    session_id = str(event_value(event, "sessionId", "session_id", default=""))
-    path = recall_state_path(session_id)
-    state = read_json_state(path)
-    if path is None or not state or state.get("delivered") is True:
-        return None
-    event_prompt_id = event_value(event, "promptId", "prompt_id")
-    state_prompt_id = state.get("promptId")
-    if event_prompt_id and state_prompt_id and event_prompt_id != state_prompt_id:
-        return None
-    context = state.get("context")
-    if not isinstance(context, str) or not context:
-        return None
-    return path, state
-
-
-def consume_recall(event: dict[str, Any]) -> str | None:
-    """D2: claim undelivered recall under exclusive lock; keep context for sibling re-deny."""
-    session_id = str(event_value(event, "sessionId", "session_id", default=""))
-    path = recall_state_path(session_id)
-    if path is None:
-        return None
-    with exclusive_state_lock(path):
-        state = read_json_state(path)
-        if not state or state.get("delivered") is True:
-            return None
-        event_prompt_id = event_value(event, "promptId", "prompt_id")
-        state_prompt_id = state.get("promptId")
-        if event_prompt_id and state_prompt_id and event_prompt_id != state_prompt_id:
-            return None
-        context = state.get("context")
-        if not isinstance(context, str) or not context:
-            return None
-        state["delivered"] = True
-        state["deliveredAt"] = time.time()
-        # Keep context so batch siblings can re-deny with the same payload (P).
-        write_json_state(path, state)
-        return context
-
-
-def sibling_recall_context(event: dict[str, Any]) -> str | None:
-    """P: re-deny batch siblings within RUNIR_BATCH_SIBLING_S of first delivery."""
-    session_id = str(event_value(event, "sessionId", "session_id", default=""))
-    path = recall_state_path(session_id)
-    if path is None:
-        return None
-    with exclusive_state_lock(path):
-        state = read_json_state(path)
-        if not state or state.get("delivered") is not True:
-            return None
-        event_prompt_id = event_value(event, "promptId", "prompt_id")
-        state_prompt_id = state.get("promptId")
-        if event_prompt_id and state_prompt_id and event_prompt_id != state_prompt_id:
-            return None
-        delivered_at = state.get("deliveredAt")
-        if not isinstance(delivered_at, (int, float)):
-            return None
-        if time.time() - float(delivered_at) > RUNIR_BATCH_SIBLING_S:
-            return None
-        context = state.get("context")
-        if not isinstance(context, str) or not context:
-            return None
-        return context
-
-
-def deliver_prompt_id(
-    event: dict[str, Any], session_id: str, digest: str | None = None
-) -> str | None:
-    """Attribute a deliver event to its turn.
-
-    Grok PreToolUse/Stop payloads carry no promptId, so /runir session buckets
-    every deliver under _none. Prefer the event value; else self-attribute from
-    the recall state that produced this context (consume_recall keeps promptId
-    after delivered=true). Fail-open: never raises; None when state is missing
-    or unreadable.
-
-    When the state records a contentHash it must match the delivered digest —
-    a newer turn overwriting state cannot steal attribution. States written
-    before contentHash existed are accepted.
-    """
-    try:
-        event_prompt_id = str(
-            event_value(event, "promptId", "prompt_id", default="")
-        ).strip()
-        if event_prompt_id:
-            return event_prompt_id
-        state = read_json_state(recall_state_path(session_id))
-        if not state:
-            return None
-        state_hash = state.get("contentHash")
-        if (
-            digest
-            and isinstance(state_hash, str)
-            and state_hash
-            and state_hash != digest
-        ):
-            return None
-        prompt_id = state.get("promptId")
-        return prompt_id.strip() or None if isinstance(prompt_id, str) else None
-    except Exception:
-        return None
 
 
 def wait_for_prior_capture(session_id: str) -> None:
@@ -578,6 +417,11 @@ def read_transcript_messages(transcript_path: str | None) -> list[dict[str, str]
 
 
 def handle_recall(event: dict[str, Any]) -> None:
+    """UPS path: prompt-only turn state. No TUI /hooks/recall HTTP (prompt-blind).
+
+    Capture still reads state["prompt"] (and optional identity if a future path
+    writes it). Wait for prior capture (D1) to avoid races with Stop capture.
+    """
     prompt = event_value(event, "prompt", default="")
     if not isinstance(prompt, str):
         return
@@ -590,189 +434,20 @@ def handle_recall(event: dict[str, Any]) -> None:
         )
         return
     wait_for_prior_capture(session_id)
-    payload = {
-        "prompt": prompt,
-        "userId": RUNIR_USER_ID,
-        "client": RUNIR_CLIENT,
-        "sessionId": session_id or None,
-        "path": event_value(event, "workspaceRoot", "workspace_root", "cwd"),
-    }
-    t0 = time.monotonic()
-    result = post_json(RUNIR_RECALL_URL, payload, RUNIR_RECALL_TIMEOUT)
-    duration_ms = int((time.monotonic() - t0) * 1000)
-    context = ""
-    http_status: int | None = None
-    if result is None:
-        # Network / transport failure — surface as kind=error; still fail-open state.
-        record_event(
-            session_id,
-            "error",
-            where="recall",
-            type="request_failed",
-            promptId=prompt_id or None,
-            durationMs=duration_ms,
-        )
-        write_recall_state(session_id, prompt_id, "", prompt=prompt)
-        record_event(
-            session_id,
-            "skip",
-            reason="request_failed",
-            promptId=prompt_id or None,
-            durationMs=duration_ms,
-        )
-        return
-    status, body = result
-    http_status = status
-    if not 200 <= status < 300:
-        debug(f"recall returned HTTP {status}")
-        record_event(
-            session_id,
-            "error",
-            where="recall",
-            type="http_error",
-            httpStatus=http_status,
-            promptId=prompt_id or None,
-            durationMs=duration_ms,
-        )
-        write_recall_state(session_id, prompt_id, "", prompt=prompt)
-        record_event(
-            session_id,
-            "skip",
-            reason="http_error",
-            httpStatus=http_status,
-            promptId=prompt_id or None,
-            durationMs=duration_ms,
-        )
-        return
-    parsed = parse_recall_body(body if isinstance(body, dict) else {})
-    context = parsed.context
-    memory_ids = list(parsed.memory_ids)
-    retrieval_trace_id = parsed.retrieval_trace_id
-    digest = content_hash(context) if context else ""
-    sel = selection_id(memory_ids, context) if context else ""
-    hash12 = digest[:12] if digest else None
-    selection12 = sel[:12] if sel else None
-    record_event(
-        session_id,
-        "recall",
-        promptId=prompt_id or None,
-        httpStatus=http_status,
-        contextChars=len(context),
-        hash12=hash12,
-        selection12=selection12,
-        retrievalTraceId=retrieval_trace_id or None,
-        durationMs=duration_ms,
-    )
-    # D3: suppress gate if same selection was recently delivered this session.
-    if context and session_id and was_recently_delivered(session_id, sel):
-        write_recall_state(
-            session_id,
-            prompt_id,
-            context,
-            delivered=True,
-            content_hash_value=digest,
-            prompt=prompt,
-            selection_id_value=sel,
-            memory_ids=memory_ids,
-            retrieval_trace_id=retrieval_trace_id or None,
-        )
-        debug(f"dedupe hit for session={session_id} selection={sel[:12]}")
-        record_event(
-            session_id,
-            "skip",
-            reason="dedupe",
-            promptId=prompt_id or None,
-            hash12=hash12,
-            selection12=selection12,
-            retrievalTraceId=retrieval_trace_id or None,
-            contextChars=len(context),
-        )
-        return
-    # Native baseline suppression: selection ⊆ session-start managed ids.
-    baseline_ids = read_baseline_ids(session_id)
-    native_suppress = os.environ.get("RUNIR_GROK_NATIVE_SUPPRESS", "1") != "0"
-    if (
-        context
-        and native_suppress
-        and memory_ids
-        and set(memory_ids) <= set(baseline_ids)
-    ):
-        write_recall_state(
-            session_id,
-            prompt_id,
-            context,
-            delivered=True,
-            content_hash_value=digest,
-            prompt=prompt,
-            selection_id_value=sel,
-            memory_ids=memory_ids,
-            retrieval_trace_id=retrieval_trace_id or None,
-        )
-        if session_id and sel:
-            remember_delivered_hash(session_id, sel)
-        record_event(
-            session_id,
-            "skip",
-            reason="native_baseline",
-            promptId=prompt_id or None,
-            hash12=hash12,
-            selection12=selection12,
-            retrievalTraceId=retrieval_trace_id or None,
-            contextChars=len(context),
-            channel="native",
-        )
-        return
     write_recall_state(
         session_id,
         prompt_id,
-        context,
-        content_hash_value=digest if digest else None,
+        "",
+        delivered=True,
         prompt=prompt,
-        selection_id_value=sel if sel else None,
-        memory_ids=memory_ids or None,
-        retrieval_trace_id=retrieval_trace_id or None,
     )
-    if not context:
-        record_event(
-            session_id,
-            "skip",
-            reason="no_context",
-            promptId=prompt_id or None,
-        )
-
-
-def _selection_from_state(session_id: str, context: str) -> str:
-    state = read_json_state(recall_state_path(session_id)) or {}
-    sel = state.get("selectionId")
-    if isinstance(sel, str) and sel:
-        return sel
-    return content_hash(context)
-
-
-def handle_pre_tool_use(event: dict[str, Any]) -> None:
-    context = consume_recall(event)
-    if not context:
-        context = sibling_recall_context(event)
-    if context:
-        session_id = str(event_value(event, "sessionId", "session_id", default=""))
-        sel = _selection_from_state(session_id, context) if session_id else content_hash(context)
-        if session_id:
-            remember_delivered_hash(session_id, sel)
-        json.dump(
-            {"decision": "deny", "reason": RECALL_FEEDBACK_PREFIX + context}, sys.stdout
-        )
-        # Host reads decision JSON before hook exit; flush before any LOCK_EX work.
-        sys.stdout.flush()
-        digest = content_hash(context)
-        record_event(
-            session_id,
-            "deliver",
-            channel="pre_tool_use",
-            contextChars=len(context),
-            hash12=digest[:12] if digest else None,
-            selection12=sel[:12] if sel else None,
-            promptId=deliver_prompt_id(event, session_id, digest),
-        )
+    record_event(
+        session_id,
+        "skip",
+        reason="prompt_only",
+        promptId=prompt_id or None,
+        channel="user_prompt_submit",
+    )
 
 
 def current_turn_messages(event: dict[str, Any]) -> list[dict[str, str]]:
@@ -817,7 +492,9 @@ def handle_capture(event: dict[str, Any], session_id: str, token: str) -> None:
                     replaced = True
                     break
             if not replaced:
-                messages = [{"role": "user", "content": state_prompt.strip()}] + messages
+                messages = [
+                    {"role": "user", "content": state_prompt.strip()}
+                ] + messages
         payload: dict[str, Any] = {
             "messages": messages,
             "userId": RUNIR_USER_ID,
@@ -866,51 +543,11 @@ def handle_capture(event: dict[str, Any], session_id: str, token: str) -> None:
 
 
 def handle_stop(event: dict[str, Any]) -> None:
+    """Capture-only Stop: no additionalContext / decision:block memory transport."""
     if event_value(event, "reason") != "end_turn":
         return
-    # Continuation after a prior Stop block must not re-burn a draft (≤1 draft).
-    # stopHookActive is set by the host when Stop previously blocked this turn.
-    # Under additional_context mode no re-burn occurs; guard is belt-and-braces.
-    if event_value(event, "stopHookActive", "stop_hook_active"):
-        detach_capture(event)
-        return
-    # First undelivered claim only — sibling re-deny is PreToolUse batch (P).
-    # Reusing sibling on Stop re-blocks continuations within RUNIR_BATCH_SIBLING_S.
-    context = consume_recall(event)
-    if context:
-        session_id = str(event_value(event, "sessionId", "session_id", default=""))
-        sel = _selection_from_state(session_id, context) if session_id else content_hash(context)
-        if session_id:
-            remember_delivered_hash(session_id, sel)
-        stop_mode = (os.environ.get("RUNIR_GROK_STOP_MODE") or "additional_context").strip()
-        if stop_mode == "block":
-            decision_obj: dict[str, Any] = {
-                "decision": "block",
-                "reason": RECALL_FEEDBACK_PREFIX + context,
-            }
-        else:
-            stop_mode = "additional_context"
-            decision_obj = {
-                "hookSpecificOutput": {
-                    "hookEventName": "Stop",
-                    "additionalContext": RECALL_FEEDBACK_PREFIX + context,
-                }
-            }
-        json.dump(decision_obj, sys.stdout)
-        # Host reads decision JSON before hook exit; flush before any LOCK_EX work.
-        sys.stdout.flush()
-        digest = content_hash(context)
-        record_event(
-            session_id,
-            "deliver",
-            channel="stop",
-            mode=stop_mode,
-            contextChars=len(context),
-            hash12=digest[:12] if digest else None,
-            selection12=sel[:12] if sel else None,
-            promptId=deliver_prompt_id(event, session_id, digest),
-        )
-        return
+    # stopHookActive: host may re-enter after a prior block; still capture once.
+    # No memory delivery — retired transports cannot re-burn drafts.
     detach_capture(event)
 
 
@@ -1064,10 +701,14 @@ def should_sync(session_id: str) -> bool:
             sessions = []
         first_of_session = bool(digest) and digest not in sessions
         last = state.get("lastSyncAt")
-        recent = isinstance(last, (int, float)) and last > 0 and (now - float(last)) < RUNIR_SYNC_MIN_S
+        recent = (
+            isinstance(last, (int, float))
+            and last > 0
+            and (now - float(last)) < RUNIR_SYNC_MIN_S
+        )
         inflight_until = state.get("inFlightUntil")
-        in_flight = (
-            isinstance(inflight_until, (int, float)) and now < float(inflight_until)
+        in_flight = isinstance(inflight_until, (int, float)) and now < float(
+            inflight_until
         )
         if in_flight and not first_of_session:
             return False
@@ -1218,7 +859,8 @@ def main() -> int:
             handle_recall(event)
             maybe_sync_bridge(event)
         elif name == "pre_tool_use":
-            handle_pre_tool_use(event)
+            # Retired deny-for-memory transport: inert (no deny JSON).
+            debug("pre_tool_use ignored (deny transport retired)")
         elif name == "stop":
             handle_stop(event)
     except Exception as exc:

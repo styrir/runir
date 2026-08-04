@@ -8,7 +8,7 @@ Packaged Rúnir client integrations. Clients invoke the HTTP service and must re
 
 - `runir-claudecode/`: Claude Code plugin (supported beta/1.0 client). Ships bundled `mcp/runir-mcp.mjs` + `.mcp.json`.
 - `runir-codex/`: Codex plugin (supported beta/1.0 client). Ships the same byte-identical `mcp/runir-mcp.mjs` + `.mcp.json`.
-- `runir-grok/`: Grok lifecycle adapter (hooks SoT + user-hooks template + install/verify/memory_bridge). No marketplace — deploy with `scripts/install_hooks.py --user` to `~/.grok/hooks/`. Hybrid memory: correction gate (D1–D4+P) + write-only bridge into `~/.grok/memory/` + idempotent `[memory]` in `config.toml`.
+- `runir-grok/`: Grok lifecycle adapter with two honestly separated paths. The TUI floor is UserPromptSubmit + capture-only Stop, a prompt-blind/session-stale global `MEMORY.md` bridge, and explicit `runir-recall`; PreToolUse deny and Stop `additionalContext` memory transports are retired. The headless client performs pre-inference recall → `grok --prompt-json` → capture with verified Grok session identity. No marketplace — deploy hooks with `scripts/install_hooks.py --user`.
 - `runir-pi/`: Pi coding-agent extension (`runir-memory.ts` + OM lanes + native `runir_store`). Install via `pi install` path package; not a Claude/Codex marketplace plugin.
 - Canonical MCP source: `src/mcp/` (outside `plugins/*`). Emit with `npm run build:runir-mcp` — do not create `plugins/runir-mcp`.
 

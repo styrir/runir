@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+
 import pytest
 
 EVENTS = (
@@ -17,7 +18,6 @@ EVENTS = (
 def test_gate_disable_inert_for_event(hook, monkeypatch, capsys, event_name):
     monkeypatch.setattr(hook, "RUNIR_USER_ID", "u-gate")
     monkeypatch.setenv("RUNIR_GROK_DISABLE_GATE", "1")
-    # Would write state / emit deny if handlers ran.
     event = {
         "hookEventName": event_name,
         "sessionId": "s-gate-off",
@@ -42,18 +42,16 @@ def test_gate_disable_inert_for_event(hook, monkeypatch, capsys, event_name):
     assert after == before
 
 
-def test_gate_unset_pre_tool_use_still_denies(hook, monkeypatch, capsys):
-    """Control: with env unset, deny path still emits JSON (not over-suppressed)."""
+def test_gate_unset_pre_tool_use_never_denies(hook, monkeypatch, capsys):
+    """Control (Rúnir-ysk): with gate env unset, PreToolUse still emits no deny."""
     monkeypatch.setattr(hook, "RUNIR_USER_ID", "u-gate")
     monkeypatch.delenv("RUNIR_GROK_DISABLE_GATE", raising=False)
-    # Seed pending recall so pre_tool_use has something to deliver.
     sid = "s-gate-on"
-    context = "seeded-memory-for-deny"
     hook.write_recall_state(
         sid,
         "p1",
-        context,
-        content_hash_value=hook.content_hash(context),
+        "seeded-memory-for-deny",
+        content_hash_value=hook.content_hash("seeded-memory-for-deny"),
     )
     event = {
         "hookEventName": "pre_tool_use",
@@ -67,24 +65,19 @@ def test_gate_unset_pre_tool_use_still_denies(hook, monkeypatch, capsys):
     code = hook.main()
     out = capsys.readouterr().out
     assert code == 0
-    body = json.loads(out)
-    assert body["decision"] == "deny"
-    assert context in body["reason"]
-    assert hook.RECALL_FEEDBACK_PREFIX in body["reason"]
+    assert out.strip() == ""
+    assert "deny" not in out
 
 
 def test_gate_disable_requires_exact_one(hook, monkeypatch, capsys):
-    """Truthiness is exactly '1' (RUNIR_DEBUG idiom), not other truthy strings."""
+    """Truthiness is exactly '1' (RUNIR_DEBUG idiom), not other truthy strings.
+
+    With 'true' the gate is not disabled, but PreToolUse still must not deny
+    (transport retired). UPS may write state — only assert no deny stdout.
+    """
     monkeypatch.setattr(hook, "RUNIR_USER_ID", "u-gate")
     monkeypatch.setenv("RUNIR_GROK_DISABLE_GATE", "true")
     sid = "s-gate-truthy"
-    context = "still-delivered"
-    hook.write_recall_state(
-        sid,
-        "p2",
-        context,
-        content_hash_value=hook.content_hash(context),
-    )
     import sys as real_sys
 
     monkeypatch.setattr(
@@ -104,4 +97,4 @@ def test_gate_disable_requires_exact_one(hook, monkeypatch, capsys):
     code = hook.main()
     out = capsys.readouterr().out
     assert code == 0
-    assert "deny" in out
+    assert "deny" not in out
