@@ -161,7 +161,8 @@ Flow:
    `RUNIR_GROK_DISABLE_GATE=1` makes installed TUI hooks no-op for this child
    (including first-turn native publish). Credentials (`RUNIR_API_KEY`,
    `RUNIR_ENV_FILE`) are stripped from the child env.
-5. Parses Grok `sessionId` + `modelUsage.*.modelCalls`, then requires Grok's
+5. Parses Grok `sessionId` + `modelUsage.*.modelCalls`, preferring the summed
+   raw `modelUsage` counters over compatibility fallbacks, then requires Grok's
    returned `sessionId` to exactly match the UUID used for recall. A missing or
    mismatched ID fails closed before capture. Expect `modelCalls == 1` when no
    gate re-burn or tool loop occurs under `--max-turns 1`.
@@ -193,9 +194,12 @@ Flow:
 | Key | Meaning |
 |-----|---------|
 | `sessionId` | Verified real Grok session UUID, shared by recall + Grok + capture and usable with `--resume` |
-| `modelCalls` | Summed model calls (expect `1` for single-turn inject) |
+| `modelCalls` | Selected model-call count (summed raw `modelUsage.*.modelCalls` when present; existing top-level fallbacks remain) |
+| `modelCallsSource` | Exact source used: `modelUsage`, `modelUsageInvalid`, `modelCalls`, `num_turns`, or `unavailable` |
+| `modelUsage` | Raw Grok `modelUsage` object when present, otherwise `null` |
 | `text` | Assistant text |
 | `memoryInjected` | Whether recall returned non-empty context |
+| `promptBlockOrder` | Non-secret block labels: `["memory", "user"]` when memory was injected, otherwise `["user"]` |
 | `retrievalTraceId` | Trace id from recall (empty when none) |
 | `memoryIds` | Selected memory ids from recall (list; may be empty) |
 | `stopReason` | Grok stop reason if present |
@@ -225,14 +229,18 @@ until the CLI gains a path/`@file` form.
 | `RUNIR_SYNC_LEASE_S` | In-flight lease after hook claims a later-turn sync (default 60) |
 | `RUNIR_SYNC_FIRST_TURN_TIMEOUT_S` | Bound for synchronous first-turn `sync_once` (default 8; UPS timeout is 45s) |
 | `RUNIR_E2E=1` | Opt-in live canary `tests/test_e2e_headless_live.py` |
+| `RUNIR_E2E_EXPECTED_HEAD` | Required full Git commit for the live canary; the checkout must match exactly and be clean, including no untracked non-ignored files |
 
 ## Tests
 
 ```bash
 pytest plugins/runir-grok/tests -q
 # Isolated GROK_HOME canaries (no real ~/.grok writes) are included above.
-# Live canary (needs running Rúnir + grok + credentials):
-RUNIR_E2E=1 pytest plugins/runir-grok/tests/test_e2e_headless_live.py -q
+# Live canary (needs running Rúnir + grok + credentials). Run it only from a
+# clean checkout; untracked non-ignored files intentionally fail the proof:
+RUNIR_E2E=1 \
+RUNIR_E2E_EXPECTED_HEAD="$(git rev-parse HEAD)" \
+pytest plugins/runir-grok/tests/test_e2e_headless_live.py -q -s
 # The live canary hard-requires fresh + resumed receipt readback for the exact
 # sessionId, retrievalTraceId, memoryIds, original prompt, and final answer.
 ```
