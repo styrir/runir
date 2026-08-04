@@ -500,6 +500,48 @@ describe("recall selected[] contract", () => {
     expect(mocks.resolveActiveHexis).not.toHaveBeenCalled();
   });
 
+  it("preserves legacy session/Hexis resolution before a no-normalizable-messages skip", async () => {
+    const order: string[] = [];
+    mocks.resolveUserId.mockReturnValue("owner");
+    mocks.resolveCanonicalContextIdentity.mockReturnValue(CANONICAL_IDENTITY);
+    mocks.resolveRunirSession.mockImplementation(async () => {
+      order.push("session");
+      return {
+        id: "runir-session-1",
+        userId: "owner",
+        projectIdentitySource: "session",
+        nativeSessionAliases: [],
+        status: "active",
+        openedAt: "2026-08-04T00:00:00.000Z",
+        lastSeenAt: "2026-08-04T00:00:00.000Z",
+        resolverKey: "resolver",
+      };
+    });
+    mocks.resolveActiveHexisCached.mockImplementation(async (_input, resolver) => {
+      order.push("hexis");
+      return resolver();
+    });
+    mocks.normalizeCaptureMessages.mockImplementation(() => {
+      order.push("normalize");
+      return [];
+    });
+
+    const app = makeApp();
+    const res = await postCapture(app, {
+      userId: "owner",
+      sessionId: "sess-test",
+      hexis: { label: "legacy-hint" },
+      messages: [{ role: "tool", content: "tool-only noise" }],
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ skipped: true, reason: "no normalizable messages" });
+    expect(order).toEqual(["session", "hexis", "normalize"]);
+    expect(mocks.resolveActiveHexis).toHaveBeenCalled();
+    expect(mocks.accrueUsefulnessFromCapture).not.toHaveBeenCalled();
+    expect(mocks.buildCaptureContextPacket).not.toHaveBeenCalled();
+  });
+
   it("preserves legacy session/Hexis then usefulness then context ordering", async () => {
     const order: string[] = [];
     mocks.resolveUserId.mockReturnValue("owner");
