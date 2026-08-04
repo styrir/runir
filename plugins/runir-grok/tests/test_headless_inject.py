@@ -156,6 +156,77 @@ def test_parse_grok_json_object(inject):
     assert inject.extract_model_calls(obj) == 1
 
 
+def test_extract_model_calls_prefers_summed_model_usage(inject):
+    result = {
+        "modelCalls": 99,
+        "num_turns": 88,
+        "modelUsage": {
+            "grok-a": {"modelCalls": 1, "inputTokens": 12},
+            "grok-b": {"modelCalls": 2},
+            "ignored": {"inputTokens": 4},
+        },
+    }
+    assert inject.extract_model_calls_with_source(result) == (3, "modelUsage")
+    assert inject.extract_model_calls(result) == 3
+
+
+@pytest.mark.parametrize(
+    "value",
+    [True, -1, "1"],
+)
+def test_extract_model_calls_rejects_invalid_model_usage_value(inject, value):
+    result = {
+        "modelCalls": 99,
+        "modelUsage": {"grok": {"modelCalls": value}},
+    }
+    assert inject.sum_model_usage_calls(result["modelUsage"]) == (None, True)
+    assert inject.extract_model_calls_with_source(result) == (
+        None,
+        "modelUsageInvalid",
+    )
+
+
+def test_extract_model_calls_rejects_mixed_valid_and_invalid_usage(inject):
+    result = {
+        "modelCalls": 99,
+        "modelUsage": {
+            "grok-a": {"modelCalls": 1},
+            "grok-b": {"modelCalls": False},
+        },
+    }
+    assert inject.sum_model_usage_calls(result["modelUsage"]) == (None, True)
+    assert inject.extract_model_calls_with_source(result) == (
+        None,
+        "modelUsageInvalid",
+    )
+
+
+def test_extract_model_calls_falls_back_when_usage_rows_have_no_field(inject):
+    result = {
+        "modelCalls": 4,
+        "modelUsage": {
+            "grok-a": {"inputTokens": 12},
+            "grok-b": {},
+            "metadata": "ignored",
+        },
+    }
+    assert inject.sum_model_usage_calls(result["modelUsage"]) == (None, False)
+    assert inject.extract_model_calls_with_source(result) == (4, "modelCalls")
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        ({"modelCalls": 4, "num_turns": 5}, (4, "modelCalls")),
+        ({"num_turns": 5}, (5, "num_turns")),
+        ({"modelUsage": {"grok": {}}, "modelCalls": 4}, (4, "modelCalls")),
+        ({}, (None, "unavailable")),
+    ],
+)
+def test_extract_model_calls_fallback_sources(inject, result, expected):
+    assert inject.extract_model_calls_with_source(result) == expected
+
+
 def test_parse_grok_jsonl_takes_last(inject):
     lines = [
         json.dumps({"type": "text", "data": "partial"}),
@@ -248,7 +319,10 @@ def test_run_inject_recall_fail_open_still_zero(inject, monkeypatch, capsys):
 
     assert str(UUID(out["sessionId"])) == out["sessionId"]
     assert out["modelCalls"] == 1
+    assert out["modelCallsSource"] == "modelUsage"
+    assert out["modelUsage"] == {"m": {"modelCalls": 1}}
     assert out["memoryInjected"] is False
+    assert out["promptBlockOrder"] == ["user"]
     assert "runirSessionId" not in out
     assert out["retrievalTraceId"] == ""
     assert out["memoryIds"] == []
@@ -322,7 +396,128 @@ def test_run_inject_memory_first_and_capture(inject, monkeypatch, capsys):
     assert out["retrievalTraceId"] == "trace-abc"
     assert out["memoryIds"] == ["mem-1", "mem-2"]
     assert out["memoryInjected"] is True
+    assert out["promptBlockOrder"] == ["memory", "user"]
     assert out["modelCalls"] == 1
+    assert out["modelCallsSource"] == "modelUsage"
+    assert out["modelUsage"] == {"m": {"modelCalls": 1}}
+
+
+def test_run_inject_prompt_order_is_positional_on_text_collision(
+    inject, monkeypatch, capsys
+):
+    monkeypatch.setenv("RUNIR_USER_ID", "u1")
+    memory = "collision-memory"
+    prompt = inject.core.RECALL_FEEDBACK_PREFIX + memory
+    monkeypatch.setattr(
+        inject.core,
+        "recall_result",
+        lambda *a, **k: _rr(inject.core, memory),
+    )
+
+    def ok(argv, env, timeout=None):
+        fresh_sid = argv[argv.index("--session-id") + 1]
+        blocks = json.loads(argv[argv.index("--prompt-json") + 1])
+        assert blocks[0]["text"] == blocks[1]["text"] == prompt
+        return inject._ProcResult(
+            0,
+            stdout=json.dumps(
+                {
+                    "text": "answer",
+                    "sessionId": fresh_sid,
+                    "modelUsage": {"m": {"modelCalls": 1}},
+                }
+            ),
+        )
+
+    code = inject.run_inject(
+        prompt,
+        grok_runner=ok,
+        no_capture=True,
+        as_json=True,
+    )
+    assert code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["promptBlockOrder"] == ["memory", "user"]
+
+
+def test_run_inject_json_prefers_raw_model_usage_over_top_level(
+    inject, monkeypatch, capsys
+):
+    monkeypatch.setenv("RUNIR_USER_ID", "u1")
+    monkeypatch.setattr(
+        inject.core,
+        "recall_result",
+        lambda *a, **k: _rr(inject.core, ""),
+    )
+
+    def ok(argv, env, timeout=None):
+        fresh_sid = argv[argv.index("--session-id") + 1]
+        return inject._ProcResult(
+            0,
+            stdout=json.dumps(
+                {
+                    "text": "answer",
+                    "sessionId": fresh_sid,
+                    "modelCalls": 19,
+                    "num_turns": 23,
+                    "modelUsage": {
+                        "grok-a": {"modelCalls": 1, "inputTokens": 7},
+                        "grok-b": {"modelCalls": 2, "outputTokens": 3},
+                    },
+                }
+            ),
+        )
+
+    code = inject.run_inject(
+        "source precedence",
+        grok_runner=ok,
+        no_capture=True,
+        as_json=True,
+    )
+    assert code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["modelCalls"] == 3
+    assert out["modelCallsSource"] == "modelUsage"
+    assert out["modelUsage"] == {
+        "grok-a": {"modelCalls": 1, "inputTokens": 7},
+        "grok-b": {"modelCalls": 2, "outputTokens": 3},
+    }
+    assert out["promptBlockOrder"] == ["user"]
+
+
+def test_run_inject_json_preserves_model_calls_fallback(inject, monkeypatch, capsys):
+    monkeypatch.setenv("RUNIR_USER_ID", "u1")
+    monkeypatch.setattr(
+        inject.core,
+        "recall_result",
+        lambda *a, **k: _rr(inject.core, ""),
+    )
+
+    def ok(argv, env, timeout=None):
+        fresh_sid = argv[argv.index("--session-id") + 1]
+        return inject._ProcResult(
+            0,
+            stdout=json.dumps(
+                {
+                    "text": "answer",
+                    "sessionId": fresh_sid,
+                    "modelCalls": 2,
+                }
+            ),
+        )
+
+    code = inject.run_inject(
+        "fallback",
+        grok_runner=ok,
+        no_capture=True,
+        as_json=True,
+    )
+    assert code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["modelCalls"] == 2
+    assert out["modelCallsSource"] == "modelCalls"
+    assert out["modelUsage"] is None
+    assert out["promptBlockOrder"] == ["user"]
 
 
 def test_run_inject_resume_reuses_real_grok_session(inject, monkeypatch, capsys):

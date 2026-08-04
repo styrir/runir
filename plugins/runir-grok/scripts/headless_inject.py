@@ -125,23 +125,57 @@ def parse_grok_json(stdout: str) -> dict[str, Any] | None:
     return last
 
 
-def extract_model_calls(result: dict[str, Any]) -> int | None:
-    """Sum modelUsage.*.modelCalls; fall back to top-level modelCalls/num_turns."""
-    if "modelCalls" in result and isinstance(result["modelCalls"], int):
-        return result["modelCalls"]
-    usage = result.get("modelUsage")
-    if isinstance(usage, dict) and usage:
-        total = 0
-        found = False
-        for row in usage.values():
-            if isinstance(row, dict) and isinstance(row.get("modelCalls"), int):
-                total += row["modelCalls"]
-                found = True
-        if found:
-            return total
+def sum_model_usage_calls(usage: Any) -> tuple[int | None, bool]:
+    """Return (strict sum, fields present); None + present means malformed."""
+    if not isinstance(usage, dict):
+        return None, False
+    total = 0
+    found = False
+    for row in usage.values():
+        if not isinstance(row, dict) or "modelCalls" not in row:
+            continue
+        found = True
+        value = row["modelCalls"]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None, True
+        total += value
+    return (total, True) if found else (None, False)
+
+
+def extract_model_calls_with_source(
+    result: dict[str, Any],
+) -> tuple[int | None, str]:
+    """Return model calls plus the exact Grok result field used as evidence."""
+    usage_total, usage_present = sum_model_usage_calls(result.get("modelUsage"))
+    if usage_present:
+        if usage_total is None:
+            return None, "modelUsageInvalid"
+        return usage_total, "modelUsage"
+    if isinstance(result.get("modelCalls"), int):
+        return result["modelCalls"], "modelCalls"
     if isinstance(result.get("num_turns"), int):
-        return result["num_turns"]
-    return None
+        return result["num_turns"], "num_turns"
+    return None, "unavailable"
+
+
+def extract_model_calls(result: dict[str, Any]) -> int | None:
+    """Compatibility helper returning only the selected model call count."""
+    return extract_model_calls_with_source(result)[0]
+
+
+def prompt_block_order(
+    blocks: list[dict[str, str]],
+    *,
+    memory_injected: bool,
+) -> list[str]:
+    """Non-secret labels derived from the structural prompt block positions."""
+    if memory_injected:
+        expected = ["memory", "user"]
+    else:
+        expected = ["user"]
+    if len(blocks) <= len(expected):
+        return expected[: len(blocks)]
+    return expected + ["unknown"] * (len(blocks) - len(expected))
 
 
 def extract_assistant_text(result: dict[str, Any]) -> str:
@@ -289,7 +323,10 @@ def run_inject(
                 file=sys.stderr,
             )
             return 4
-        model_calls = extract_model_calls(result)
+        model_calls, model_calls_source = extract_model_calls_with_source(result)
+        raw_model_usage = result.get("modelUsage")
+        if not isinstance(raw_model_usage, dict):
+            raw_model_usage = None
         assistant = extract_assistant_text(result)
 
         if not no_capture and assistant:
@@ -315,8 +352,14 @@ def run_inject(
         out = {
             "sessionId": session_id,
             "modelCalls": model_calls,
+            "modelCallsSource": model_calls_source,
+            "modelUsage": raw_model_usage,
             "text": assistant,
             "memoryInjected": bool(memory),
+            "promptBlockOrder": prompt_block_order(
+                blocks,
+                memory_injected=bool(memory),
+            ),
             "retrievalTraceId": recall.retrieval_trace_id or "",
             "memoryIds": list(recall.memory_ids),
             "stopReason": result.get("stopReason"),

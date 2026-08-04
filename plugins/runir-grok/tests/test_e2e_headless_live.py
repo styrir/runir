@@ -19,7 +19,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import pytest
 
@@ -29,7 +29,7 @@ INSTALL = PLUGIN_ROOT / "scripts" / "install_hooks.py"
 LIB = PLUGIN_ROOT / "lib"
 HOOK_PY = PLUGIN_ROOT / "hooks" / "runir-grok.py"
 
-pytestmark = pytest.mark.skipif(
+LIVE_E2E_SKIP = pytest.mark.skipif(
     os.environ.get("RUNIR_E2E") != "1",
     reason="set RUNIR_E2E=1 for live headless canary",
 )
@@ -123,28 +123,109 @@ def _seed_isolated_grok_home(tmp: Path) -> Path:
     return grok_home
 
 
-def _configured_endpoint_origin(core) -> str:
-    for key, default in (
-        ("RUNIR_RECALL_URL", core.DEFAULT_RECALL_URL),
-        ("RUNIR_CAPTURE_URL", core.DEFAULT_CAPTURE_URL),
-    ):
-        endpoint = os.environ.get(key) or default
-        parsed = urlparse(endpoint)
-        if parsed.scheme and parsed.netloc:
-            return f"{parsed.scheme}://{parsed.netloc}"
-    return (os.environ.get("RUNIR_BASE") or core.RUNIR_BASE).rstrip("/")
+def _configured_capture_url(core) -> str:
+    return os.environ.get("RUNIR_CAPTURE_URL", core.DEFAULT_CAPTURE_URL).strip()
 
 
-def _read_trace(core, *, trace_id: str, user_id: str, api_key: str | None) -> dict:
-    base = _configured_endpoint_origin(core)
-    url = f"{base}/hooks/traces/{quote(trace_id, safe='')}?userId={quote(user_id, safe='')}"
-    result = core.get_json(url, timeout=20.0, api_key=api_key)
+def _capture_and_trace_urls(core, *, trace_id: str, user_id: str) -> tuple[str, str]:
+    capture_url = _configured_capture_url(core)
+    parsed = urlsplit(capture_url)
+    assert parsed.scheme and parsed.netloc, (
+        f"RUNIR_CAPTURE_URL must be absolute: {capture_url!r}"
+    )
+    assert parsed.username is None and parsed.password is None, (
+        "RUNIR_CAPTURE_URL must not contain embedded credentials"
+    )
+    assert not parsed.query and not parsed.fragment, (
+        "RUNIR_CAPTURE_URL must not contain query or fragment components"
+    )
+    capture_path = parsed.path
+    suffix = "/hooks/capture"
+    assert capture_path.endswith(suffix), (
+        f"RUNIR_CAPTURE_URL path must end in {suffix}: {capture_url!r}"
+    )
+    prefix = capture_path[: -len(suffix)]
+    trace_path = f"{prefix}/hooks/traces/{quote(trace_id, safe='')}"
+    trace_query = f"userId={quote(user_id, safe='')}"
+    normalized_capture_url = urlunsplit(
+        (parsed.scheme, parsed.netloc, capture_path, "", "")
+    )
+    trace_url = urlunsplit((parsed.scheme, parsed.netloc, trace_path, trace_query, ""))
+    return normalized_capture_url, trace_url
+
+
+def test_capture_trace_url_preserves_base_path(monkeypatch):
+    class Core:
+        DEFAULT_CAPTURE_URL = "http://127.0.0.1:7700/hooks/capture"
+
+    monkeypatch.setenv(
+        "RUNIR_CAPTURE_URL",
+        "https://runir.example.test/base/v1/hooks/capture",
+    )
+    capture_url, trace_url = _capture_and_trace_urls(
+        Core,
+        trace_id="trace/with spaces",
+        user_id="owner+proof@example.test",
+    )
+    assert capture_url == "https://runir.example.test/base/v1/hooks/capture"
+    assert trace_url == (
+        "https://runir.example.test/base/v1/hooks/traces/trace%2Fwith%20spaces"
+        "?userId=owner%2Bproof%40example.test"
+    )
+
+
+def test_capture_trace_url_rejects_non_capture_path(monkeypatch):
+    class Core:
+        DEFAULT_CAPTURE_URL = "http://127.0.0.1:7700/hooks/capture"
+
+    monkeypatch.setenv(
+        "RUNIR_CAPTURE_URL",
+        "https://runir.example.test/base/v1/hooks/recall",
+    )
+    with pytest.raises(AssertionError, match="must end in /hooks/capture"):
+        _capture_and_trace_urls(Core, trace_id="trace-1", user_id="owner")
+
+
+def test_capture_trace_url_rejects_embedded_credentials(monkeypatch):
+    class Core:
+        DEFAULT_CAPTURE_URL = "http://127.0.0.1:7700/hooks/capture"
+
+    monkeypatch.setenv(
+        "RUNIR_CAPTURE_URL",
+        "https://user:secret@runir.example.test/hooks/capture",
+    )
+    with pytest.raises(AssertionError, match="must not contain embedded credentials"):
+        _capture_and_trace_urls(Core, trace_id="trace-1", user_id="owner")
+
+
+def test_capture_trace_url_rejects_empty_configured_value(monkeypatch):
+    class Core:
+        DEFAULT_CAPTURE_URL = "http://127.0.0.1:7700/hooks/capture"
+
+    monkeypatch.setenv("RUNIR_CAPTURE_URL", "")
+    with pytest.raises(AssertionError, match="must be absolute"):
+        _capture_and_trace_urls(Core, trace_id="trace-1", user_id="owner")
+
+
+def _read_trace(
+    core,
+    *,
+    trace_id: str,
+    user_id: str,
+    api_key: str | None,
+) -> tuple[dict, str]:
+    _capture_url, trace_url = _capture_and_trace_urls(
+        core,
+        trace_id=trace_id,
+        user_id=user_id,
+    )
+    result = core.get_json(trace_url, timeout=20.0, api_key=api_key)
     assert result, f"trace read failed for {trace_id!r}"
     status, body = result
     assert 200 <= status < 300, f"trace read status={status}: {body!r}"
     trace = body.get("trace")
     assert isinstance(trace, dict), f"trace read missing trace object: {body!r}"
-    return trace
+    return trace, trace_url
 
 
 def _assert_capture_receipt(
@@ -154,17 +235,20 @@ def _assert_capture_receipt(
     prompt: str,
     user_id: str,
     api_key: str | None,
-) -> None:
+) -> tuple[dict, str]:
     trace_id = result.get("retrievalTraceId")
     assert trace_id, f"missing retrievalTraceId: {result!r}"
     expected_memory_ids = list(result.get("memoryIds") or [])
     assert expected_memory_ids, f"expected live recall memoryIds: {result!r}"
 
-    trace = _read_trace(
+    trace, trace_url = _read_trace(
         core,
         trace_id=trace_id,
         user_id=user_id,
         api_key=api_key,
+    )
+    assert trace.get("id") == trace_id, (
+        f"trace readback id mismatch: expected {trace_id!r}, got {trace!r}"
     )
     receipt = trace.get("captureReceipt")
     assert isinstance(receipt, dict), f"capture receipt not persisted: {trace!r}"
@@ -176,6 +260,7 @@ def _assert_capture_receipt(
     assert trace.get("sessionId") == result.get("sessionId")
     assert trace.get("prompt") == prompt
     assert [item.get("id") for item in trace.get("items") or []] == expected_memory_ids
+    return trace, trace_url
 
 
 def _seed_fact(
@@ -187,8 +272,15 @@ def _seed_fact(
     path: str,
     api_key: str | None,
 ) -> dict:
+    capture_url = _configured_capture_url(core)
+    normalized_capture_url, _trace_url = _capture_and_trace_urls(
+        core,
+        trace_id="seed-endpoint-validation",
+        user_id=user_id,
+    )
+    assert capture_url == normalized_capture_url
     result = core.post_json(
-        os.environ.get("RUNIR_CAPTURE_URL", core.DEFAULT_CAPTURE_URL),
+        capture_url,
         {
             "messages": messages,
             "userId": user_id,
@@ -206,6 +298,121 @@ def _seed_fact(
     assert "error" not in body, f"seed capture error: {body!r}"
     assert body.get("factsFound", 0) > 0, f"seed capture extracted no facts: {body!r}"
     return body
+
+
+def _repo_state() -> tuple[str, str, bool]:
+    repo_root = PLUGIN_ROOT.parents[1]
+    expected_head = (os.environ.get("RUNIR_E2E_EXPECTED_HEAD") or "").strip()
+    assert expected_head, "RUNIR_E2E_EXPECTED_HEAD is required for live E2E"
+
+    head_proc = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert head_proc.returncode == 0, f"git rev-parse failed: {head_proc.stderr!r}"
+    head = head_proc.stdout.strip()
+    assert head == expected_head, (
+        f"repo HEAD mismatch: expected {expected_head!r}, got {head!r}"
+    )
+
+    status_proc = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert status_proc.returncode == 0, f"git status failed: {status_proc.stderr!r}"
+    clean = not bool(status_proc.stdout)
+    assert clean, f"live E2E requires a clean Git worktree: {status_proc.stdout!r}"
+    return head, expected_head, clean
+
+
+def _strict_model_usage_calls(inject, result: dict) -> int:
+    usage = result.get("modelUsage")
+    assert isinstance(usage, dict), f"live proof requires raw modelUsage: {result!r}"
+    total, fields_present = inject.sum_model_usage_calls(usage)
+    assert fields_present, f"live proof requires modelUsage modelCalls: {result!r}"
+    assert total is not None, f"live proof rejects malformed modelUsage: {result!r}"
+    return total
+
+
+def test_repo_state_requires_expected_head(monkeypatch):
+    monkeypatch.delenv("RUNIR_E2E_EXPECTED_HEAD", raising=False)
+    with pytest.raises(AssertionError, match="is required"):
+        _repo_state()
+
+
+def test_repo_state_rejects_head_mismatch_before_status(monkeypatch):
+    expected_head = "a" * 40
+    actual_head = "b" * 40
+    monkeypatch.setenv("RUNIR_E2E_EXPECTED_HEAD", expected_head)
+    seen = []
+
+    def fake_run(argv, **kwargs):
+        seen.append(argv)
+        assert argv == ["git", "rev-parse", "HEAD"]
+        return subprocess.CompletedProcess(argv, 0, f"{actual_head}\n", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(AssertionError, match="repo HEAD mismatch"):
+        _repo_state()
+    assert seen == [["git", "rev-parse", "HEAD"]]
+
+
+def test_repo_state_requires_clean_worktree_including_untracked(monkeypatch):
+    expected_head = "a" * 40
+    monkeypatch.setenv("RUNIR_E2E_EXPECTED_HEAD", expected_head)
+    seen = []
+
+    def fake_run(argv, **kwargs):
+        seen.append(argv)
+        if argv == ["git", "rev-parse", "HEAD"]:
+            return subprocess.CompletedProcess(argv, 0, f"{expected_head}\n", "")
+        assert argv == ["git", "status", "--porcelain"]
+        return subprocess.CompletedProcess(argv, 0, "?? live-proof.json\n", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(AssertionError, match="clean Git worktree"):
+        _repo_state()
+    assert seen == [
+        ["git", "rev-parse", "HEAD"],
+        ["git", "status", "--porcelain"],
+    ]
+
+
+def test_repo_state_returns_required_exact_match(monkeypatch):
+    expected_head = "b" * 40
+    monkeypatch.setenv("RUNIR_E2E_EXPECTED_HEAD", expected_head)
+
+    def fake_run(argv, **kwargs):
+        if argv == ["git", "rev-parse", "HEAD"]:
+            return subprocess.CompletedProcess(argv, 0, f"{expected_head}\n", "")
+        assert argv == ["git", "status", "--porcelain"]
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert _repo_state() == (expected_head, expected_head, True)
+
+
+def _owner_trace_proof(trace: dict) -> dict:
+    receipt = trace["captureReceipt"]
+    return {
+        "id": trace.get("id"),
+        "sessionId": trace.get("sessionId"),
+        "prompt": trace.get("prompt"),
+        "memoryIds": [item.get("id") for item in trace.get("items") or []],
+        "captureReceipt": {
+            "retrievalTraceId": receipt.get("retrievalTraceId"),
+            "sessionId": receipt.get("sessionId"),
+            "memoryIds": receipt.get("memoryIds"),
+            "prompt": receipt.get("prompt"),
+            "answer": receipt.get("answer"),
+        },
+    }
 
 
 def _recall_until_sentinel(
@@ -239,13 +446,27 @@ def _recall_until_sentinel(
     return last
 
 
+@LIVE_E2E_SKIP
 def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
     sys.path.insert(0, str(LIB))
     import runir_core as core
 
+    import importlib.util
+
+    inject_spec = importlib.util.spec_from_file_location("runir_e2e_inject", INJECT)
+    assert inject_spec and inject_spec.loader
+    inject = importlib.util.module_from_spec(inject_spec)
+    inject_spec.loader.exec_module(inject)
+
     user_id = core.resolve_credential("RUNIR_USER_ID")
     assert user_id, "RUNIR_USER_ID required for E2E"
     api_key = core.resolve_credential("RUNIR_API_KEY")
+    repo_head, expected_head, worktree_clean = _repo_state()
+    configured_capture_url, _unused_trace_url = _capture_and_trace_urls(
+        core,
+        trace_id="endpoint-validation",
+        user_id=user_id,
+    )
     env_file_raw = (os.environ.get("RUNIR_ENV_FILE") or "").strip()
     env_file = Path(env_file_raw) if env_file_raw else None
     if env_file is None:
@@ -376,6 +597,14 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
         f"expected modelCalls=1 (no gate re-burn / no tool loop), "
         f"got {result.get('modelCalls')}; full={result!r}"
     )
+    assert result.get("modelCallsSource") == "modelUsage", (
+        f"live proof requires raw modelUsage source: {result!r}"
+    )
+    raw_model_calls = _strict_model_usage_calls(inject, result)
+    assert raw_model_calls == result["modelCalls"] == 1
+    assert result.get("promptBlockOrder") == ["memory", "user"], (
+        f"memory must precede user in prompt blocks: {result!r}"
+    )
     assert result.get("retrievalTraceId"), (
         f"expected non-empty retrievalTraceId on memory-hit, got {result!r}"
     )
@@ -384,7 +613,7 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
         f"sentinel not model-visible in assistant text:\n{text!r}\nresult={result!r}"
     )
     assert "warn: capture failed" not in proc.stderr
-    _assert_capture_receipt(
+    fresh_trace, fresh_trace_url = _assert_capture_receipt(
         core,
         result=result,
         prompt=prompt,
@@ -442,6 +671,14 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
     assert result2.get("modelCalls") == 1, (
         f"resume expected modelCalls=1, got {result2.get('modelCalls')}; full={result2!r}"
     )
+    assert result2.get("modelCallsSource") == "modelUsage", (
+        f"resume live proof requires raw modelUsage source: {result2!r}"
+    )
+    raw_resume_model_calls = _strict_model_usage_calls(inject, result2)
+    assert raw_resume_model_calls == result2["modelCalls"] == 1
+    assert result2.get("promptBlockOrder") == ["memory", "user"], (
+        f"resume memory must precede user in prompt blocks: {result2!r}"
+    )
     assert result2.get("retrievalTraceId"), (
         f"resume expected non-empty retrievalTraceId, got {result2!r}"
     )
@@ -450,10 +687,49 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
         f"resume sentinel not model-visible:\n{text2!r}\nresult={result2!r}"
     )
     assert "warn: capture failed" not in proc2.stderr
-    _assert_capture_receipt(
+    resume_trace, resume_trace_url = _assert_capture_receipt(
         core,
         result=result2,
         prompt=resume_prompt,
         user_id=user_id,
         api_key=api_key,
     )
+
+    proof = {
+        "kind": "runir-grok-headless-live-proof",
+        "repoHead": repo_head,
+        "expectedHead": expected_head,
+        "expectedHeadMatched": repo_head == expected_head,
+        "trackedWorktreeClean": worktree_clean,
+        "configuredCaptureUrl": configured_capture_url,
+        "derivedTraceUrls": {
+            "fresh": fresh_trace_url,
+            "resume": resume_trace_url,
+        },
+        "apiKeyConfigured": bool(api_key),
+        "prompts": {
+            "fresh": prompt,
+            "resume": resume_prompt,
+        },
+        "wrapperJson": {
+            "fresh": result,
+            "resume": result2,
+        },
+        "ownerScopedTraces": {
+            "fresh": _owner_trace_proof(fresh_trace),
+            "resume": _owner_trace_proof(resume_trace),
+        },
+        "modelCallsEvidence": {
+            "fresh": {
+                "source": result["modelCallsSource"],
+                "rawModelUsage": result["modelUsage"],
+                "summedModelCalls": raw_model_calls,
+            },
+            "resume": {
+                "source": result2["modelCallsSource"],
+                "rawModelUsage": result2["modelUsage"],
+                "summedModelCalls": raw_resume_model_calls,
+            },
+        },
+    }
+    print(json.dumps(proof, ensure_ascii=False, sort_keys=True), flush=True)
