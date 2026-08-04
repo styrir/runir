@@ -69,6 +69,7 @@ import {
   type CanonicalContextIdentity,
 } from "../../../identity/canonical-context.js";
 import { resolveRunirSession } from "../../../storage/surreal/runir-session-store.js";
+import type { RunirSessionRecord } from "../../../domain/memory/types.js";
 import { resolveBodyCanonicalContext } from "../../../recall/body-resolution.js";
 import { orchestrateRecall } from "../../../recall/orchestrator/recall-orchestrator.js";
 import {
@@ -1040,9 +1041,7 @@ export function registerHookRoutes(app: Hono) {
 
     try {
       const contextIdentity = resolveBodyCanonicalContext(body, uid, capturePath, body.sessionId);
-      const runirSession = await resolveBodyRunirSession(body, uid, contextIdentity, capturePath, body.sessionId);
-      const activeHexis = await resolveBodyHexisContext(body, uid, capturePath, body.sessionId);
-      timer.mark("resolve_identity_session_hexis");
+      timer.mark("resolve_identity");
       const formatted = normalizeCaptureMessages(messages);
       if (formatted.length === 0) return c.json({ skipped: true, reason: "no normalizable messages", ...debugTimings() });
       const captureReceiptRequested = body.captureReceipt === true;
@@ -1055,9 +1054,14 @@ export function registerHookRoutes(app: Hono) {
       if (captureReceiptRequested && memoryIds === undefined) {
         return c.json({ error: "capture receipt requires memoryIds as a non-empty string array", ...debugTimings() }, 400);
       }
-      // Preserve legacy capture scheduling. Receipt-enabled requests defer this
-      // side effect until their trace/session/prompt/memory binding is valid.
+      // Preserve the legacy path's original session/Hexis-before-accrual/context
+      // ordering. Receipt mode defers these persistent resolvers until binding.
+      let runirSession: RunirSessionRecord | undefined;
+      let activeHexis: HexisState | null | undefined;
       if (!captureReceiptRequested) {
+        runirSession = await resolveBodyRunirSession(body, uid, contextIdentity, capturePath, body.sessionId);
+        activeHexis = await resolveBodyHexisContext(body, uid, capturePath, body.sessionId);
+        timer.mark("resolve_session_hexis");
         fireUsefulnessAccrual({ userId: uid, sessionId: body.sessionId, messages: formatted });
         timer.mark("normalize_and_schedule_usefulness");
       }
@@ -1087,6 +1091,17 @@ export function registerHookRoutes(app: Hono) {
         // established fire-and-forget accrual behavior once the receipt binds.
         fireUsefulnessAccrual({ userId: uid, sessionId: body.sessionId, messages: formatted });
         timer.mark("validate_receipt_and_schedule_usefulness");
+      }
+
+      if (captureReceiptRequested) {
+        // Session and Hexis resolution may persist state. Receipt-enabled
+        // requests must establish their exact binding first.
+        runirSession = await resolveBodyRunirSession(body, uid, contextIdentity, capturePath, body.sessionId);
+        activeHexis = await resolveBodyHexisContext(body, uid, capturePath, body.sessionId);
+        timer.mark("resolve_session_hexis");
+      }
+      if (!runirSession || activeHexis === undefined) {
+        throw new Error("capture context resolution did not complete");
       }
 
       const salience = await scoreSessionSalience(

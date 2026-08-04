@@ -32,7 +32,15 @@ const mocks = vi.hoisted(() => ({
   createRetrievalTrace: vi.fn(),
   resolveRunirSession: vi.fn(),
   resolveCanonicalContextIdentity: vi.fn(),
+  normalizeCaptureMessages: vi.fn(),
+  resolveActiveHexis: vi.fn(),
   resolveActiveHexisCached: vi.fn(),
+  buildCaptureContextPacket: vi.fn(),
+  accrueUsefulnessFromCapture: vi.fn(),
+  getRetrievalFootprintFromTrace: vi.fn(),
+  retrievalFootprintIdentityMatches: vi.fn(),
+  getRetrievalTrace: vi.fn(),
+  listRetrievalTraces: vi.fn(),
   buildSessionOpenerPayload: vi.fn(),
   formatSessionOpenerInjection: vi.fn(),
   formatRecallInjectionFromRendered: vi.fn(),
@@ -58,7 +66,7 @@ vi.mock("../app/runtime.js", () => ({
   deriveContinuityMetadata: vi.fn(),
   deriveProjectStateSnapshot: vi.fn(),
   factMetadata: vi.fn(),
-  resolveActiveHexis: vi.fn(() => Promise.resolve(null)),
+  resolveActiveHexis: mocks.resolveActiveHexis,
   writeWithArbitration: vi.fn(),
 }));
 
@@ -135,7 +143,10 @@ vi.mock("../storage/surreal/surreal-store.js", () => ({
 
 vi.mock("../storage/surreal/phase2-store.js", () => ({
   createRetrievalTrace: mocks.createRetrievalTrace,
-  getRetrievalTrace: vi.fn(),
+  getRetrievalFootprintFromTrace: mocks.getRetrievalFootprintFromTrace,
+  retrievalFootprintIdentityMatches: mocks.retrievalFootprintIdentityMatches,
+  getRetrievalTrace: mocks.getRetrievalTrace,
+  listRetrievalTraces: mocks.listRetrievalTraces,
   patchRetrievalTraceCaptureReceipt: vi.fn(),
   markSemiotesFoldedIntoProjectState: vi.fn(),
   patchSemioteUsefulness: vi.fn(),
@@ -173,6 +184,10 @@ vi.mock("../hexis/active-hexis-cache.js", () => ({
 
 vi.mock("../recall/policy/recipe-registry.js", () => ({
   buildRecipeTraceMetadata: vi.fn(() => ({ id: "test", version: 1 })),
+}));
+
+vi.mock("../lifecycle/semion/usefulness-accrual.js", () => ({
+  accrueUsefulnessFromCapture: mocks.accrueUsefulnessFromCapture,
 }));
 
 vi.mock("../recall/query/scope-predicate.js", () => ({
@@ -234,7 +249,7 @@ vi.mock("../capture/extraction/capture.js", () => ({
   extractMemories: vi.fn(),
   extractTopicTags: vi.fn(),
   isNoisyFact: vi.fn(),
-  normalizeCaptureMessages: vi.fn(),
+  normalizeCaptureMessages: mocks.normalizeCaptureMessages,
   normalizeExtractedFact: vi.fn(),
   resolveCapturePrompt: vi.fn(),
   segmentAndSummarize: vi.fn(),
@@ -263,7 +278,7 @@ vi.mock("../capture/continuity/project-state-warming.js", () => ({
 }));
 
 vi.mock("../capture/capture-context-assembler.js", () => ({
-  buildCaptureContextPacket: vi.fn(),
+  buildCaptureContextPacket: mocks.buildCaptureContextPacket,
 }));
 
 vi.mock("../app/auth.js", () => ({
@@ -323,6 +338,14 @@ function makeRecallRequest(overrides: Record<string, unknown> = {}) {
 
 async function postRecall(app: Hono, body: Record<string, unknown>) {
   return app.request("/hooks/recall", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function postCapture(app: Hono, body: Record<string, unknown>) {
+  return app.request("/hooks/capture", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -402,6 +425,124 @@ function verifySelectedShape(selected: unknown[]) {
 describe("recall selected[] contract", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.normalizeCaptureMessages.mockImplementation((messages) => messages);
+    mocks.accrueUsefulnessFromCapture.mockResolvedValue({ status: "no_trace", evaluated: 0, statusConditioned: false });
+    mocks.resolveActiveHexis.mockResolvedValue(null);
+    mocks.resolveActiveHexisCached.mockImplementation(async (_input, resolver) => resolver());
+    mocks.buildCaptureContextPacket.mockResolvedValue({
+      identity: {},
+      recent_facts: [],
+      retrieval_footprint: null,
+      nearby_existing: [],
+      state_anchor: null,
+      relation_hints: [],
+      debug: {
+        slotCounts: { recentFacts: 0, shownMemoryIds: 0, nearbyExisting: 0, relationHints: 0 },
+        stateAnchorState: "omitted",
+        identityMatchedFootprint: null,
+      },
+    });
+    mocks.getRetrievalFootprintFromTrace.mockResolvedValue(null);
+    mocks.retrievalFootprintIdentityMatches.mockReturnValue(true);
+    mocks.getRetrievalTrace.mockResolvedValue(null);
+    mocks.listRetrievalTraces.mockResolvedValue([]);
+  });
+
+  it("rejects an invalid capture receipt before session or Hexis resolution can persist state", async () => {
+    const prompt = "original prompt";
+    mocks.resolveUserId.mockReturnValue("owner");
+    mocks.resolveCanonicalContextIdentity.mockReturnValue(CANONICAL_IDENTITY);
+    mocks.buildCaptureContextPacket.mockResolvedValue({
+      identity: {},
+      recent_facts: [],
+      retrieval_footprint: null,
+      nearby_existing: [],
+      state_anchor: null,
+      relation_hints: [],
+      debug: {
+        slotCounts: { recentFacts: 0, shownMemoryIds: 0, nearbyExisting: 0, relationHints: 0 },
+        stateAnchorState: "omitted",
+        identityMatchedFootprint: true,
+      },
+    });
+    mocks.getRetrievalTrace.mockResolvedValue({
+      id: "trace-headless",
+      userId: "owner",
+      sessionId: "sess-test",
+      prompt,
+      intentLabel: "fact",
+      laneLabel: "fact",
+      retrievalPath: "hybrid",
+      accessTrackedIds: ["semiote:m1"],
+      items: [{ id: "semiote:m1", score: 0.9 }],
+      createdAt: "2026-08-04T00:00:00.000Z",
+    });
+
+    const app = makeApp();
+    const res = await postCapture(app, {
+      userId: "owner",
+      sessionId: "sess-test",
+      retrievalTraceId: "trace-headless",
+      memoryIds: ["semiote:wrong"],
+      captureReceipt: true,
+      hexis: { label: "must-not-persist" },
+      messages: [
+        { role: "user", content: prompt },
+        { role: "assistant", content: "final answer" },
+      ],
+    });
+
+    const responseBody = await res.json();
+    expect(res.status, JSON.stringify(responseBody)).toBe(409);
+    expect(responseBody).toMatchObject({ error: "capture receipt memoryIds mismatch" });
+    expect(mocks.resolveRunirSession).not.toHaveBeenCalled();
+    expect(mocks.resolveActiveHexisCached).not.toHaveBeenCalled();
+    expect(mocks.resolveActiveHexis).not.toHaveBeenCalled();
+  });
+
+  it("preserves legacy session/Hexis then usefulness then context ordering", async () => {
+    const order: string[] = [];
+    mocks.resolveUserId.mockReturnValue("owner");
+    mocks.resolveCanonicalContextIdentity.mockReturnValue(CANONICAL_IDENTITY);
+    mocks.resolveRunirSession.mockImplementation(async () => {
+      order.push("session");
+      return {
+        id: "runir-session-1",
+        userId: "owner",
+        projectIdentitySource: "session",
+        nativeSessionAliases: [],
+        status: "active",
+        openedAt: "2026-08-04T00:00:00.000Z",
+        lastSeenAt: "2026-08-04T00:00:00.000Z",
+        resolverKey: "resolver",
+      };
+    });
+    mocks.resolveActiveHexisCached.mockImplementation(async (_input, resolver) => {
+      order.push("hexis");
+      return resolver();
+    });
+    mocks.accrueUsefulnessFromCapture.mockImplementation(async () => {
+      order.push("usefulness");
+      return { status: "no_trace", evaluated: 0, statusConditioned: false };
+    });
+    mocks.buildCaptureContextPacket.mockImplementation(async () => {
+      order.push("context");
+      throw new Error("stop after ordering checkpoints");
+    });
+
+    const app = makeApp();
+    const res = await postCapture(app, {
+      userId: "owner",
+      sessionId: "sess-test",
+      messages: [
+        { role: "user", content: "legacy prompt" },
+        { role: "assistant", content: "legacy answer" },
+      ],
+    });
+
+    expect(res.status).toBe(500);
+    await vi.waitFor(() => expect(order).toContain("usefulness"));
+    expect(order).toEqual(["session", "hexis", "usefulness", "context"]);
   });
 
   it("skip path: no selected[] and skipped=true", async () => {
