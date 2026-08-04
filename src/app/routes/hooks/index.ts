@@ -1042,9 +1042,18 @@ export function registerHookRoutes(app: Hono) {
     try {
       const contextIdentity = resolveBodyCanonicalContext(body, uid, capturePath, body.sessionId);
       timer.mark("resolve_identity");
+      const captureReceiptRequested = body.captureReceipt === true;
+      let runirSession: RunirSessionRecord | undefined;
+      let activeHexis: HexisState | null | undefined;
+      if (!captureReceiptRequested) {
+        // Preserve legacy behavior even when normalization later yields no
+        // eligible messages: the request still heartbeats session/Hexis state.
+        runirSession = await resolveBodyRunirSession(body, uid, contextIdentity, capturePath, body.sessionId);
+        activeHexis = await resolveBodyHexisContext(body, uid, capturePath, body.sessionId);
+        timer.mark("resolve_session_hexis");
+      }
       const formatted = normalizeCaptureMessages(messages);
       if (formatted.length === 0) return c.json({ skipped: true, reason: "no normalizable messages", ...debugTimings() });
-      const captureReceiptRequested = body.captureReceipt === true;
       const retrievalTraceId = typeof body.retrievalTraceId === "string" && body.retrievalTraceId.trim()
         ? (captureReceiptRequested ? body.retrievalTraceId : body.retrievalTraceId.trim())
         : undefined;
@@ -1056,12 +1065,7 @@ export function registerHookRoutes(app: Hono) {
       }
       // Preserve the legacy path's original session/Hexis-before-accrual/context
       // ordering. Receipt mode defers these persistent resolvers until binding.
-      let runirSession: RunirSessionRecord | undefined;
-      let activeHexis: HexisState | null | undefined;
       if (!captureReceiptRequested) {
-        runirSession = await resolveBodyRunirSession(body, uid, contextIdentity, capturePath, body.sessionId);
-        activeHexis = await resolveBodyHexisContext(body, uid, capturePath, body.sessionId);
-        timer.mark("resolve_session_hexis");
         fireUsefulnessAccrual({ userId: uid, sessionId: body.sessionId, messages: formatted });
         timer.mark("normalize_and_schedule_usefulness");
       }
