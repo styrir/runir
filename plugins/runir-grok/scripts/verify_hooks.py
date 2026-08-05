@@ -10,14 +10,22 @@ Exit 0 when:
 With --live (after static checks pass):
 - POST authed /hooks/recall using the same credential order as the adapter
   (process env → installed RUNIR_ENV_FILE wiring → --env-file / default)
-- Exit 3 unauthorized (401/403, missing credential, or missing RUNIR_USER_ID)
-- Exit 4 service_down (connection refused / timeout / DNS)
+- Live recall transport: preflight is_allowed_runir_endpoint, shared OPENER
+  (proxy-stripped + same-origin redirect guard), read_capped_body (not the
+  fail-open JSON helpers). Taxonomy:
+  - 0 ok (2xx)
+  - 3 missing_user_id / endpoint_not_allowed / unauthorized (401/403) /
+    http_NNN / oversize_response / cross_origin_redirect_blocked /
+    invalid_url (malformed host/port after allowlist)
+  - 4 service_down (URLError / TimeoutError / OSError)
+- Ollama residency probe: OPENER + byte cap only (no Rúnir allowlist)
 Never invents a default userId. Never prints credential values.
 """
 
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import re
@@ -29,6 +37,11 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+_LIB = Path(__file__).resolve().parents[1] / "lib"
+if str(_LIB) not in sys.path:
+    sys.path.insert(0, str(_LIB))
+import runir_core as core  # noqa: E402
 
 EXPECTED_EVENTS = ("UserPromptSubmit", "Stop")
 TIMEOUT_FLOORS = {
@@ -356,7 +369,11 @@ def verify_launch_agent(
 def ollama_residency_probe() -> tuple[int, dict[str, Any]]:
     """GET ollama /api/ps; require nomic-embed-text with far-future expiry.
 
-    Exit 0 resident · 3 present-but-not-far-future or absent · 4 service_down.
+    Exit 0 resident · 3 present-but-not-far-future / absent / oversize ·
+    4 service_down.
+
+    Uses shared OPENER + capped body reader only. Ollama is not under the
+    authenticated Rúnir endpoint allowlist (RUNIR_OLLAMA_BASE trust domain).
     """
     base = (os.environ.get("RUNIR_OLLAMA_BASE") or "http://127.0.0.1:11434").rstrip("/")
     url = f"{base}/api/ps"
@@ -369,14 +386,23 @@ def ollama_residency_probe() -> tuple[int, dict[str, Any]]:
         },
         method="GET",
     )
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with opener.open(request, timeout=LIVE_TIMEOUT_S) as response:
-            raw = response.read()
+        with core.OPENER.open(request, timeout=LIVE_TIMEOUT_S) as response:
+            raw = core.read_capped_body(response)
             try:
                 body = json.loads(raw) if raw else {}
             except (json.JSONDecodeError, ValueError):
                 body = {}
+    except core.ResponseTooLarge:
+        detail["reason"] = "oversize_response"
+        detail["resident"] = False
+        return 3, detail
+    except http.client.InvalidURL as exc:
+        # Malformed RUNIR_OLLAMA_BASE (e.g. nonnumeric port) is config, not crash.
+        detail["reason"] = "invalid_url"
+        detail["error"] = type(exc).__name__
+        detail["resident"] = False
+        return 3, detail
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         detail["reason"] = "service_down"
         detail["error"] = type(exc).__name__
@@ -421,6 +447,10 @@ def live_recall_probe(
 
     Exit 3 when user id is unresolved — never invent a default identity
     (e.g. "owner") that could mask missing RUNIR_USER_ID.
+
+    Transport: preflight is_allowed_runir_endpoint, then core.OPENER +
+    read_capped_body. Does not route through fail-open JSON helpers so the
+    0/3/4 taxonomy and hints stay intact.
     """
     base = (os.environ.get("RUNIR_BASE") or "http://127.0.0.1:7700").rstrip("/")
     url = os.environ.get("RUNIR_RECALL_URL") or f"{base}/hooks/recall"
@@ -435,6 +465,14 @@ def live_recall_probe(
         live["hint"] = (
             "set RUNIR_USER_ID in process env or dotenv (via RUNIR_ENV_FILE / --env-file); "
             "verify refuses to invent a default userId"
+        )
+        return 3, live
+    if not core.is_allowed_runir_endpoint(url):
+        live["reason"] = "endpoint_not_allowed"
+        live["hint"] = (
+            "recall endpoint must be loopback http(s), or https with "
+            "RUNIR_ALLOW_REMOTE_ENDPOINTS=1; refusing to send Bearer to "
+            "an unapproved origin"
         )
         return 3, live
     payload = {
@@ -456,11 +494,10 @@ def live_recall_probe(
         headers=headers,
         method="POST",
     )
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with opener.open(request, timeout=LIVE_TIMEOUT_S) as response:
+        with core.OPENER.open(request, timeout=LIVE_TIMEOUT_S) as response:
             status = int(response.status)
-            raw = response.read()
+            raw = core.read_capped_body(response)
             try:
                 body = json.loads(raw) if raw else {}
             except (json.JSONDecodeError, ValueError):
@@ -479,7 +516,18 @@ def live_recall_probe(
                 return 3, live
             live["reason"] = f"http_{status}"
             return 3, live
+    except core.ResponseTooLarge:
+        live["reason"] = "oversize_response"
+        live["authed"] = False
+        live["hint"] = f"recall response exceeded {core.MAX_RESPONSE_BYTES} byte cap"
+        return 3, live
     except urllib.error.HTTPError as exc:
+        detail = str(getattr(exc, "reason", "") or "")
+        if "cross-origin redirect blocked" in detail:
+            live["reason"] = "cross_origin_redirect_blocked"
+            live["authed"] = False
+            live["hint"] = "refused to forward Authorization to a different origin"
+            return 3, live
         live["status"] = int(exc.code)
         if exc.code in (401, 403):
             live["reason"] = "unauthorized"
@@ -487,6 +535,17 @@ def live_recall_probe(
             live["authed"] = False
             return 3, live
         live["reason"] = f"http_{exc.code}"
+        return 3, live
+    except http.client.InvalidURL as exc:
+        # Allowlist may pass loopback hosts with nonnumeric/out-of-range ports;
+        # OPENER.open then raises InvalidURL (not URLError/OSError). Map to 3.
+        live["reason"] = "invalid_url"
+        live["error"] = type(exc).__name__
+        live["authed"] = False
+        live["hint"] = (
+            "malformed recall URL (nonnumeric or out-of-range port / bad host); "
+            "check RUNIR_BASE / RUNIR_RECALL_URL"
+        )
         return 3, live
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         live["reason"] = "service_down"
