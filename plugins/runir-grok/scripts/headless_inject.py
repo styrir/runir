@@ -200,11 +200,16 @@ def recall_with_retry(
     session_id: str = "",
     path: str | None = None,
     api_key: str | None = None,
-    client: str = core.DEFAULT_CLIENT,
+    client: str | None = None,
+    preferred_client: str | None = None,
     user_agent: str = core.DEFAULT_USER_AGENT,
     attempts: int = 2,
 ) -> core.RecallResult:
-    """Recall once, retry once on empty context (cold embedder / short timeout)."""
+    """Recall once, retry once on empty context (cold embedder / short timeout).
+
+    Defaults omit hard client/path so headless selection can surface null-scoped
+    working-tier noemas. Callers may still pass hard client or path explicitly.
+    """
     last = core.RecallResult()
     for i in range(max(1, attempts)):
         try:
@@ -215,6 +220,7 @@ def recall_with_retry(
                 path=path,
                 api_key=api_key,
                 client=client,
+                preferred_client=preferred_client,
                 user_agent=user_agent,
             )
         except Exception as exc:
@@ -272,13 +278,19 @@ def run_inject(
     # Grok session ID. The same identity threads recall, Grok, and capture.
     session_id = resolve_session_id(resume=resume)
 
+    # Headless recall descope (Rúnir-pzt.2): hard client+cwd starves null-client /
+    # null-path canaries under strict filter + dense path top-K. Soft prefer +
+    # omit path on recall only; capture and grok --cwd keep client+cwd attribution.
+    # Debug re-scope: RUNIR_HEADLESS_RECALL_PATH=1 restores path=cwd on recall.
+    recall_path = cwd if os.environ.get("RUNIR_HEADLESS_RECALL_PATH") == "1" else None
     recall = recall_with_retry(
         prompt,
         user_id=user_id,
         session_id=session_id,
-        path=cwd,
+        path=recall_path,
         api_key=api_key,
-        client=client,
+        client=None,
+        preferred_client=client,
         user_agent=user_agent,
         attempts=2,
     )
