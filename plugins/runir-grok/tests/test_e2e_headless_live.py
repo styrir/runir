@@ -281,6 +281,65 @@ def _assert_capture_receipt(
     return trace, trace_url
 
 
+def _seed_body_diag(body: object) -> dict[str, Any]:
+    """Seed capture diagnostics: keys/booleans/type-checked counts only.
+
+    Never includes raw body values or error free text. Safe for pytest.fail
+    messages and for any residual assert messaging.
+    """
+    if not isinstance(body, dict):
+        return {"type": type(body).__name__}
+    facts = body.get("factsFound")
+    # bool is a subclass of int — reject it so True/False never count as facts.
+    if isinstance(facts, bool) or not isinstance(facts, int):
+        facts_meta: dict[str, Any] = {
+            "present": "factsFound" in body,
+            "type": type(facts).__name__ if facts is not None else "NoneType",
+            "positive": False,
+        }
+    else:
+        facts_meta = {
+            "present": True,
+            "type": "int",
+            "count": facts,
+            "positive": facts > 0,
+        }
+    return {
+        "keys": sorted(str(k) for k in body.keys()),
+        "skipped": body.get("skipped") is True,
+        "hasError": "error" in body,
+        "factsFound": facts_meta,
+    }
+
+
+def _assert_seed_capture_response(status: object, body: object) -> dict:
+    """Validate seed capture without pytest rewrite dumping body/error free text.
+
+    Ordered plain ``if`` + ``pytest.fail`` (keys/booleans/counts/digest meta only):
+    mapping type → error → HTTP status → skipped → factsFound.
+    Error is checked before other response-status checks so an error-bearing
+    mapping never reaches rewriteable ``body.get("skipped")`` / factsFound
+    asserts that would render the full body (including error free text).
+    """
+    if not isinstance(body, dict):
+        pytest.fail(
+            f"seed capture body not a mapping: type={type(body).__name__}"
+        )
+    diag = _seed_body_diag(body)
+    # Error first — before status/skipped/factsFound.
+    if "error" in body:
+        pytest.fail(f"seed capture error: {diag}")
+    if not isinstance(status, int) or not (200 <= status < 300):
+        # status is int/non-int only; never interpolate body or error value.
+        pytest.fail(f"seed capture status={status!r}: {diag}")
+    if body.get("skipped") is True:
+        pytest.fail(f"seed capture skipped: {diag}")
+    facts = body.get("factsFound", 0)
+    if isinstance(facts, bool) or not isinstance(facts, int) or facts <= 0:
+        pytest.fail(f"seed capture extracted no facts: {diag}")
+    return body
+
+
 def _seed_fact(
     core,
     *,
@@ -311,23 +370,7 @@ def _seed_fact(
     )
     assert result, "seed capture request failed — is Rúnir running?"
     status, body = result
-    body_diag = (
-        {
-            "keys": sorted(body.keys()),
-            "skipped": body.get("skipped"),
-            "factsFound": body.get("factsFound"),
-            "hasError": "error" in body,
-        }
-        if isinstance(body, dict)
-        else {"type": type(body).__name__}
-    )
-    assert 200 <= status < 300, f"seed capture status={status}: {body_diag}"
-    assert body.get("skipped") is not True, f"seed capture skipped: {body_diag}"
-    # Avoid ``assert "error" not in body`` — rewrite dumps the raw response body.
-    if isinstance(body, dict) and "error" in body:
-        pytest.fail(f"seed capture error: {body_diag}")
-    assert body.get("factsFound", 0) > 0, f"seed capture extracted no facts: {body_diag}"
-    return body
+    return _assert_seed_capture_response(status, body)
 
 
 def _repo_state() -> tuple[str, str, bool]:
@@ -709,6 +752,113 @@ def test_assert_not_contains_redacted_failure_diagnostics_are_hash_only():
             f"stderr={_text_digest_meta(dirty_stderr)}; "
             f"fail_msg={_text_digest_meta(err_msg)}"
         )
+
+
+def test_seed_capture_response_validation_is_rewrite_safe():
+    """Regression (M2 residual): seed status/skipped/error/facts never dump free text.
+
+    Fail-before-fix: an error-bearing mapping that is also skipped must fail
+    via plain pytest.fail with keys/booleans/counts only — never the error
+    free-text body. pytest rewriting of body.get asserts would otherwise
+    render the full mapping before the sanitized error branch.
+    """
+    secret_error = "RUNIR-E2E-SEED-ERROR-PLAINTEXT-do-not-emit"
+    secret_detail = "RUNIR-E2E-SEED-DETAIL-PLAINTEXT-do-not-emit"
+
+    # Combined skipped + error (the residual finding class).
+    dirty = {
+        "skipped": True,
+        "error": secret_error,
+        "factsFound": 0,
+        "detail": secret_detail,
+        "message": secret_error,
+    }
+    with pytest.raises(pytest.fail.Exception, match="seed capture error") as excinfo:
+        _assert_seed_capture_response(200, dirty)
+    fail_msg = str(excinfo.value)
+    # Must take the error branch (not skipped/facts) and stay non-plaintext.
+    if secret_error in fail_msg:
+        pytest.fail(
+            "seed-skipped+error: failure message leaked error free text; "
+            f"sample={_text_digest_meta(secret_error)}; "
+            f"fail_msg={_text_digest_meta(fail_msg)}"
+        )
+    if secret_detail in fail_msg:
+        pytest.fail(
+            "seed-skipped+error: failure message leaked detail free text; "
+            f"sample={_text_digest_meta(secret_detail)}; "
+            f"fail_msg={_text_digest_meta(fail_msg)}"
+        )
+    # Diag metadata only — keys/booleans/counts, no raw body interpolation.
+    if "hasError" not in fail_msg:
+        pytest.fail(
+            "seed-skipped+error: expected hasError in diag; "
+            f"fail_msg={_text_digest_meta(fail_msg)}"
+        )
+    if "'skipped': True" not in fail_msg and '"skipped": True' not in fail_msg:
+        # dict repr uses True for the boolean flag we set in _seed_body_diag.
+        if "skipped" not in fail_msg:
+            pytest.fail(
+                "seed-skipped+error: expected skipped flag in diag; "
+                f"fail_msg={_text_digest_meta(fail_msg)}"
+            )
+    # Non-mapping body fails closed without dumping the value.
+    with pytest.raises(pytest.fail.Exception, match="not a mapping") as type_exc:
+        _assert_seed_capture_response(200, secret_error)
+    type_msg = str(type_exc.value)
+    if secret_error in type_msg:
+        pytest.fail(
+            "seed-non-mapping: failure message leaked body free text; "
+            f"sample={_text_digest_meta(secret_error)}; "
+            f"fail_msg={_text_digest_meta(type_msg)}"
+        )
+    # Status failure with error-free body still uses sanitized diag only.
+    status_body = {"skipped": False, "factsFound": 2, "note": secret_detail}
+    with pytest.raises(pytest.fail.Exception, match="seed capture status") as st_exc:
+        _assert_seed_capture_response(500, status_body)
+    st_msg = str(st_exc.value)
+    if secret_detail in st_msg:
+        pytest.fail(
+            "seed-status: failure message leaked body free text; "
+            f"sample={_text_digest_meta(secret_detail)}; "
+            f"fail_msg={_text_digest_meta(st_msg)}"
+        )
+    # Skipped-only (no error) fails on skipped branch, still sanitized.
+    skipped_only = {"skipped": True, "factsFound": 3, "note": secret_detail}
+    with pytest.raises(pytest.fail.Exception, match="seed capture skipped") as sk_exc:
+        _assert_seed_capture_response(200, skipped_only)
+    sk_msg = str(sk_exc.value)
+    if secret_detail in sk_msg:
+        pytest.fail(
+            "seed-skipped: failure message leaked body free text; "
+            f"sample={_text_digest_meta(secret_detail)}; "
+            f"fail_msg={_text_digest_meta(sk_msg)}"
+        )
+    # factsFound non-positive / wrong type fails closed with type/count meta only.
+    with pytest.raises(pytest.fail.Exception, match="extracted no facts") as ff_exc:
+        _assert_seed_capture_response(200, {"factsFound": 0})
+    ff_msg = str(ff_exc.value)
+    if secret_error in ff_msg:
+        pytest.fail(
+            "seed-facts: unexpected canary in facts failure; "
+            f"fail_msg={_text_digest_meta(ff_msg)}"
+        )
+    with pytest.raises(pytest.fail.Exception, match="extracted no facts"):
+        _assert_seed_capture_response(200, {"factsFound": True})  # bool must not count
+    # Happy path: clean successful seed mapping returns the body.
+    clean = {"factsFound": 2, "skipped": False}
+    assert _assert_seed_capture_response(201, clean) is clean
+    # Diag helper itself never embeds free-text values.
+    diag = _seed_body_diag(dirty)
+    diag_text = repr(diag)
+    if secret_error in diag_text or secret_detail in diag_text:
+        pytest.fail(
+            "seed-body-diag: diag repr leaked free text; "
+            f"diag={_text_digest_meta(diag_text)}"
+        )
+    assert diag["hasError"] is True
+    assert diag["skipped"] is True
+    assert diag["factsFound"]["positive"] is False
 
 
 def test_live_proof_serialization_is_hash_only_no_plaintext():
