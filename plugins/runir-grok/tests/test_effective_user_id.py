@@ -324,7 +324,8 @@ def test_skill_sot_requires_user_id_flag(tmp_path):
     # with the same POSIX character class used for dotenv identity.
     assert "_PROC_UID" in skill or "BEFORE" in skill or "before" in skill.lower()
     assert '${RUNIR_USER_ID-}' in skill
-    assert skill.count("gsub(/^[[:space:]]+|[[:space:]]+$/") >= 2
+    # Pre-unquote trim + post-unquote trim + process-side trim (≥3).
+    assert skill.count("gsub(/^[[:space:]]+|[[:space:]]+$/") >= 3
     # Execute the documented setup in an isolated shell: process identity with
     # surrounding whitespace must agree with the normalized dotenv identity.
     setup = skill.split("```bash", 1)[1].split("```", 1)[0]
@@ -352,6 +353,279 @@ def test_skill_sot_requires_user_id_flag(tmp_path):
     for verb in ("search", "get", "lineage", "store", "traces"):
         assert f"{verb}" in skill
     assert skill.count("--user-id") >= 5
+
+
+def test_resolve_live_credential_no_default_env_file_invent(
+    tmp_path, monkeypatch
+):
+    """Major: process-only identity must not invent DEFAULT_ENV_FILE for keys.
+
+    When only process RUNIR_USER_ID is set (no process key, no installed
+    wiring, no ambient RUNIR_ENV_FILE, no --env-file), the deployed adapter
+    resolve_credential returns None. verify_hooks must match — never read an
+    unwired default dotenv path (false-green verify --live).
+    """
+    verify = load_script_module(
+        "verify_hooks.py", "runir_grok_verify_no_default_key_ut"
+    )
+    # Host-like bait path (old invent target shape). Must never be opened.
+    home_bait = tmp_path / "home"
+    home_bait.mkdir()
+    default_env = home_bait / "Code" / "runir" / ".env"
+    default_env.parent.mkdir(parents=True)
+    default_env.write_text(
+        "RUNIR_USER_ID=owner\nRUNIR_API_KEY=default-file-key\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home_bait))
+    if hasattr(verify, "DEFAULT_ENV_FILE"):
+        monkeypatch.setattr(verify, "DEFAULT_ENV_FILE", default_env)
+
+    dotenv_reads: list[tuple[str, str]] = []
+    real_read = verify.read_dotenv_value
+
+    def spy_read(path: str, key: str):
+        dotenv_reads.append((str(path), key))
+        return real_read(path, key)
+
+    monkeypatch.setattr(verify, "read_dotenv_value", spy_read)
+
+    monkeypatch.setenv("RUNIR_USER_ID", "brooks")
+    monkeypatch.delenv("RUNIR_API_KEY", raising=False)
+    monkeypatch.delenv("RUNIR_ENV_FILE", raising=False)
+
+    # Identity: process-only brooks (no invent of owner).
+    assert verify._identity_env_file(None, None) is None
+    effective = verify.resolve_live_identity(None, None)
+    assert effective.user_id == "brooks"
+    assert effective.source == "process_env"
+
+    # Credential: none — same as adapter resolve_credential with no key/env-file.
+    api_key, user_id, source = verify.resolve_live_credential(
+        None, None, effective=effective
+    )
+    assert source == "none"
+    assert api_key is None
+    assert user_id == "brooks"
+    # Fail-before-fix class: invent path would call read_dotenv_value on
+    # DEFAULT_ENV_FILE / ~/Code/runir/.env and return default-file-key.
+    assert dotenv_reads == [], f"unexpected dotenv key reads: {dotenv_reads}"
+    assert str(default_env) not in {p for p, _ in dotenv_reads}
+
+    # Adapter parity: process identity only → key None.
+    adapter_key = verify.core.resolve_credential(
+        "RUNIR_API_KEY",
+        {"RUNIR_USER_ID": "brooks"},
+    )
+    assert adapter_key is None
+
+
+def test_resolve_live_credential_explicit_env_file_arg(tmp_path, monkeypatch):
+    """Nit: explicit --env-file alone is a valid identity-aligned key source."""
+    verify = load_script_module(
+        "verify_hooks.py", "runir_grok_verify_env_file_arg_ut"
+    )
+    env_path = tmp_path / "cli.env"
+    env_path.write_text(
+        "RUNIR_USER_ID=cli-user\nRUNIR_API_KEY=cli-key\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("RUNIR_API_KEY", raising=False)
+    monkeypatch.delenv("RUNIR_USER_ID", raising=False)
+    monkeypatch.delenv("RUNIR_ENV_FILE", raising=False)
+
+    effective = verify.resolve_live_identity(None, env_path)
+    assert effective.user_id == "cli-user"
+    assert effective.source == "env_file"
+    api_key, user_id, source = verify.resolve_live_credential(
+        None, env_path, effective=effective
+    )
+    assert source == "env_file_arg"
+    assert api_key == "cli-key"
+    assert user_id == "cli-user"
+
+
+def test_verify_ambient_identity_and_key_share_env_file(tmp_path, monkeypatch):
+    """Major: without installed wiring, identity and API key use ambient RUNIR_ENV_FILE.
+
+    Previously credential resolution skipped ambient and combined ambient
+    identity with --env-file/default key (false-green verify --live).
+    """
+    verify = load_script_module(
+        "verify_hooks.py", "runir_grok_verify_ambient_key_ut"
+    )
+    ambient = tmp_path / "ambient.env"
+    ambient.write_text(
+        "RUNIR_USER_ID=brooks\nRUNIR_API_KEY=ambient-key\n",
+        encoding="utf-8",
+    )
+    other = tmp_path / "other.env"
+    other.write_text(
+        "RUNIR_USER_ID=other\nRUNIR_API_KEY=other-key\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("RUNIR_API_KEY", raising=False)
+    monkeypatch.delenv("RUNIR_USER_ID", raising=False)
+    monkeypatch.setenv("RUNIR_ENV_FILE", str(ambient))
+
+    # No installed command wiring; --env-file points at a different secrets file.
+    assert verify._identity_env_file(None, other) == str(ambient)
+    effective = verify.resolve_live_identity(None, other)
+    assert effective.user_id == "brooks"
+    assert effective.source == "env_file"
+
+    api_key, user_id, source = verify.resolve_live_credential(
+        None, other, effective=effective
+    )
+    assert source == "process_env_file"
+    assert api_key == "ambient-key"
+    assert user_id == "brooks"
+    assert api_key != "other-key"
+
+    # Ambient file has identity but no key → refuse foreign-file key fallback.
+    ambient.write_text("RUNIR_USER_ID=brooks\n", encoding="utf-8")
+    api_key2, user_id2, source2 = verify.resolve_live_credential(
+        None, other, effective=effective
+    )
+    assert source2 == "none"
+    assert api_key2 is None
+    assert user_id2 == "brooks"
+
+
+def test_parse_env_file_round_trips_shlex_quote_apostrophe(tmp_path, monkeypatch):
+    """Major: installer shlex.quote paths with apostrophes must parse intact."""
+    verify = load_script_module(
+        "verify_hooks.py", "runir_grok_verify_apostrophe_parse_ut"
+    )
+    # Path segment with apostrophe (legal on macOS/Linux).
+    env_dir = tmp_path / "o'brien-secrets"
+    env_dir.mkdir()
+    env_path = env_dir / "runir.env"
+    env_path.write_text(
+        "RUNIR_USER_ID=wired-user\nRUNIR_API_KEY=wired-key\n",
+        encoding="utf-8",
+    )
+    quoted = shlex.quote(str(env_path))
+    # Exact shape install_hooks.env_wiring_fragment embeds post json.loads.
+    cmd = f'/usr/bin/env RUNIR_ENV_FILE={quoted} python3 "x.py"'
+    assert "\"'\"" in quoted or "'" in quoted  # apostrophe encoding present
+    parsed = verify.parse_env_file_from_command(cmd)
+    assert parsed == str(env_path), f"truncated path {parsed!r} != {str(env_path)!r}"
+
+    # Full identity + credential path through the wired apostrophe file.
+    monkeypatch.delenv("RUNIR_USER_ID", raising=False)
+    monkeypatch.delenv("RUNIR_API_KEY", raising=False)
+    monkeypatch.delenv("RUNIR_ENV_FILE", raising=False)
+    effective = verify.resolve_live_identity(cmd, None)
+    assert effective.user_id == "wired-user"
+    api_key, user_id, source = verify.resolve_live_credential(
+        cmd, None, effective=effective
+    )
+    assert source == "installed_wiring"
+    assert api_key == "wired-key"
+    assert user_id == "wired-user"
+
+
+def test_parse_env_file_round_trips_via_install_fragment(tmp_path):
+    """install_hooks.env_wiring_fragment → parse_env_file_from_command closed loop."""
+    install = load_script_module(
+        "install_hooks.py", "runir_grok_install_apostrophe_ut"
+    )
+    verify = load_script_module(
+        "verify_hooks.py", "runir_grok_verify_install_fragment_ut"
+    )
+    env_dir = tmp_path / "user's files"
+    env_dir.mkdir()
+    env_path = (env_dir / "runir.env").resolve()
+    env_path.write_text("RUNIR_USER_ID=u\n", encoding="utf-8")
+    frag = install.env_wiring_fragment(env_path)
+    # Fragment is JSON-escaped assignment with trailing space.
+    assignment = frag.replace("\\\\", "\\").replace('\\"', '"')
+    cmd = f"/usr/bin/env {assignment}python3 \"x.py\""
+    assert verify.parse_env_file_from_command(cmd) == str(env_path)
+
+
+def test_skill_quoted_padded_identity_matches_python(tmp_path, core):
+    """Major: quoted padded dotenv values normalize like Python read_dotenv_value."""
+    skill = (PLUGIN_ROOT / "skills" / "runir-recall" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    setup = skill.split("```bash", 1)[1].split("```", 1)[0]
+    env_path = tmp_path / "identity.env"
+    env_path.write_text('RUNIR_USER_ID="  brooks  "\n', encoding="utf-8")
+
+    py_val = core.read_dotenv_value(str(env_path), "RUNIR_USER_ID")
+    assert py_val == "brooks"
+    py_eff = core.resolve_effective_user_id(
+        {"RUNIR_USER_ID": "brooks", "RUNIR_ENV_FILE": str(env_path)}
+    )
+    assert py_eff.source == "process_env+env_file"
+    assert py_eff.user_id == "brooks"
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "RUNIR_REPO": str(PLUGIN_ROOT.parents[1]),
+            "RUNIR_ENV_FILE": str(env_path),
+        }
+    )
+    env.pop("RUNIR_USER_ID", None)
+
+    # File-only: padded-quoted → brooks (not '  brooks  ').
+    proc = subprocess.run(
+        ["bash", "-c", setup + '\nprintf "effective=<%s>\\n" "$RUNIR_USER_ID"'],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "effective=<brooks>" in proc.stdout
+    assert "effective=<  brooks  >" not in proc.stdout
+
+    # Process brooks + quoted padded file must agree (no false conflict).
+    env2 = env.copy()
+    env2["RUNIR_USER_ID"] = "brooks"
+    proc2 = subprocess.run(
+        ["bash", "-c", setup + '\nprintf "effective=<%s>\\n" "$RUNIR_USER_ID"'],
+        env=env2,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc2.returncode == 0, proc2.stderr
+    assert "identity_conflict" not in proc2.stderr
+    assert "effective=<brooks>" in proc2.stdout
+
+
+def test_resolve_live_credential_reuses_passed_effective(tmp_path, monkeypatch):
+    """Nit: pass precomputed effective so identity is not re-read."""
+    verify = load_script_module(
+        "verify_hooks.py", "runir_grok_verify_pass_effective_ut"
+    )
+    env_path = tmp_path / "wired.env"
+    env_path.write_text(
+        "RUNIR_API_KEY=from-file\nRUNIR_USER_ID=file-user\n",
+        encoding="utf-8",
+    )
+    cmd = f'RUNIR_ENV_FILE={shlex.quote(str(env_path))} python3 "x.py"'
+    monkeypatch.delenv("RUNIR_API_KEY", raising=False)
+    monkeypatch.setenv("RUNIR_USER_ID", "process-user")  # would conflict if re-read
+    monkeypatch.delenv("RUNIR_ENV_FILE", raising=False)
+
+    # Precomputed effective that does NOT re-read env (simulates single resolve).
+    frozen = verify.core.EffectiveUserId(
+        user_id="frozen-user", source="process_env", conflict=None
+    )
+    api_key, user_id, source = verify.resolve_live_credential(
+        cmd, None, effective=frozen
+    )
+    assert user_id == "frozen-user"
+    assert source == "installed_wiring"
+    assert api_key == "from-file"
+    # Without pass-through, conflict would surface (process ≠ file).
+    live = verify.resolve_live_identity(cmd, None)
+    assert live.source == "conflict"
 
 
 def test_bridge_default_reads_env_file(tmp_path, monkeypatch):

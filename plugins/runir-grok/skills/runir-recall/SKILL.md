@@ -41,6 +41,8 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 # Read file identity without trusting a clobbered process value.
+# Match Python read_dotenv_value: trim → strip matching quotes → trim again
+# (quoted padded values like RUNIR_USER_ID="  brooks  " → brooks).
 _FILE_UID=""
 if [ -f "$ENV_FILE" ]; then
   _FILE_UID="$(
@@ -49,6 +51,7 @@ if [ -f "$ENV_FILE" ]; then
         v=$0; sub(/^[^=]*=/, "", v);
         gsub(/^[[:space:]]+|[[:space:]]+$/, "", v);
         gsub(/^["'\'']|["'\'']$/, "", v);
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", v);
         if (length(v)) { print v; exit }
       }' "$ENV_FILE"
   )"
