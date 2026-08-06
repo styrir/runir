@@ -21,7 +21,32 @@ Native Grok lifecycle adapter for Rúnir (thin HTTP client).
 | `skills/runir/SKILL.md` | `/runir` slash skill (SoT; user-invocable) |
 | `skills/runir-recall/SKILL.md` | Explicit recall skill (**prompt-blind / session-stale** ambient is not enough) |
 | `scripts/memory_bridge.py` | Idempotent `[memory]` config + write-only **global** MEMORY.md bridge |
+| `scripts/restart_validation/` | Versioned restart-validation kit (hash-only public surface, 0600 redact, preflight G1–G6, provenance sidecar) |
 | `tests/` | Unit/integration + isolated-`GROK_HOME` canaries |
+
+### Restart-validation kit (Rúnir-pzt.3)
+
+After a self-test setup under `$GROK_HOME/state/runir/restart-validation/<testId>/`:
+
+```bash
+# Post-self-test: remove body dumps, force 0600, emit redact-receipt.json
+python3 plugins/runir-grok/scripts/restart_validation/redact.py --kit-dir "$STATE"
+
+# Preflight must pass before a blind fresh-session rerun (identity, ownership,
+# POST /hooks/recall selection, perms, bridge, redaction). Never invents userId.
+python3 plugins/runir-grok/scripts/restart_validation/preflight.py --kit-dir "$STATE"
+
+# Hash-only answer check (no plaintext echo)
+python3 plugins/runir-grok/scripts/restart_validation/validate_answer.py \
+  --kind ambient --answer-file "$STATE/ambient.answer.txt" --kit-dir "$STATE"
+
+# Provenance sidecar AFTER the blind turn (does not touch blind-prompt files)
+python3 plugins/runir-grok/scripts/restart_validation/provenance.py --kit-dir "$STATE" \
+  --set launchMethod=fresh_quit_relaunch --set firstPromptIsBlindAmbient=true \
+  --set blindPromptOrdinal=1 --set grokSessionId="$SESSION"
+```
+
+Self-tests: `pytest plugins/runir-grok/tests/test_restart_validation_kit.py -q`
 
 ## Lifecycle (TUI floor — honest)
 
