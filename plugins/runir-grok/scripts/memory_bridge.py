@@ -32,7 +32,7 @@ from typing import Any
 _LIB = Path(__file__).resolve().parents[1] / "lib"
 if str(_LIB) not in sys.path:
     sys.path.insert(0, str(_LIB))
-import runir_core as _core  # noqa: E402
+import runir_core as _core  # noqa: E402  # re-export for tests
 from runir_core import (  # noqa: E402
     OPENER,
     ResponseTooLarge,
@@ -41,6 +41,7 @@ from runir_core import (  # noqa: E402
     is_allowed_runir_endpoint,
     read_capped_body,
     read_json,
+    resolve_effective_user_id,
     write_json_atomic,
 )
 
@@ -127,7 +128,14 @@ def parse_args() -> argparse.Namespace:
         "--runir-base",
         default=os.environ.get("RUNIR_BASE", "http://127.0.0.1:7700").rstrip("/"),
     )
-    parser.add_argument("--user-id", default=os.environ.get("RUNIR_USER_ID"))
+    parser.add_argument(
+        "--user-id",
+        default=None,
+        help=(
+            "Rúnir client user id. Default: effective RUNIR_USER_ID from process "
+            "env and/or RUNIR_ENV_FILE (conflict fails; never invents)."
+        ),
+    )
     parser.add_argument("--api-key", default=os.environ.get("RUNIR_API_KEY"))
     parser.add_argument(
         "--canary",
@@ -636,7 +644,15 @@ def sync_once(
     base = (runir_base or os.environ.get("RUNIR_BASE", "http://127.0.0.1:7700")).rstrip(
         "/"
     )
-    uid = user_id if user_id is not None else os.environ.get("RUNIR_USER_ID")
+    identity_source = "explicit"
+    identity_conflict: str | None = None
+    if user_id is not None:
+        uid = (user_id or "").strip() or None
+    else:
+        effective = resolve_effective_user_id()
+        uid = effective.user_id
+        identity_source = effective.source
+        identity_conflict = effective.conflict
     key = api_key if api_key is not None else os.environ.get("RUNIR_API_KEY")
     root = (memory_root or _default_memory_root()).expanduser()
     global_path = root / "MEMORY.md"
@@ -645,6 +661,33 @@ def sync_once(
     used_facts: list[Any]
     if facts is not None:
         used_facts = list(facts)
+    elif identity_source == "conflict":
+        result = {
+            "status": "error",
+            "changed": False,
+            "factCount": 0,
+            "publishedIds": [],
+            "path": str(global_path),
+            "reason": f"error:identity_conflict:{identity_conflict or 'process≠env_file'}",
+            "identitySource": identity_source,
+            "identityConflict": identity_conflict,
+        }
+        if record_throttle:
+            record_bridge_outcome(status="error", fact_count=0, state_dir=state_dir)
+        return result
+    elif not uid:
+        result = {
+            "status": "error",
+            "changed": False,
+            "factCount": 0,
+            "publishedIds": [],
+            "path": str(global_path),
+            "reason": "error:missing_user_id",
+            "identitySource": identity_source,
+        }
+        if record_throttle:
+            record_bridge_outcome(status="error", fact_count=0, state_dir=state_dir)
+        return result
     else:
         used_facts, fetch_status = fetch_runir_facts(base, uid, key, timeout=timeout)
         if fetch_status != "ok":
@@ -779,7 +822,16 @@ def main() -> int:
     if args.sync:
         out["sync"] = sync_memory(args)
     print(json.dumps(out, indent=2))
-    # Fail-open process exit: always 0 for sync (status lives in JSON).
+    # Loud exit on identity misconfig when sync was requested; other fetch
+    # failures stay fail-open (status in JSON, exit 0) so ambient bridge
+    # never crashes the TUI parent.
+    if args.sync:
+        sync_out = out.get("sync") or {}
+        reason = str(sync_out.get("reason") or "")
+        if reason in ("error:missing_user_id",) or reason.startswith(
+            "error:identity_conflict"
+        ):
+            return 2
     return 0
 
 

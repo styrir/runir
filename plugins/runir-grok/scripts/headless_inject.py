@@ -6,7 +6,7 @@ sets RUNIR_GROK_DISABLE_GATE=1 on the child so TUI correction hooks stay inert.
 
 Exit codes:
   0  ok (incl. recall fail-open, capture failure)
-  2  usage / missing RUNIR_USER_ID
+  2  usage / missing RUNIR_USER_ID / identity_conflict
   3  grok spawn failure or non-zero exit
   4  grok stdout unparseable or session identity mismatch
 """
@@ -247,9 +247,21 @@ def run_inject(
     disable_web_search: bool = False,
     grok_runner=None,
 ) -> int:
-    user_id = core.resolve_credential("RUNIR_USER_ID")
+    effective = core.resolve_effective_user_id()
+    if effective.source == "conflict":
+        print(
+            f"error: identity_conflict {effective.conflict} "
+            "(process and RUNIR_ENV_FILE disagree; refusing to invent or pick silently)",
+            file=sys.stderr,
+        )
+        return 2
+    user_id = effective.user_id
     if not user_id:
-        print("error: RUNIR_USER_ID is required", file=sys.stderr)
+        print(
+            "error: RUNIR_USER_ID is required "
+            "(process env or RUNIR_ENV_FILE; refusing to invent a default)",
+            file=sys.stderr,
+        )
         return 2
     api_key = core.resolve_credential("RUNIR_API_KEY")
     client = os.environ.get("RUNIR_GROK_CLIENT", core.DEFAULT_CLIENT)

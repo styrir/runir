@@ -136,6 +136,85 @@ def resolve_credential(key: str, env: Mapping[str, str] | None = None) -> str | 
     return read_dotenv_value(env_file, key) if env_file else None
 
 
+@dataclass(frozen=True)
+class EffectiveUserId:
+    """Canonical client memory-graph identity (never invents owner/default).
+
+    ``user_id`` is None when missing or when process and env-file disagree.
+    ``source`` is one of: process_env, env_file, process_env+env_file, conflict, none.
+    ``conflict`` holds a non-secret detail string when source is conflict.
+    """
+
+    user_id: str | None
+    source: str
+    conflict: str | None = None
+
+
+class IdentityConflictError(ValueError):
+    """Process RUNIR_USER_ID disagrees with the env-file value."""
+
+
+class MissingIdentityError(ValueError):
+    """No RUNIR_USER_ID in process env or configured env file."""
+
+
+def resolve_effective_user_id(
+    env: Mapping[str, str] | None = None,
+    *,
+    env_file: str | None = None,
+) -> EffectiveUserId:
+    """Resolve client RUNIR_USER_ID with fail-loud conflict detection.
+
+    Unlike ``resolve_credential`` (process-first, no conflict — correct for
+    API keys), identity must not silently prefer process over a disagreeing
+    dotenv value. Never invents ``owner``, ``default``, or any other fallback.
+    """
+    source = os.environ if env is None else env
+    process_raw = source.get("RUNIR_USER_ID")
+    process_val = process_raw.strip() if isinstance(process_raw, str) else ""
+    process_id = process_val or None
+
+    if env_file is not None:
+        file_path = (env_file or "").strip() or None
+    else:
+        file_path = (source.get("RUNIR_ENV_FILE") or "").strip() or None
+    file_id = read_dotenv_value(file_path, "RUNIR_USER_ID") if file_path else None
+
+    if process_id and file_id:
+        if process_id == file_id:
+            return EffectiveUserId(
+                user_id=process_id,
+                source="process_env+env_file",
+                conflict=None,
+            )
+        detail = f"process={process_id} env_file={file_id}"
+        return EffectiveUserId(user_id=None, source="conflict", conflict=detail)
+    if process_id:
+        return EffectiveUserId(user_id=process_id, source="process_env", conflict=None)
+    if file_id:
+        return EffectiveUserId(user_id=file_id, source="env_file", conflict=None)
+    return EffectiveUserId(user_id=None, source="none", conflict=None)
+
+
+def require_effective_user_id(
+    env: Mapping[str, str] | None = None,
+    *,
+    env_file: str | None = None,
+) -> str:
+    """Return effective user id or raise MissingIdentityError / IdentityConflictError."""
+    effective = resolve_effective_user_id(env, env_file=env_file)
+    if effective.source == "conflict":
+        raise IdentityConflictError(
+            effective.conflict or "process and env_file RUNIR_USER_ID disagree"
+        )
+    if not effective.user_id:
+        raise MissingIdentityError(
+            "RUNIR_USER_ID is required (process env or RUNIR_ENV_FILE); "
+            "refusing to invent a default identity"
+        )
+    return effective.user_id
+
+
 def env_float(name: str, default: float) -> float:
     try:
         value = float(os.environ.get(name, str(default)))

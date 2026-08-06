@@ -19,6 +19,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+_LIB = Path(__file__).resolve().parents[1] / "lib"
+if str(_LIB) not in sys.path:
+    sys.path.insert(0, str(_LIB))
+from runir_core import read_dotenv_value  # noqa: E402
+
 # Default path only — never hardcode credential values.
 DEFAULT_ENV_FILE = Path.home() / "Code" / "runir" / ".env"
 
@@ -267,6 +272,19 @@ def main() -> int:
     previous_text = dest.read_text(encoding="utf-8") if dest.exists() else ""
     changed = desired_text != previous_text
 
+    warnings = warn_legacy_copies(root)
+    # Optional identity hygiene: warn when wired env file has empty/missing
+    # RUNIR_USER_ID. Never invent a value.
+    if env_file is not None:
+        wired_uid = read_dotenv_value(str(env_file), "RUNIR_USER_ID")
+        if not wired_uid:
+            msg = (
+                f"wired env file has empty/missing RUNIR_USER_ID: {env_file} "
+                "(set a canonical client id; never invent owner/default)"
+            )
+            warnings.append(msg)
+            print(f"warning: {msg}", file=sys.stderr)
+
     summary: dict[str, Any] = {
         "pluginRoot": str(root),
         "hooksFile": str(dest),
@@ -282,7 +300,7 @@ def main() -> int:
             else []
         ),
         "commands": extract_commands(desired),
-        "warnings": warn_legacy_copies(root),
+        "warnings": warnings,
         "diffKeys": {
             "matcherChanged": extract_matcher(existing) != extract_matcher(desired),
             "commandRepath": extract_commands(existing) != extract_commands(desired),
