@@ -14,12 +14,14 @@ With --live (after static checks pass):
   (proxy-stripped + same-origin redirect guard), read_capped_body (not the
   fail-open JSON helpers). Taxonomy:
   - 0 ok (2xx)
-  - 3 missing_user_id / endpoint_not_allowed / unauthorized (401/403) /
-    http_NNN / oversize_response / cross_origin_redirect_blocked /
-    invalid_url (malformed host/port after allowlist)
+  - 3 missing_user_id / identity_conflict / endpoint_not_allowed /
+    unauthorized (401/403) / http_NNN / oversize_response /
+    cross_origin_redirect_blocked / invalid_url (malformed host/port
+    after allowlist)
   - 4 service_down (URLError / TimeoutError / OSError)
 - Ollama residency probe: OPENER + byte cap only (no Rúnir allowlist)
 Never invents a default userId. Never prints credential values.
+Identity uses resolve_effective_user_id (process vs env-file conflict fails).
 """
 
 from __future__ import annotations
@@ -257,20 +259,58 @@ def read_dotenv_value(path: str, key: str) -> str | None:
     return None
 
 
+def _identity_env_file(
+    ups_command: str | None, env_file_arg: Path | None
+) -> str | None:
+    """Env-file path used for identity conflict checks.
+
+    Installed UserPromptSubmit wiring is authoritative because it is the env-file
+    path the hook child will actually receive. Ambient process RUNIR_ENV_FILE is
+    only a fallback when the installed command has no wiring, followed by an
+    explicit --env-file. Does not invent a default path when none are present
+    (process-only identity is valid).
+    """
+    wired = parse_env_file_from_command(ups_command)
+    if wired:
+        return wired
+    process_path = (os.environ.get("RUNIR_ENV_FILE") or "").strip() or None
+    if process_path:
+        return process_path
+    if env_file_arg is not None:
+        try:
+            return str(env_file_arg.expanduser().resolve())
+        except OSError:
+            return str(env_file_arg)
+    return None
+
+
+def resolve_live_identity(
+    ups_command: str | None, env_file_arg: Path | None
+) -> core.EffectiveUserId:
+    """Canonical effective user id for verify --live (conflict never invents)."""
+    return core.resolve_effective_user_id(
+        env_file=_identity_env_file(ups_command, env_file_arg)
+    )
+
+
 def resolve_live_credential(
     ups_command: str | None, env_file_arg: Path | None
 ) -> tuple[str | None, str | None, str]:
     """Return (api_key, user_id, key_source). Never returns the key in logs.
 
-    Order matches adapter ``resolve_credential`` (process env first, then
-    RUNIR_ENV_FILE). Installed wiring supplies the same env-file path the
-    hook command sets; it must not outrank a process RUNIR_API_KEY, or
-    ``verify --live`` can pass on a fresh file key while the hook fails on
-    a stale inherited process key.
+    API key order matches adapter ``resolve_credential`` (process env first,
+    then RUNIR_ENV_FILE). Installed wiring must not outrank a process
+    RUNIR_API_KEY (stale inherited process key would mask a fresh file key).
+
+    User id uses ``resolve_effective_user_id`` even when a process API key is
+    set, so process≠file identity conflicts fail loud instead of silently
+    preferring process.
     """
-    # (a) process env — same as adapter resolve_credential
+    effective = resolve_live_identity(ups_command, env_file_arg)
+    user_id = effective.user_id  # None on missing or conflict
+
+    # (a) process env — same as adapter resolve_credential for keys
     api_key = (os.environ.get("RUNIR_API_KEY") or "").strip() or None
-    user_id = (os.environ.get("RUNIR_USER_ID") or "").strip() or None
     if api_key:
         return api_key, user_id, "process_env"
 
@@ -278,20 +318,13 @@ def resolve_live_credential(
     wired = parse_env_file_from_command(ups_command)
     if wired:
         file_key = read_dotenv_value(wired, "RUNIR_API_KEY")
-        file_user = read_dotenv_value(wired, "RUNIR_USER_ID")
         if file_key:
-            return (
-                file_key,
-                user_id or file_user,
-                "installed_wiring",
-            )
-        user_id = user_id or file_user
+            return file_key, user_id, "installed_wiring"
 
     # (c) --env-file / default dotenv fallback
     fallback = env_file_arg or DEFAULT_ENV_FILE
     path = str(fallback.expanduser().resolve())
     api_key = read_dotenv_value(path, "RUNIR_API_KEY")
-    user_id = user_id or read_dotenv_value(path, "RUNIR_USER_ID")
     if api_key:
         return api_key, user_id, "env_file_arg"
 
@@ -438,15 +471,37 @@ def ollama_residency_probe() -> tuple[int, dict[str, Any]]:
     return 3, detail
 
 
+def _attach_identity_fields(
+    live: dict[str, Any],
+    *,
+    effective: core.EffectiveUserId | None = None,
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    """Non-secret identity fields for live JSON (never API keys / canary bodies)."""
+    if effective is not None:
+        live["effectiveUserId"] = effective.user_id
+        live["identitySource"] = effective.source
+        live["identityConflict"] = (
+            effective.conflict if effective.source == "conflict" else False
+        )
+    else:
+        live["effectiveUserId"] = (user_id or "").strip() or None
+        live.setdefault("identitySource", "explicit")
+        live.setdefault("identityConflict", False)
+    return live
+
+
 def live_recall_probe(
     api_key: str,
     user_id: str | None,
     key_source: str,
+    *,
+    effective: core.EffectiveUserId | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """POST /hooks/recall. Returns (exit_code, live_detail).
 
-    Exit 3 when user id is unresolved — never invent a default identity
-    (e.g. "owner") that could mask missing RUNIR_USER_ID.
+    Exit 3 when user id is unresolved or identity conflicts — never invent a
+    default identity (e.g. "owner") that could mask missing RUNIR_USER_ID.
 
     Transport: preflight is_allowed_runir_endpoint, then core.OPENER +
     read_capped_body. Does not route through fail-open JSON helpers so the
@@ -459,6 +514,15 @@ def live_recall_probe(
         "keySource": key_source,
         "authed": False,
     }
+    _attach_identity_fields(live, effective=effective, user_id=user_id)
+    if effective is not None and effective.source == "conflict":
+        live["reason"] = "identity_conflict"
+        live["hint"] = (
+            "process RUNIR_USER_ID disagrees with env-file RUNIR_USER_ID; "
+            "align them (never invent owner/default). detail="
+            f"{effective.conflict}"
+        )
+        return 3, live
     resolved_user = (user_id or "").strip()
     if not resolved_user:
         live["reason"] = "missing_user_id"
@@ -698,19 +762,31 @@ def main() -> int:
 
     live_detail: dict[str, Any] | None = None
     if args.live and (args.user or args.hooks_file):
+        effective = resolve_live_identity(ups_command, args.env_file)
         api_key, user_id, key_source = resolve_live_credential(
             ups_command, args.env_file
         )
-        if not api_key:
+        if effective.source == "conflict" or not effective.user_id:
+            # Fail before HTTP when identity is missing or conflicted.
+            exit_code, live_detail = live_recall_probe(
+                api_key or "",
+                user_id,
+                key_source,
+                effective=effective,
+            )
+        elif not api_key:
             live_detail = {
                 "reason": "no_credential",
                 "keySource": key_source,
                 "authed": False,
                 "hint": "set RUNIR_ENV_FILE via install --env-file, or RUNIR_API_KEY, or --env-file",
             }
+            _attach_identity_fields(live_detail, effective=effective)
             exit_code = 3
         else:
-            exit_code, live_detail = live_recall_probe(api_key, user_id, key_source)
+            exit_code, live_detail = live_recall_probe(
+                api_key, user_id, key_source, effective=effective
+            )
 
     launch_agent_live: dict[str, Any] | None = None
     if args.live and args.launch_agent:
