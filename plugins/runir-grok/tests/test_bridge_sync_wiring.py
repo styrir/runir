@@ -2,14 +2,54 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
 import time
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 BRIDGE_PATH = PLUGIN_ROOT / "scripts" / "memory_bridge.py"
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _secret_meta(value: object) -> dict[str, Any]:
+    """Hash-only view of a secret-bearing string (no plaintext body)."""
+    text = value if isinstance(value, str) else ""
+    return {
+        "sha256": _sha256_text(text),
+        "length": len(text),
+        "nonEmpty": bool(text),
+    }
+
+
+def _assert_secret_equal(actual: object, expected: object, *, label: str) -> None:
+    """Equality without pytest assertion-rewrite dumping secret operands.
+
+    Compares string values via plain ``if``; on mismatch fails with sha256/length
+    metadata only. Drops raw secret locals before ``pytest.fail`` so failure
+    frames do not retain plaintext operands where practical.
+    """
+    a_ok = isinstance(actual, str)
+    e_ok = isinstance(expected, str)
+    a_text = actual if a_ok else ""
+    e_text = expected if e_ok else ""
+    match = a_ok and e_ok and a_text == e_text
+    a_meta = _secret_meta(a_text)
+    e_meta = _secret_meta(e_text)
+    del a_text, e_text, actual, expected
+    if not match:
+        pytest.fail(
+            f"{label}: secret mismatch; actual={a_meta}; expected={e_meta}; "
+            f"actual_type_ok={a_ok}; expected_type_ok={e_ok}"
+        )
 
 
 def load_bridge():
@@ -23,6 +63,31 @@ def load_bridge():
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def test_secret_equal_helper_failure_diagnostics_are_hash_only():
+    """Regression (pzt.5 secrecy): equality helper never echoes plaintext keys.
+
+    Fail-before-fix class: deliberate mismatch must raise via pytest.fail with
+    only digest/length metadata — never the synthetic API key operands.
+    """
+    secret = "sk-bridge-from-env-file-probe"
+    wrong = "sk-process-wins-probe"
+    with pytest.raises(pytest.fail.Exception, match="secret mismatch") as excinfo:
+        _assert_secret_equal(wrong, secret, label="bridge-eq-probe")
+    fail_msg = str(excinfo.value)
+    if secret in fail_msg or wrong in fail_msg:
+        pytest.fail(
+            "bridge-eq-probe: failure message leaked plaintext; "
+            f"fail_msg={_secret_meta(fail_msg)}"
+        )
+    assert "sha256" in fail_msg
+    assert "length" in fail_msg
+    assert "bridge-eq-probe" in fail_msg
+    # Happy path + type-mismatch stay non-vacuous without rewriteable asserts.
+    _assert_secret_equal(secret, secret, label="bridge-eq-happy")
+    with pytest.raises(pytest.fail.Exception, match="secret mismatch"):
+        _assert_secret_equal(None, secret, label="bridge-eq-none")
 
 
 def _event(sid: str = "sess-sync", prompt: str = "hello world question") -> dict:
@@ -233,10 +298,12 @@ def test_standalone_sync_resolves_api_key_from_env_file(tmp_path, monkeypatch):
         record_throttle=False,
     )
     assert once["status"] == "ok"
-    assert seen.get("api_key") == secret
+    # Rewrite-safe: do not put secret operands in assert expressions (pytest rewrite).
+    _assert_secret_equal(seen.get("api_key"), secret, label="bridge-env-file-api-key")
     assert seen.get("user_id") == "owner"
     # Process key still wins when both set
-    monkeypatch.setenv("RUNIR_API_KEY", "sk-process-wins")
+    process_key = "sk-process-wins"
+    monkeypatch.setenv("RUNIR_API_KEY", process_key)
     seen.clear()
     once2 = bridge.sync_once(
         memory_root=memory_root,
@@ -244,7 +311,9 @@ def test_standalone_sync_resolves_api_key_from_env_file(tmp_path, monkeypatch):
         record_throttle=False,
     )
     assert once2["status"] == "ok"
-    assert seen.get("api_key") == "sk-process-wins"
+    _assert_secret_equal(
+        seen.get("api_key"), process_key, label="bridge-process-api-key"
+    )
 
 
 def test_state_file_records_claim(hook, monkeypatch):
