@@ -573,7 +573,8 @@ def recall_result(
     - preferred_client → preferredClient (service prefer mode; null-client rows OK)
     - else client truthy → hard client (strict filter)
     - client None/"" and no preferred → omit both (service none mode)
-    - path only when truthy (omit empty/None so path top-K is a no-op)
+    - path only when truthy (omit empty/None); when set it is identity footprint
+      and must match receipt-enabled capture + tool cwd for the same turn
     """
     if not prompt or not user_id:
         return RecallResult()

@@ -207,8 +207,9 @@ def recall_with_retry(
 ) -> core.RecallResult:
     """Recall once, retry once on empty context (cold embedder / short timeout).
 
-    Defaults omit hard client/path so headless selection can surface null-scoped
-    working-tier noemas. Callers may still pass hard client or path explicitly.
+    Defaults omit hard client so soft preferredClient (or none) can rank
+    null-client working-tier noemas. Path is identity footprint when provided
+    and must match capture + Grok --cwd for receipt-enabled turns.
     """
     last = core.RecallResult()
     for i in range(max(1, attempts)):
@@ -278,16 +279,16 @@ def run_inject(
     # Grok session ID. The same identity threads recall, Grok, and capture.
     session_id = resolve_session_id(resume=resume)
 
-    # Headless recall descope (Rúnir-pzt.2): hard client+cwd starves null-client /
-    # null-path canaries under strict filter + dense path top-K. Soft prefer +
-    # omit path on recall only; capture and grok --cwd keep client+cwd attribution.
-    # Debug re-scope: RUNIR_HEADLESS_RECALL_PATH=1 restores path=cwd on recall.
-    recall_path = cwd if os.environ.get("RUNIR_HEADLESS_RECALL_PATH") == "1" else None
+    # Headless recall (Rúnir-pzt.2): soften *client* only via preferredClient so
+    # null-client working-tier noemas can rank under prefer mode. Workspace path
+    # is one immutable footprint across recall, Grok --cwd, and capture so
+    # receipt-enabled capture matches the retrieval-trace canonical identity.
+    # Capture still writes hard client as provenance (not a hard recall filter).
     recall = recall_with_retry(
         prompt,
         user_id=user_id,
         session_id=session_id,
-        path=recall_path,
+        path=cwd,
         api_key=api_key,
         client=None,
         preferred_client=client,
