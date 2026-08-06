@@ -562,11 +562,19 @@ def recall_result(
     path: str | None = None,
     timeout: float | None = None,
     api_key: str | None = None,
-    client: str = DEFAULT_CLIENT,
+    client: str | None = DEFAULT_CLIENT,
+    preferred_client: str | None = None,
     user_agent: str = DEFAULT_USER_AGENT,
     recall_url: str | None = None,
 ) -> RecallResult:
-    """POST /hooks/recall → RecallResult (fail-open empty, never raises)."""
+    """POST /hooks/recall → RecallResult (fail-open empty, never raises).
+
+    Scope fields are intentional:
+    - preferred_client → preferredClient (service prefer mode; null-client rows OK)
+    - else client truthy → hard client (strict filter)
+    - client None/"" and no preferred → omit both (service none mode)
+    - path only when truthy (omit empty/None so path top-K is a no-op)
+    """
     if not prompt or not user_id:
         return RecallResult()
     url = recall_url or os.environ.get("RUNIR_RECALL_URL", DEFAULT_RECALL_URL)
@@ -574,10 +582,14 @@ def recall_result(
     payload: dict[str, Any] = {
         "prompt": prompt,
         "userId": user_id,
-        "client": client,
         "sessionId": session_id or None,
-        "path": path,
     }
+    if preferred_client:
+        payload["preferredClient"] = preferred_client
+    elif client:
+        payload["client"] = client
+    if path:
+        payload["path"] = path
     result = post_json(url, payload, t, api_key=api_key, user_agent=user_agent)
     if not result:
         return RecallResult()
@@ -595,7 +607,8 @@ def recall_context(
     path: str | None = None,
     timeout: float | None = None,
     api_key: str | None = None,
-    client: str = DEFAULT_CLIENT,
+    client: str | None = DEFAULT_CLIENT,
+    preferred_client: str | None = None,
     user_agent: str = DEFAULT_USER_AGENT,
     recall_url: str | None = None,
 ) -> str:
@@ -608,6 +621,7 @@ def recall_context(
         timeout=timeout,
         api_key=api_key,
         client=client,
+        preferred_client=preferred_client,
         user_agent=user_agent,
         recall_url=recall_url,
     ).context
