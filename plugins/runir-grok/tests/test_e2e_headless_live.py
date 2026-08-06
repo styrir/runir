@@ -323,7 +323,9 @@ def _seed_fact(
     )
     assert 200 <= status < 300, f"seed capture status={status}: {body_diag}"
     assert body.get("skipped") is not True, f"seed capture skipped: {body_diag}"
-    assert "error" not in body, f"seed capture error: {body_diag}"
+    # Avoid ``assert "error" not in body`` — rewrite dumps the raw response body.
+    if isinstance(body, dict) and "error" in body:
+        pytest.fail(f"seed capture error: {body_diag}")
     assert body.get("factsFound", 0) > 0, f"seed capture extracted no facts: {body_diag}"
     return body
 
@@ -585,11 +587,136 @@ def _assert_contains_redacted(haystack: object, needle: str, *, label: str) -> N
         pytest.fail(f"{label}: needle absent; haystack={_text_digest_meta(text)}")
 
 
+def _assert_not_contains_redacted(
+    haystack: object, needle: str, *, label: str
+) -> None:
+    """Negative membership without pytest rewrite dumping plaintext operands.
+
+    pytest rewrites ``assert secret not in msg`` so a failure can echo the
+    secret/owner/model free-text operand. Call this helper instead: it uses
+    plain ``if`` + ``pytest.fail`` with digest/length metadata only.
+    """
+    text = haystack if isinstance(haystack, str) else ""
+    sample = needle if isinstance(needle, str) else ""
+    if not sample:
+        # Fail closed: empty canary would make ``not in`` always false-pass.
+        pytest.fail(f"{label}: forbidden sample must be a non-empty string")
+    if sample in text:
+        pytest.fail(
+            f"{label}: forbidden sample present; "
+            f"sample={_text_digest_meta(sample)}; "
+            f"haystack={_text_digest_meta(text)}"
+        )
+
+
+def _assert_mapping_lacks_key_redacted(
+    mapping: object, key: str, *, label: str
+) -> None:
+    """Dict key absence without pytest rewrite dumping mapping values.
+
+    ``assert key not in result`` rewrites and can dump ``result`` including
+    assistant ``text`` / secrets. Fail with keys-only metadata.
+    """
+    if not isinstance(mapping, dict):
+        pytest.fail(f"{label}: expected dict, got {type(mapping).__name__}")
+    if key in mapping:
+        pytest.fail(
+            f"{label}: unexpected key present; "
+            f"keys={sorted(str(k) for k in mapping.keys())}"
+        )
+
+
+def _assert_stderr_lacks_redacted(stderr: object, needle: str, *, label: str) -> None:
+    """stderr negative check without dumping raw process stderr on failure."""
+    text = stderr if isinstance(stderr, str) else ""
+    sample = needle if isinstance(needle, str) else ""
+    if not sample:
+        pytest.fail(f"{label}: forbidden sample must be a non-empty string")
+    if sample in text:
+        pytest.fail(
+            f"{label}: forbidden stderr sample present; "
+            f"sample={_text_digest_meta(sample)}; "
+            f"stderr={_text_digest_meta(text)}"
+        )
+
+
+def test_assert_not_contains_redacted_failure_diagnostics_are_hash_only():
+    """Regression (M2): sanitizer failure must not serialize plaintext operands.
+
+    Fail-before-fix class: a deliberate mismatch must raise via pytest.fail
+    with only digest/length metadata — never the secret or haystack body.
+    """
+    secret = "RUNIR-E2E-NEG-ASSERT-PLAINTEXT-do-not-emit"
+    haystack = f"wrapper-prefix {secret} wrapper-suffix"
+    with pytest.raises(pytest.fail.Exception, match="forbidden sample present") as excinfo:
+        _assert_not_contains_redacted(
+            haystack, secret, label="neg-assert-probe"
+        )
+    fail_msg = str(excinfo.value)
+    # Plain if + pytest.fail: do not use rewriteable ``assert secret not in``.
+    if secret in fail_msg:
+        pytest.fail(
+            "neg-assert-probe: failure message leaked plaintext sample; "
+            f"sample={_text_digest_meta(secret)}; "
+            f"fail_msg={_text_digest_meta(fail_msg)}"
+        )
+    if haystack in fail_msg:
+        pytest.fail(
+            "neg-assert-probe: failure message leaked plaintext haystack; "
+            f"haystack={_text_digest_meta(haystack)}; "
+            f"fail_msg={_text_digest_meta(fail_msg)}"
+        )
+    assert "sha256" in fail_msg
+    assert "length" in fail_msg
+    assert "neg-assert-probe" in fail_msg
+    # Happy path: clean haystack must not raise.
+    _assert_not_contains_redacted(
+        "only digests here sha256=abc length=0",
+        secret,
+        label="clean-haystack",
+    )
+    # Empty needle fails closed (never silent no-op).
+    with pytest.raises(pytest.fail.Exception, match="non-empty string"):
+        _assert_not_contains_redacted("anything", "", label="empty-needle")
+    # Mapping / stderr helpers: failure diagnostics stay non-plaintext.
+    dirty_result = {"sessionId": "sid", "text": secret, "runirSessionId": "alias"}
+    with pytest.raises(pytest.fail.Exception, match="unexpected key present") as key_exc:
+        _assert_mapping_lacks_key_redacted(
+            dirty_result, "runirSessionId", label="alias-probe"
+        )
+    key_msg = str(key_exc.value)
+    if secret in key_msg:
+        pytest.fail(
+            "alias-probe: failure message leaked result text; "
+            f"sample={_text_digest_meta(secret)}; "
+            f"fail_msg={_text_digest_meta(key_msg)}"
+        )
+    dirty_stderr = f"warn: capture failed detail={secret}"
+    with pytest.raises(pytest.fail.Exception, match="forbidden stderr sample") as err_exc:
+        _assert_stderr_lacks_redacted(
+            dirty_stderr, "warn: capture failed", label="stderr-probe"
+        )
+    err_msg = str(err_exc.value)
+    if secret in err_msg:
+        pytest.fail(
+            "stderr-probe: failure message leaked stderr body; "
+            f"sample={_text_digest_meta(secret)}; "
+            f"fail_msg={_text_digest_meta(err_msg)}"
+        )
+    if dirty_stderr in err_msg:
+        pytest.fail(
+            "stderr-probe: failure message leaked full stderr; "
+            f"stderr={_text_digest_meta(dirty_stderr)}; "
+            f"fail_msg={_text_digest_meta(err_msg)}"
+        )
+
+
 def test_live_proof_serialization_is_hash_only_no_plaintext():
     """Regression: serialized proof excludes prompt/answer bodies (M1).
 
     Fail-before-fix class: a proof that embeds raw prompt/answer text must
     not pass the no-plaintext guard. Digests/lengths/booleans/ids remain.
+    Negative plaintext checks use digest-only helpers (M2 rewrite-safe).
     """
     secret_prompt = "RUNIR-E2E-PLAINTEXT-PROMPT-TOKEN-do-not-emit"
     secret_answer = "RUNIR-E2E-PLAINTEXT-ANSWER-TOKEN-do-not-emit"
@@ -623,7 +750,9 @@ def test_live_proof_serialization_is_hash_only_no_plaintext():
     # Guard failure message itself must stay hash-only (no rewrite operands).
     fail_msg = str(excinfo.value)
     for secret in (secret_prompt, secret_answer, secret_resume, bad_serialized):
-        assert secret not in fail_msg
+        _assert_not_contains_redacted(
+            fail_msg, secret, label="guard-fail-msg-must-be-hash-only"
+        )
     assert "sha256" in fail_msg
 
     safe_proof = {
@@ -694,13 +823,17 @@ def test_live_proof_serialization_is_hash_only_no_plaintext():
         "http://127.0.0.1:7700/hooks/traces/trace-1"
         f"?userId={quote(owner_email, safe='')}"
     )
-    assert owner_email not in _redact_url_query(dirty_url)
-    assert "?" not in _redact_url_query(dirty_url)
-    assert _redact_url_query(dirty_url).endswith("/hooks/traces/trace-1")
+    redacted_url = _redact_url_query(dirty_url)
+    _assert_not_contains_redacted(
+        redacted_url, owner_email, label="proof-url-must-strip-owner-userId"
+    )
+    assert "?" not in redacted_url
+    assert redacted_url.endswith("/hooks/traces/trace-1")
     # Untrusted modelUsage extras / free-text keys must not ride into proof.
     sneaky = "RUNIR-E2E-MODELUSAGE-PLAINTEXT-do-not-emit"
+    model_id = "grok-4"
     dirty_usage = {
-        "grok-4": {
+        model_id: {
             "modelCalls": 1,
             "promptPreview": sneaky,
             "notes": sneaky,
@@ -719,10 +852,18 @@ def test_live_proof_serialization_is_hash_only_no_plaintext():
             }
         }
     )
-    assert sneaky not in usage_serialized
-    assert "promptPreview" not in usage_serialized
-    assert "notes" not in usage_serialized
-    assert "grok-4" not in usage_serialized  # model ids not printed
+    _assert_not_contains_redacted(
+        usage_serialized, sneaky, label="modelUsage-proof-must-drop-free-text"
+    )
+    _assert_not_contains_redacted(
+        usage_serialized, "promptPreview", label="modelUsage-proof-must-drop-field-names"
+    )
+    _assert_not_contains_redacted(
+        usage_serialized, "notes", label="modelUsage-proof-must-drop-notes-field"
+    )
+    _assert_not_contains_redacted(
+        usage_serialized, model_id, label="modelUsage-proof-must-digest-model-ids"
+    )
     assert usage_proof["present"] is True
     assert usage_proof["modelCount"] == 2
     assert usage_proof["summedModelCalls"] == 3
@@ -913,8 +1054,10 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
     assert str(uuid.UUID(fresh_sid)) == fresh_sid, (
         f"fresh sessionId is not a canonical UUID: {_result_diag(result)}"
     )
-    assert "runirSessionId" not in result, (
-        f"unexpected session identity alias: {_result_diag(result)}"
+    _assert_mapping_lacks_key_redacted(
+        result,
+        "runirSessionId",
+        label="unexpected session identity alias",
     )
     assert result.get("memoryInjected") is True, (
         f"expected memoryInjected=true, got {_result_diag(result)}"
@@ -942,7 +1085,11 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
         label="sentinel not model-visible in assistant text "
         f"(result={_result_diag(result)})",
     )
-    assert "warn: capture failed" not in proc.stderr
+    _assert_stderr_lacks_redacted(
+        proc.stderr,
+        "warn: capture failed",
+        label="fresh inject capture must not warn",
+    )
     fresh_trace, fresh_trace_url = _assert_capture_receipt(
         core,
         result=result,
@@ -994,8 +1141,10 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
         f"resume sessionId mismatch: expected {grok_sid!r}, "
         f"got {_result_diag(result2)}"
     )
-    assert "runirSessionId" not in result2, (
-        f"unexpected resume session identity alias: {_result_diag(result2)}"
+    _assert_mapping_lacks_key_redacted(
+        result2,
+        "runirSessionId",
+        label="unexpected resume session identity alias",
     )
     assert result2.get("memoryInjected") is True, (
         f"resume expected memoryInjected=true, got {_result_diag(result2)}"
@@ -1025,7 +1174,11 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
         label="resume sentinel not model-visible "
         f"(result={_result_diag(result2)})",
     )
-    assert "warn: capture failed" not in proc2.stderr
+    _assert_stderr_lacks_redacted(
+        proc2.stderr,
+        "warn: capture failed",
+        label="resume inject capture must not warn",
+    )
     resume_trace, resume_trace_url = _assert_capture_receipt(
         core,
         result=result2,
