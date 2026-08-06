@@ -80,6 +80,105 @@ def provenance_mod():
     return _load_rv("provenance")
 
 
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _secret_meta(value: object) -> dict[str, Any]:
+    """Hash-only view of a secret-bearing string (no plaintext body)."""
+    text = value if isinstance(value, str) else ""
+    return {
+        "sha256": _sha256_text(text),
+        "length": len(text),
+        "nonEmpty": bool(text),
+    }
+
+
+def _assert_secret_equal(actual: object, expected: object, *, label: str) -> None:
+    """Equality without pytest assertion-rewrite dumping secret operands.
+
+    Compares string values via plain ``if``; on mismatch fails with sha256/length
+    metadata only. Drops raw secret locals before ``pytest.fail`` so failure
+    frames do not retain plaintext operands where practical.
+    """
+    a_ok = isinstance(actual, str)
+    e_ok = isinstance(expected, str)
+    a_text = actual if a_ok else ""
+    e_text = expected if e_ok else ""
+    match = a_ok and e_ok and a_text == e_text
+    a_meta = _secret_meta(a_text)
+    e_meta = _secret_meta(e_text)
+    del a_text, e_text, actual, expected
+    if not match:
+        pytest.fail(
+            f"{label}: secret mismatch; actual={a_meta}; expected={e_meta}; "
+            f"actual_type_ok={a_ok}; expected_type_ok={e_ok}"
+        )
+
+
+def _assert_secret_absent(haystack: object, needle: object, *, label: str) -> None:
+    """Negative membership without pytest rewrite dumping secret operands.
+
+    Empty needles fail closed (never silent no-op). Failure diagnostics expose
+    only digest/length metadata for sample and haystack.
+    """
+    text = haystack if isinstance(haystack, str) else ""
+    sample = needle if isinstance(needle, str) else ""
+    if not sample:
+        pytest.fail(f"{label}: forbidden sample must be a non-empty string")
+    present = sample in text
+    sample_meta = _secret_meta(sample)
+    hay_meta = _secret_meta(text)
+    del text, sample, haystack, needle
+    if present:
+        pytest.fail(
+            f"{label}: forbidden sample present; "
+            f"sample={sample_meta}; haystack={hay_meta}"
+        )
+
+
+def test_secret_assert_helpers_failure_diagnostics_are_hash_only():
+    """Regression (pzt.5 secrecy): helper failures never echo plaintext secrets.
+
+    Fail-before-fix class: deliberate mismatch/presence must raise via pytest.fail
+    with only digest/length metadata — never the synthetic API key or haystack body.
+    """
+    secret = "sk-test-secret-key-DO-NOT-LOG-probe"
+    wrong = "sk-other-secret-value-probe"
+    with pytest.raises(pytest.fail.Exception, match="secret mismatch") as eq_exc:
+        _assert_secret_equal(wrong, secret, label="eq-probe")
+    eq_msg = str(eq_exc.value)
+    if secret in eq_msg or wrong in eq_msg:
+        pytest.fail(
+            "eq-probe: failure message leaked plaintext; "
+            f"fail_msg={_secret_meta(eq_msg)}"
+        )
+    assert "sha256" in eq_msg
+    assert "length" in eq_msg
+    assert "eq-probe" in eq_msg
+
+    haystack = f"receipt-prefix {secret} receipt-suffix"
+    with pytest.raises(pytest.fail.Exception, match="forbidden sample present") as ab_exc:
+        _assert_secret_absent(haystack, secret, label="abs-probe")
+    ab_msg = str(ab_exc.value)
+    if secret in ab_msg or haystack in ab_msg:
+        pytest.fail(
+            "abs-probe: failure message leaked plaintext; "
+            f"fail_msg={_secret_meta(ab_msg)}"
+        )
+    assert "sha256" in ab_msg
+    assert "length" in ab_msg
+    assert "abs-probe" in ab_msg
+
+    # Happy paths stay non-vacuous.
+    _assert_secret_equal(secret, secret, label="eq-happy")
+    _assert_secret_absent("clean-receipt-no-key", secret, label="abs-happy")
+    with pytest.raises(pytest.fail.Exception, match="non-empty string"):
+        _assert_secret_absent("anything", "", label="empty-needle")
+    with pytest.raises(pytest.fail.Exception, match="secret mismatch"):
+        _assert_secret_equal(None, secret, label="none-actual")
+
+
 def _write(path: Path, text: str, mode: int = 0o644) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -804,14 +903,19 @@ def test_g3_passes_resolved_api_key_without_logging(
         env=env,
         workspace_path=str(tmp_path / "ws-auth"),
     )
-    assert captured.get("kwargs", {}).get("api_key") == secret
+    # Rewrite-safe: do not put secret operands in assert expressions (pytest rewrite).
+    _assert_secret_equal(
+        captured.get("kwargs", {}).get("api_key"),
+        secret,
+        label="g3-api-key-resolve",
+    )
     g3 = receipt["gates"]["G3_hooks_recall"]
     assert g3["ok"] is True
     assert g3.get("apiKeyPresent") is True
     # Receipt / public gate surface must never embed the secret
     blob = json.dumps(receipt)
-    assert secret not in blob
-    assert "sk-test-secret" not in blob
+    _assert_secret_absent(blob, secret, label="g3-receipt-secret-absent")
+    _assert_secret_absent(blob, "sk-test-secret", label="g3-receipt-prefix-absent")
     assert receipt.get("redacted") is True
 
 
