@@ -136,7 +136,14 @@ def parse_args() -> argparse.Namespace:
             "env and/or RUNIR_ENV_FILE (conflict fails; never invents)."
         ),
     )
-    parser.add_argument("--api-key", default=os.environ.get("RUNIR_API_KEY"))
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help=(
+            "Rúnir API key. Default: process RUNIR_API_KEY then RUNIR_ENV_FILE "
+            "via resolve_credential (never invents DEFAULT_ENV_FILE)."
+        ),
+    )
     parser.add_argument(
         "--canary",
         action="store_true",
@@ -653,7 +660,12 @@ def sync_once(
         uid = effective.user_id
         identity_source = effective.source
         identity_conflict = effective.conflict
-    key = api_key if api_key is not None else os.environ.get("RUNIR_API_KEY")
+    # Parity with resolve_credential / headless inject: process env first, then
+    # RUNIR_ENV_FILE. Never invent DEFAULT_ENV_FILE or other ambient defaults.
+    if api_key is not None:
+        key = (api_key or "").strip() or None
+    else:
+        key = _core.resolve_credential("RUNIR_API_KEY")
     root = (memory_root or _default_memory_root()).expanduser()
     global_path = root / "MEMORY.md"
 

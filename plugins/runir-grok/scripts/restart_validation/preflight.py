@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Preflight gates for Grok restart-validation kits (G1–G6).
 
-G1 Identity resolved via core.resolve_credential order (no invented userId)
+G1 Identity via core.resolve_effective_user_id (fail-loud process≠env-file conflict)
 G2 Canary ownership matches effective runtime identity
-G3 Headless POST /hooks/recall selects expected memoryId (get/search insufficient)
+G3 Headless POST /hooks/recall selects expected memoryId (get/search insufficient);
+   production shape matches headless: client=None, preferredClient, workspace path,
+   resolved RUNIR_API_KEY (process-first then RUNIR_ENV_FILE; never logged)
 G4 Kit permissions all owner-only (0600)
 G5 Bridge contract (ambient present / explicit+headless absent when configured)
 G6 Redaction status — no body-bearing residual (or redacted:true stubs only)
@@ -15,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -43,7 +46,24 @@ def gate_identity(
     *,
     effective_user_id: str | None,
     identity_source: str,
+    identity_conflict: str | None = None,
 ) -> dict[str, Any]:
+    if identity_source == "conflict" or (
+        not effective_user_id and identity_conflict
+    ):
+        return _gate(
+            "G1_identity",
+            False,
+            identitySource="conflict",
+            error="identity_conflict",
+            detail=(
+                identity_conflict
+                or "process and RUNIR_ENV_FILE RUNIR_USER_ID disagree; "
+                "refusing to invent or pick silently"
+            ),
+            effectiveUserIdLength=0,
+            effectiveUserIdDigest="",
+        )
     if not effective_user_id:
         return _gate(
             "G1_identity",
@@ -64,6 +84,42 @@ def gate_identity(
         effectiveUserIdLength=len(effective_user_id),
         effectiveUserIdDigest=common.id_digest(effective_user_id),
     )
+
+
+def resolve_workspace_path(
+    summary: Mapping[str, Any] | None = None,
+    *,
+    workspace_path: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> str | None:
+    """Exact workspace path for G3 headless-shaped recall (not a session id).
+
+    Order: explicit arg → summary.workspacePath|workspace|path → RUNIR_WORKSPACE
+    → cwd (matches headless inject default). Never invents a kit-relative fake.
+    """
+    if workspace_path is not None:
+        cleaned = workspace_path.strip()
+        return cleaned or None
+
+    if isinstance(summary, Mapping):
+        for key in ("workspacePath", "workspace", "path"):
+            raw = summary.get(key)
+            if isinstance(raw, str) and raw.strip():
+                # Reject session-id-like non-paths used by the old G3 bug.
+                val = raw.strip()
+                if val in ("restart-validation-preflight",):
+                    continue
+                return val
+
+    source = os.environ if env is None else env
+    env_ws = (source.get("RUNIR_WORKSPACE") or "").strip()
+    if env_ws:
+        return env_ws
+
+    try:
+        return str(Path.cwd().resolve())
+    except OSError:
+        return None
 
 
 def gate_canary_ownership(
@@ -195,8 +251,16 @@ def gate_hooks_recall(
     cue: str | None,
     recall_fn: Callable[..., Any] | None = None,
     session_id: str = "restart-validation-preflight",
+    workspace_path: str | None = None,
+    api_key: str | None = None,
+    preferred_client: str | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Exercise POST /hooks/recall; require expected headless memoryId in selection."""
+    """Exercise POST /hooks/recall; require expected headless memoryId in selection.
+
+    Production call shape matches headless inject: client=None, preferredClient,
+    exact workspace path, resolved RUNIR_API_KEY. Never log the key.
+    """
     if not effective_user_id:
         return _gate(
             "G3_hooks_recall",
@@ -243,13 +307,44 @@ def gate_hooks_recall(
             detail="provide --cue / --cue-file or canaries.headless.query",
         )
 
+    path = resolve_workspace_path(
+        summary, workspace_path=workspace_path, env=env
+    )
+    if not path:
+        return _gate(
+            "G3_hooks_recall",
+            False,
+            recallPath=RECALL_PATH,
+            error="missing_workspace_path",
+            detail=(
+                "provide --path / workspacePath matching headless recall/Grok/capture"
+            ),
+            expectedMemoryId=expected_id,
+        )
+
+    # API key: process-first then RUNIR_ENV_FILE (never DEFAULT_ENV_FILE invent).
+    source = os.environ if env is None else env
+    if api_key is not None:
+        resolved_key = (api_key or "").strip() or None
+    else:
+        resolved_key = core.resolve_credential("RUNIR_API_KEY", env=dict(source))
+
+    client_pref = (
+        preferred_client
+        if preferred_client is not None
+        else (source.get("RUNIR_GROK_CLIENT") or "").strip() or core.DEFAULT_CLIENT
+    )
+
     fn = recall_fn or core.recall_result
     try:
         result = fn(
             prompt,
             user_id=effective_user_id,
             session_id=session_id,
-            path="restart-validation-preflight",
+            path=path,
+            api_key=resolved_key,
+            client=None,
+            preferred_client=client_pref,
         )
     except TypeError:
         # Allow simpler test doubles: recall_fn(prompt, user_id=...) only
@@ -262,6 +357,9 @@ def gate_hooks_recall(
             error="recall_exception",
             detail=type(exc).__name__,
             expectedMemoryId=expected_id,
+            workspacePath=path,
+            preferredClient=client_pref,
+            apiKeyPresent=bool(resolved_key),
         )
 
     memory_ids: list[str] = []
@@ -280,6 +378,10 @@ def gate_hooks_recall(
         expectedMemoryId=expected_id,
         selectedCount=len(memory_ids),
         selectedHasExpected=selected,
+        workspacePath=path,
+        preferredClient=client_pref,
+        apiKeyPresent=bool(resolved_key),
+        hardClient=None,
         error=None if selected else "expected_memory_not_selected",
         detail=(
             None
@@ -410,6 +512,9 @@ def run_preflight(
     skip_recall: bool = False,
     env: Mapping[str, str] | None = None,
     write_receipt: bool = True,
+    workspace_path: str | None = None,
+    api_key: str | None = None,
+    preferred_client: str | None = None,
 ) -> dict[str, Any]:
     kit_dir = Path(kit_dir).expanduser().resolve()
     summary = common.load_public_summary(kit_dir)
@@ -419,14 +524,16 @@ def run_preflight(
         else kit_dir.name
     )
 
+    identity_conflict: str | None = None
     if effective_user_id is None or identity_source is None:
-        resolved_id, resolved_src = common.resolve_effective_user_id(
+        resolved_id, resolved_src, resolved_conflict = common.resolve_effective_user_id(
             env, override=effective_user_id
         )
         if effective_user_id is None:
             effective_user_id = resolved_id
         if identity_source is None:
             identity_source = resolved_src
+        identity_conflict = resolved_conflict
 
     owners = (
         dict(canary_owners)
@@ -439,6 +546,7 @@ def run_preflight(
     g1 = gate_identity(
         effective_user_id=effective_user_id,
         identity_source=identity_source or "none",
+        identity_conflict=identity_conflict,
     )
     gates.append(g1)
 
@@ -469,6 +577,10 @@ def run_preflight(
             summary=summary,
             cue=cue,
             recall_fn=recall_fn,
+            workspace_path=workspace_path,
+            api_key=api_key,
+            preferred_client=preferred_client,
+            env=env,
         )
     gates.append(g3)
 
@@ -550,6 +662,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--cue-file", type=Path, default=None, help="Read headless cue from file"
     )
     p.add_argument(
+        "--path",
+        dest="workspace_path",
+        default=None,
+        help=(
+            "Exact workspace path for G3 headless-shaped recall "
+            "(must match headless recall/Grok --cwd/capture; default: summary or cwd)"
+        ),
+    )
+    p.add_argument(
+        "--preferred-client",
+        default=None,
+        help="preferredClient for G3 (default: RUNIR_GROK_CLIENT or grok)",
+    )
+    p.add_argument(
         "--skip-bridge",
         action="store_true",
         help="Skip G5 bridge contract (unit kits without bridge dumps)",
@@ -597,6 +723,8 @@ def main(argv: list[str] | None = None) -> int:
         skip_bridge=args.skip_bridge,
         skip_recall=args.skip_recall,
         write_receipt=not args.no_write,
+        workspace_path=args.workspace_path,
+        preferred_client=args.preferred_client,
     )
     # Secrecy-safe stdout
     print(

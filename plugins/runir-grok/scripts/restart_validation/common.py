@@ -392,23 +392,19 @@ def resolve_effective_user_id(
     env: Mapping[str, str] | None = None,
     *,
     override: str | None = None,
-) -> tuple[str | None, str]:
-    """Resolve RUNIR_USER_ID with the same order as core.resolve_credential.
+) -> tuple[str | None, str, str | None]:
+    """Resolve RUNIR_USER_ID via canonical core fail-loud effective identity.
 
-    Never invents a default. Returns (user_id|None, source).
+    Never invents a default and never silently prefers process over a
+    disagreeing RUNIR_ENV_FILE value (process-first resolve_credential is
+    wrong for identity). Returns (user_id|None, source, conflict|None).
     """
     if override is not None:
         cleaned = override.strip()
-        return (cleaned or None, "override")
+        return (cleaned or None, "override", None)
 
-    source = os.environ if env is None else env
-    # Prefer core helper for process env → RUNIR_ENV_FILE
-    value = core.resolve_credential("RUNIR_USER_ID", env=dict(source))
-    if value:
-        if (source.get("RUNIR_USER_ID") or "").strip():
-            return value, "process_env"
-        return value, "runir_env_file"
-    return None, "none"
+    effective = core.resolve_effective_user_id(env)
+    return effective.user_id, effective.source, effective.conflict
 
 
 def ensure_sys_path_for_core() -> None:

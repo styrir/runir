@@ -201,6 +201,52 @@ def test_user_prompt_submit_triggers_sync_after_recall(hook, monkeypatch):
     assert calls == ["recall", "sync"], "sync must run after recall prefetch"
 
 
+def test_standalone_sync_resolves_api_key_from_env_file(tmp_path, monkeypatch):
+    """Rúnir-pzt.5 major 4: memory_bridge --sync uses resolve_credential for key.
+
+    Process-first, then RUNIR_ENV_FILE — not process-only.
+    """
+    bridge = load_bridge()
+    env_path = tmp_path / "runir.env"
+    secret = "sk-bridge-from-env-file"
+    env_path.write_text(
+        "RUNIR_API_KEY=" + secret + "\nRUNIR_USER_ID=owner\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("RUNIR_API_KEY", raising=False)
+    monkeypatch.setenv("RUNIR_ENV_FILE", str(env_path))
+    monkeypatch.delenv("RUNIR_USER_ID", raising=False)
+
+    seen: dict = {}
+
+    def fake_fetch(base, user_id, api_key, *, timeout=10.0):
+        seen["api_key"] = api_key
+        seen["user_id"] = user_id
+        return [{"id": "f1", "text": "from-env-file-key"}], "ok"
+
+    monkeypatch.setattr(bridge, "fetch_runir_facts", fake_fetch)
+    memory_root = tmp_path / "memory"
+    state_dir = tmp_path / "state"
+    once = bridge.sync_once(
+        memory_root=memory_root,
+        state_dir=state_dir,
+        record_throttle=False,
+    )
+    assert once["status"] == "ok"
+    assert seen.get("api_key") == secret
+    assert seen.get("user_id") == "owner"
+    # Process key still wins when both set
+    monkeypatch.setenv("RUNIR_API_KEY", "sk-process-wins")
+    seen.clear()
+    once2 = bridge.sync_once(
+        memory_root=memory_root,
+        state_dir=state_dir,
+        record_throttle=False,
+    )
+    assert once2["status"] == "ok"
+    assert seen.get("api_key") == "sk-process-wins"
+
+
 def test_state_file_records_claim(hook, monkeypatch):
     """should_sync sets inFlight lease + sessions; does not advance lastSyncAt."""
     npath = hook.native_state_path("sess-d")

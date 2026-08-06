@@ -720,3 +720,174 @@ def test_public_surface_is_hash_only(tmp_path, redact_mod, common):
 
     # expected.json dual surface gone
     assert not (kit / "expected.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Rúnir-pzt.5 integration majors — conflict / auth / preferredClient+path
+# ---------------------------------------------------------------------------
+
+
+def test_g1_fail_loud_process_env_file_identity_conflict(
+    tmp_path, preflight_mod, common
+):
+    """Major 1: process≠RUNIR_ENV_FILE must not silently prefer process."""
+    kit = tmp_path / "kit-pzt5-g1"
+    _clean_kit_for_preflight(
+        kit, owners={"ambient": "brooks", "explicit": "brooks", "headless": "brooks"}
+    )
+    env_path = tmp_path / "runir.env"
+    env_path.write_text("RUNIR_USER_ID=owner\n", encoding="utf-8")
+    env = {
+        "RUNIR_USER_ID": "brooks",
+        "RUNIR_ENV_FILE": str(env_path),
+    }
+
+    # Direct helper: conflict, no silent pick
+    uid, src, conflict = common.resolve_effective_user_id(env)
+    assert uid is None
+    assert src == "conflict"
+    assert conflict is not None
+    assert "brooks" in conflict and "owner" in conflict
+
+    receipt = preflight_mod.run_preflight(
+        kit,
+        effective_user_id=None,
+        identity_source=None,
+        cue="value-free-cue-headless",
+        skip_recall=True,
+        write_receipt=False,
+        env=env,
+    )
+    assert receipt["ok"] is False
+    g1 = receipt["gates"]["G1_identity"]
+    assert g1["ok"] is False
+    assert g1.get("error") == "identity_conflict"
+    assert g1.get("identitySource") == "conflict"
+    assert receipt.get("effectiveUserIdLength") == 0
+    # Must not have silently selected process id "brooks"
+    assert g1.get("effectiveUserIdDigest") == ""
+
+
+def test_g3_passes_resolved_api_key_without_logging(
+    tmp_path, preflight_mod, monkeypatch
+):
+    """Major 2: G3 resolves RUNIR_API_KEY (process→env file) and passes it; never logs."""
+    kit = tmp_path / "kit-pzt5-g3-auth"
+    _clean_kit_for_preflight(kit)
+    env_path = tmp_path / "runir.env"
+    secret = "sk-test-secret-key-DO-NOT-LOG"
+    env_path.write_text(f"RUNIR_API_KEY={secret}\n", encoding="utf-8")
+    env = {"RUNIR_ENV_FILE": str(env_path)}
+    # No process key — must fall back to env file
+    monkeypatch.delenv("RUNIR_API_KEY", raising=False)
+
+    captured: dict[str, Any] = {}
+
+    def capture_recall(prompt, user_id="", **kwargs):
+        captured["kwargs"] = dict(kwargs)
+        captured["prompt"] = prompt
+        captured["user_id"] = user_id
+        return SimpleNamespace(memory_ids=[FIXTURE_MEMORY_IDS["headless"]])
+
+    receipt = preflight_mod.run_preflight(
+        kit,
+        effective_user_id="owner",
+        identity_source="override",
+        canary_owners={
+            "ambient": "owner",
+            "explicit": "owner",
+            "headless": "owner",
+        },
+        cue="value-free-cue-headless",
+        recall_fn=capture_recall,
+        write_receipt=True,
+        env=env,
+        workspace_path=str(tmp_path / "ws-auth"),
+    )
+    assert captured.get("kwargs", {}).get("api_key") == secret
+    g3 = receipt["gates"]["G3_hooks_recall"]
+    assert g3["ok"] is True
+    assert g3.get("apiKeyPresent") is True
+    # Receipt / public gate surface must never embed the secret
+    blob = json.dumps(receipt)
+    assert secret not in blob
+    assert "sk-test-secret" not in blob
+    assert receipt.get("redacted") is True
+
+
+def test_g3_headless_shape_preferred_client_and_workspace_path(
+    tmp_path, preflight_mod
+):
+    """Major 3: G3 matches headless — client=None, preferredClient=grok, exact path."""
+    kit = tmp_path / "kit-pzt5-g3-shape"
+    _clean_kit_for_preflight(kit)
+    exact_path = str((tmp_path / "exact-workspace-footprint").resolve())
+    captured: dict[str, Any] = {}
+
+    def capture_recall(prompt, user_id="", **kwargs):
+        captured["kwargs"] = dict(kwargs)
+        return SimpleNamespace(memory_ids=[FIXTURE_MEMORY_IDS["headless"]])
+
+    receipt = preflight_mod.run_preflight(
+        kit,
+        effective_user_id="owner",
+        identity_source="override",
+        canary_owners={
+            "ambient": "owner",
+            "explicit": "owner",
+            "headless": "owner",
+        },
+        cue="value-free-cue-headless",
+        recall_fn=capture_recall,
+        write_receipt=False,
+        workspace_path=exact_path,
+        preferred_client="grok",
+        env={},
+    )
+    kw = captured["kwargs"]
+    assert kw.get("client") is None
+    assert kw.get("preferred_client") == "grok"
+    assert kw.get("path") == exact_path
+    # Old bug used the session id string as path — must not return
+    assert kw.get("path") != "restart-validation-preflight"
+    g3 = receipt["gates"]["G3_hooks_recall"]
+    assert g3["ok"] is True
+    assert g3.get("workspacePath") == exact_path
+    assert g3.get("preferredClient") == "grok"
+    assert g3.get("hardClient") is None
+    assert g3.get("recallPath") == "POST /hooks/recall"
+
+
+def test_g3_reads_workspace_path_from_public_summary(tmp_path, preflight_mod):
+    """G3 threads summary.workspacePath when --path not provided."""
+    kit = tmp_path / "kit-pzt5-g3-summary-path"
+    _clean_kit_for_preflight(kit)
+    summary_path = kit / "public-summary.json"
+    data = json.loads(summary_path.read_text(encoding="utf-8"))
+    configured = str((tmp_path / "from-summary-workspace").resolve())
+    data["workspacePath"] = configured
+    summary_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    os.chmod(summary_path, 0o600)
+
+    captured: dict[str, Any] = {}
+
+    def capture_recall(prompt, user_id="", **kwargs):
+        captured["kwargs"] = dict(kwargs)
+        return SimpleNamespace(memory_ids=[FIXTURE_MEMORY_IDS["headless"]])
+
+    receipt = preflight_mod.run_preflight(
+        kit,
+        effective_user_id="owner",
+        identity_source="override",
+        canary_owners={
+            "ambient": "owner",
+            "explicit": "owner",
+            "headless": "owner",
+        },
+        cue="value-free-cue-headless",
+        recall_fn=capture_recall,
+        write_receipt=False,
+        env={},
+    )
+    assert captured["kwargs"].get("path") == configured
+    assert receipt["gates"]["G3_hooks_recall"].get("workspacePath") == configured
