@@ -313,11 +313,16 @@ describe("model-benchmark-extraction — reasoning configs", () => {
     const luna = DEFAULT_CANDIDATES.find((c) => c.id === "luna-low")!;
     const lunaBody = serializeRequestBody(
       buildEffectiveRequest({ candidate: luna, maxOutputTokens: 256 }),
-      "sys",
-      "user",
+      productionCapturePrompt("2026-07-23T00:00:00.000Z"),
+      buildUserContent([{ role: "user", content: "hi" }]),
     );
     expect(lunaBody.response_format).toEqual({ type: "json_object" });
     expect(lunaBody.reasoning_effort).toBe("low");
+    expect(
+      (lunaBody.messages as Array<{ content: string }>)
+        .map((message) => message.content)
+        .join("\n"),
+    ).toMatch(/\bjson\b/);
 
     const grok = DEFAULT_CANDIDATES.find((c) => c.id === "grok-4.5-low")!;
     const grokBody = serializeRequestBody(

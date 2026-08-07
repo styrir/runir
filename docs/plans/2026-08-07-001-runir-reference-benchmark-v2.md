@@ -1,6 +1,6 @@
 # Rúnir Reference Benchmark v2
 
-**Status:** PHASE 0 COMPLETE — clean commit and six-request pilot approved
+**Status:** PILOT ATTEMPT 1 STOPPED — request-shape fix and replacement pilot approved
 **Date:** 2026-08-07
 **Product boundary:** capture/extraction model quality and Review Studio evidence flow
 **Not a claim about:** complete Rúnir retrieval, correction, decay, or competitor superiority
@@ -11,6 +11,8 @@ Phase 0 is implemented and independently reviewed with no revisions remaining.
 No paid calls were made during this phase.
 The owner approved the clean checkpoint commit and the separately bounded
 six-request paid pilot on 2026-08-07.
+The owner approved the follow-up clean commit and replacement six-request
+pilot on 2026-08-07 after attempt 1 stopped on the provider precondition.
 
 - calibrated planning disclosure uses 7,500 prompt tokens/request;
 - runtime cap prefers valid gateway-billed cost, then token-estimated or
@@ -27,6 +29,30 @@ six-request paid pilot on 2026-08-07.
   rows with zero network access;
 - focused benchmark/adapter tests, Review Studio tests, TypeScript, scoped
   lint, and JavaScript syntax checks pass.
+
+### Pilot attempt 1 — stopped safely
+
+The approved pilot started from clean SHA
+`b71990d84655ac3b70ee02c8582f1f0016a0bed1` through the machine's Infisical
+Universal Auth implementation. Infisical injected `REQUESTY_API_KEY` only into
+the benchmark child process.
+
+- one of six planned requests was sent;
+- Requesty returned HTTP 400 for `openai/gpt-5.6-luna`;
+- the provider required a lowercase `json` token in the input messages when
+  translating `response_format=json_object`;
+- the runner stopped immediately with `model_rejected`; no remaining requests
+  were sent;
+- the immutable partial bundle is
+  `docs/analysis/raw/model-benchmark-v2/pilot-2026-08-07-requesty.*`;
+- no gateway-billed cost was reported; the manifest's `$0.0123` cumulative
+  value is the calibrated fallback estimate, not confirmed billing.
+
+The canonical extraction and segmentation instructions now explicitly include
+lowercase `json` in both system and user messages. A zero-cost serialization
+regression test covers the Requesty/OpenAI JSON-mode precondition. A replacement
+six-request pilot requires a new clean commit and explicit request-count/cost
+approval because attempt 1 consumed one HTTP request.
 
 ## Decision
 

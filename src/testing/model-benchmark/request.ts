@@ -12,7 +12,7 @@ export function buildUserContent(messages: BenchmarkCase["messages"]): string {
   const conversation = messages
     .map((m) => `${m.role === "user" ? "Human" : "Assistant"}: ${m.content}`)
     .join("\n\n");
-  return `Extract facts from this conversation:\n\n${conversation}`;
+  return `Extract facts from this conversation and return a valid json object:\n\n${conversation}`;
 }
 
 /**

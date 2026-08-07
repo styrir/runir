@@ -794,7 +794,7 @@ export async function extractMemories(
         { role: "system", content: promptWithTimestamp },
         {
           role: "user",
-          content: `Extract facts from this conversation:\n\n${conversation}`,
+          content: `Extract facts from this conversation and return a valid json object:\n\n${conversation}`,
         },
       ],
       max_tokens: resolveExtractMaxTokens(),
@@ -1225,7 +1225,7 @@ export async function segmentAndSummarize(
             { role: "system", content: SEGMENTATION_SYSTEM_PROMPT },
             {
               role: "user",
-              content: `Segment this conversation into topics and summarize each:\n\n${transcript}`,
+              content: `Segment this conversation into topics, summarize each, and return a valid json object:\n\n${transcript}`,
             },
           ],
           max_tokens: resolveExtractMaxTokens(),
