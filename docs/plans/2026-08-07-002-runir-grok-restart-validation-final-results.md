@@ -1,15 +1,15 @@
 # Rúnir ↔ Grok Build restart-validation final results
 
-**Test ID:** `grok-restart-20260807T023648Z-04fa44`  
-**Bead (child):** `Rúnir-pzt.4`  
-**Parent epic:** `Rúnir-pzt`  
-**Executed:** 2026-08-07  
-**State / kit directory:** `~/.grok/state/runir/restart-validation/grok-restart-20260807T023648Z-04fa44/`  
-**Report root (this worktree):** `/Users/brooks/.grok/worktrees/code-runir/runir-pzt4-final-validation-12`  
-**Installed source (plugin SoT):** `/Users/brooks/Code/worktrees/runir-pzt-integration` @ `eb1e0e04c4537ef1852f083ef7935bcfcd7ff58d`  
-**Runtime workspace (frozen path):** `/Users/brooks/Code/runir`  
-**Overall decision:** **`mandatory_gates_pass_ambient_native_fail`**  
-**Mandatory Rúnir gates:** **PASS**  
+**Test ID:** `grok-restart-20260807T023648Z-04fa44`
+**Bead (child):** `Rúnir-pzt.4`
+**Parent epic:** `Rúnir-pzt`
+**Executed:** 2026-08-07
+**State / kit directory:** `~/.grok/state/runir/restart-validation/grok-restart-20260807T023648Z-04fa44/`
+**Report root (this worktree):** `/Users/brooks/.grok/worktrees/code-runir/runir-pzt4-final-validation-12`
+**Installed source (plugin SoT):** `/Users/brooks/Code/worktrees/runir-pzt-integration` @ `eb1e0e04c4537ef1852f083ef7935bcfcd7ff58d`
+**Runtime workspace (frozen path):** `/Users/brooks/Code/runir`
+**Overall decision:** **`mandatory_gates_pass_ambient_native_fail`**
+**Mandatory Rúnir gates:** **PASS**
 **Ambient native selection:** **FAIL** (classified separately; does not block mandatory close)
 
 > Historical note: the earlier failed report
@@ -50,7 +50,7 @@ of explicit, TUI, headless, or installed-component transport.
 | baseline.latestDigest (pre-session) | `6de9695619cb7a1eab654cb5f779af9e4d3df6b7a10ef90dd248640e3c146ece` |
 | digest differs from baseline | `true` |
 
-Provenance receipt (kit, redacted): `provenance.json`  
+Provenance receipt (kit, redacted): `provenance.json`
 (`launchMethod=slash_new`, digest above, protocol flags only; no prompt/answer bodies).
 
 ## Executive result
@@ -100,7 +100,7 @@ change.
 | Mandatory Rúnir gates (protocol, explicit, TUI, components, headless, architecture) | **all PASS** | n/a — satisfied |
 | Ambient native selection | **FAIL** | **No** — recorded separately; protocol remains valid |
 
-**Decision string:** `mandatory_gates_pass_ambient_native_fail`  
+**Decision string:** `mandatory_gates_pass_ambient_native_fail`
 **blocking_count:** `0` · **major_count:** `0` · **passed:** `true`
 
 ## Phase A — ambient blind first turn (protocol PASS; native selection FAIL)
