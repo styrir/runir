@@ -59,6 +59,7 @@ export type RunDeps = {
 const SMOKE_CASE_IDS = ["atomic-simple", "multi-claim-split", "fabrication-trap"] as const;
 export const COST_CALIBRATION_PROMPT_TOKENS = 7_500;
 export const COST_CALIBRATION_COMPLETION_TOKENS = 800;
+const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
 
 type BenchmarkRunResult = {
   code: number;
@@ -105,6 +106,10 @@ type RawUsage = {
   cost?: unknown;
   completion_tokens_details?: { reasoning_tokens?: unknown };
   prompt_tokens_details?: { cached_tokens?: unknown };
+  input_tokens?: unknown;
+  output_tokens?: unknown;
+  output_tokens_details?: { reasoning_tokens?: unknown };
+  input_tokens_details?: { cached_tokens?: unknown };
 };
 
 function normalizeUsage(raw: RawUsage | undefined): {
@@ -112,12 +117,36 @@ function normalizeUsage(raw: RawUsage | undefined): {
   billedCostUsd: number | null;
   invalidField?: string;
 } {
+  const promptTokens = raw?.prompt_tokens ?? raw?.input_tokens;
+  const completionTokens = raw?.completion_tokens ?? raw?.output_tokens;
+  const reasoningTokens =
+    raw?.completion_tokens_details?.reasoning_tokens ??
+    raw?.output_tokens_details?.reasoning_tokens;
+  const cachedPromptTokens =
+    raw?.prompt_tokens_details?.cached_tokens ??
+    raw?.input_tokens_details?.cached_tokens;
   const counters: Array<[string, unknown]> = [
-    ["prompt_tokens", raw?.prompt_tokens],
-    ["completion_tokens", raw?.completion_tokens],
+    [
+      raw?.prompt_tokens !== undefined ? "prompt_tokens" : "input_tokens",
+      promptTokens,
+    ],
+    [
+      raw?.completion_tokens !== undefined ? "completion_tokens" : "output_tokens",
+      completionTokens,
+    ],
     ["total_tokens", raw?.total_tokens],
-    ["completion_tokens_details.reasoning_tokens", raw?.completion_tokens_details?.reasoning_tokens],
-    ["prompt_tokens_details.cached_tokens", raw?.prompt_tokens_details?.cached_tokens],
+    [
+      raw?.completion_tokens_details?.reasoning_tokens !== undefined
+        ? "completion_tokens_details.reasoning_tokens"
+        : "output_tokens_details.reasoning_tokens",
+      reasoningTokens,
+    ],
+    [
+      raw?.prompt_tokens_details?.cached_tokens !== undefined
+        ? "prompt_tokens_details.cached_tokens"
+        : "input_tokens_details.cached_tokens",
+      cachedPromptTokens,
+    ],
   ];
   const invalidCounter = counters.find(
     ([, value]) =>
@@ -140,11 +169,11 @@ function normalizeUsage(raw: RawUsage | undefined): {
       : undefined;
   return {
     usage: {
-      promptTokens: counter(raw?.prompt_tokens),
-      completionTokens: counter(raw?.completion_tokens),
+      promptTokens: counter(promptTokens),
+      completionTokens: counter(completionTokens),
       totalTokens: counter(raw?.total_tokens),
-      reasoningTokens: counter(raw?.completion_tokens_details?.reasoning_tokens),
-      cachedPromptTokens: counter(raw?.prompt_tokens_details?.cached_tokens),
+      reasoningTokens: counter(reasoningTokens),
+      cachedPromptTokens: counter(cachedPromptTokens),
     },
     billedCostUsd:
       typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : null,
@@ -154,6 +183,58 @@ function normalizeUsage(raw: RawUsage | undefined): {
         ? { invalidField: "cost" }
         : {}),
   };
+}
+
+function candidateBaseUrl(
+  candidate: Candidate,
+  configuredBaseUrl: string,
+  env: NodeJS.ProcessEnv,
+): string {
+  if (candidate.endpoint !== "openai_direct") return configuredBaseUrl;
+  const configured = env.OPENAI_BASE_URL?.trim().replace(/\/+$/, "");
+  return configured || DEFAULT_OPENAI_BASE_URL;
+}
+
+function candidateCredential(candidate: Candidate, env: NodeJS.ProcessEnv): string | undefined {
+  if (candidate.endpoint === "openai_direct") {
+    const key = env.OPENAI_API_KEY?.trim();
+    return key || undefined;
+  }
+  return resolveApiKey(env);
+}
+
+function candidateCredentialSourceLabel(
+  candidate: Candidate,
+  env: NodeJS.ProcessEnv,
+): string {
+  if (candidate.endpoint === "openai_direct") {
+    return env.OPENAI_API_KEY?.trim() ? "env:OPENAI_API_KEY" : "missing:OPENAI_API_KEY";
+  }
+  return credentialSourceLabel(env);
+}
+
+function candidateRequestPath(candidate: Candidate): "/chat/completions" | "/responses" {
+  return candidate.apiStyle === "responses" ? "/responses" : "/chat/completions";
+}
+
+function responseOutputText(data: Record<string, unknown>): string {
+  if (typeof data.output_text === "string") return data.output_text;
+  const output = Array.isArray(data.output) ? data.output : [];
+  const textParts: string[] = [];
+  for (const item of output) {
+    if (!item || typeof item !== "object") continue;
+    const content = Array.isArray((item as { content?: unknown }).content)
+      ? (item as { content: unknown[] }).content
+      : [];
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue;
+      const typed = part as { type?: unknown; text?: unknown };
+      if (typed.type === "output_text" && typeof typed.text === "string") {
+        textParts.push(typed.text);
+      }
+    }
+  }
+  return textParts.join("");
 }
 
 export function loadCorpus(path: string, readFile: (p: string) => string = readFileSync.bind(null) as (p: string) => string): BenchmarkCase[] {
@@ -166,7 +247,21 @@ export function loadCorpus(path: string, readFile: (p: string) => string = readF
   return cases;
 }
 
-export function selectCases(all: BenchmarkCase[], smoke: boolean): BenchmarkCase[] {
+export function selectCases(
+  all: BenchmarkCase[],
+  smoke: boolean,
+  caseIds?: string[],
+): BenchmarkCase[] {
+  if (caseIds) {
+    if (new Set(caseIds).size !== caseIds.length) {
+      throw new Error("--case-ids must not contain duplicates");
+    }
+    return caseIds.map((id) => {
+      const benchCase = all.find((candidate) => candidate.id === id);
+      if (!benchCase) throw new Error(`Selected case missing from corpus: ${id}`);
+      return benchCase;
+    });
+  }
   if (!smoke) return all;
   const picked = SMOKE_CASE_IDS.map((id) => {
     const c = all.find((x) => x.id === id);
@@ -205,6 +300,9 @@ export function buildDisclosure(args: {
     COST_CALIBRATION_COMPLETION_TOKENS,
     opts.maxOutputTokens,
   );
+  const credentialLabels = [
+    ...new Set(candidates.map((candidate) => candidateCredentialSourceLabel(candidate, env))),
+  ];
   let estimatedTotal: number | null = null;
   let costNote = "Gateway price discovery unavailable; using dated public list-price orientation only.";
   if (candidates.length > 0 && candidates.every((candidate) => candidate.pricePer1M)) {
@@ -234,15 +332,20 @@ export function buildDisclosure(args: {
         modelId: c.modelId,
         reasoning: c.reasoning,
         reasoningSupport: c.reasoningSupport,
+        apiStyle: c.apiStyle ?? "chat_completions",
+        endpoint: c.endpoint ?? "configured",
+        endpointBaseUrl: candidateBaseUrl(c, baseUrl, env),
+        credentialSourceLabel: candidateCredentialSourceLabel(c, env),
         effectiveNotes: eff.notes,
       };
     }),
     corpusSize: cases.length,
+    caseIds: cases.map((benchCase) => benchCase.id),
     smokeMode: opts.smoke,
     repetitions: opts.repetitions,
     plannedRequestCount: requestCount,
     gatewayBaseUrl: baseUrl,
-    credentialSourceLabel: credentialSourceLabel(env),
+    credentialSourceLabel: credentialLabels.join(", "),
     maxOutputTokens: opts.maxOutputTokens,
     timeoutMs: opts.timeoutMs,
     concurrency: opts.concurrency,
@@ -266,7 +369,11 @@ export function buildDisclosure(args: {
 /**
  * Paid-run gate: must fail before any network call when dry-run, missing confirm, or missing credentials.
  */
-export function assertPaidRunAllowed(opts: CliOptions, env: NodeJS.ProcessEnv): void {
+export function assertPaidRunAllowed(
+  opts: CliOptions,
+  env: NodeJS.ProcessEnv,
+  candidates?: Candidate[],
+): void {
   if (opts.dryRun || !opts.confirmCost) {
     throw new Error(
       "Paid run blocked: pass --confirm-cost (and not only --dry-run) after human approval. Default is dry-run with zero network calls.",
@@ -275,9 +382,24 @@ export function assertPaidRunAllowed(opts: CliOptions, env: NodeJS.ProcessEnv): 
   if (env.CI === "true" || env.GITHUB_ACTIONS === "true") {
     throw new Error("Paid run blocked: CI must never execute --confirm-cost model benchmarks.");
   }
-  if (!resolveApiKey(env)) {
+  const missingCredentialSources = candidates
+    ? [
+        ...new Set(
+          candidates
+            .filter((candidate) => !candidateCredential(candidate, env))
+            .map((candidate) =>
+              candidate.endpoint === "openai_direct"
+                ? "OPENAI_API_KEY"
+                : "REQUESTY_API_KEY or OPENROUTER_API_KEY",
+            ),
+        ),
+      ]
+    : resolveApiKey(env)
+      ? []
+      : ["REQUESTY_API_KEY or OPENROUTER_API_KEY"];
+  if (missingCredentialSources.length > 0) {
     throw new Error(
-      "Paid run blocked: missing credentials (set REQUESTY_API_KEY or OPENROUTER_API_KEY). No network call made.",
+      `Paid run blocked: missing credentials from Infisical-injected source(s): ${missingCredentialSources.join(", ")}. No network call made.`,
     );
   }
 }
@@ -383,7 +505,11 @@ export async function runBenchmark(
     // Hash the complete fixture artifact, not only the selected smoke subset.
     // Smoke/full mode is already represented separately in the run config.
     fixtureContent = readFile(fixturesPath);
-    cases = selectCases(loadCorpus(fixturesPath, () => fixtureContent), opts.smoke);
+    cases = selectCases(
+      loadCorpus(fixturesPath, () => fixtureContent),
+      opts.smoke,
+      opts.caseIds,
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     stderr(msg);
@@ -393,8 +519,11 @@ export async function runBenchmark(
   const disclosure = buildDisclosure({ candidates, cases, opts, baseUrl, env });
   const fixtureContentHash = fixtureContentHashFor(fixtureContent);
   const promptTemplateHash = promptTemplateHashFor();
+  const knownSecrets = candidates
+    .map((candidate) => candidateCredential(candidate, env))
+    .filter((value): value is string => Boolean(value));
   const disclosureText = formatPreflightDisclosure(disclosure);
-  assertNoSecrets(disclosureText, [resolveApiKey(env) ?? ""]);
+  assertNoSecrets(disclosureText, knownSecrets);
   stdout(disclosureText);
 
   // Dry-run path: zero network
@@ -411,6 +540,7 @@ export async function runBenchmark(
 
     // Emit synthetic dry-run provenance rows without calling the network
     for (const candidate of candidates) {
+      const requestBaseUrl = candidateBaseUrl(candidate, baseUrl, env);
       const eff = buildEffectiveRequest({
         candidate,
         maxOutputTokens: opts.maxOutputTokens,
@@ -429,7 +559,7 @@ export async function runBenchmark(
             candidateId: candidate.id,
             candidateLabel: candidate.label,
             modelId: candidate.modelId,
-            gatewayBaseUrl: baseUrl,
+            gatewayBaseUrl: requestBaseUrl,
             promptHash: pHash,
             effectiveRequest: eff,
             responseParserVersion: RESPONSE_PARSER_VERSION,
@@ -461,7 +591,7 @@ export async function runBenchmark(
       }
     }
 
-    const safeRows = redactSecrets(rows, [resolveApiKey(env) ?? ""]);
+    const safeRows = redactSecrets(rows, knownSecrets);
     const manifest: RunManifest = {
       schemaVersion: BENCHMARK_SCHEMA_VERSION,
       runId,
@@ -475,7 +605,7 @@ export async function runBenchmark(
         cumulativeCostUsd: 0,
       },
       artifactTargets,
-      disclosure: redactSecrets(disclosure, [resolveApiKey(env) ?? ""]),
+      disclosure: redactSecrets(disclosure, knownSecrets),
       fixtureContentHash,
       promptTemplateHash,
       scoringContractVersion: SCORING_CONTRACT_VERSION,
@@ -508,14 +638,13 @@ export async function runBenchmark(
 
   // Paid path
   try {
-    assertPaidRunAllowed(opts, env);
+    assertPaidRunAllowed(opts, env, candidates);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     stderr(msg);
     return { code: 3, disclosure, rows: [], error: msg };
   }
 
-  const apiKey = resolveApiKey(env)!;
   const git = gitInfo();
   if (opts.requireCleanGit && git.dirty) {
     const msg =
@@ -542,7 +671,7 @@ export async function runBenchmark(
     stopReason?: RunCompletion["stopReason"];
     error?: string;
   }): BenchmarkRunResult => {
-    const safeRows = redactSecrets(rows, [apiKey]);
+    const safeRows = redactSecrets(rows, knownSecrets);
     const completion: RunCompletion = {
       status: args.status,
       plannedRequestCount: disclosure.plannedRequestCount,
@@ -558,7 +687,7 @@ export async function runBenchmark(
       conditionId: opts.conditionId,
       completion,
       artifactTargets,
-      disclosure: redactSecrets(disclosure, [apiKey]),
+      disclosure: redactSecrets(disclosure, knownSecrets),
       fixtureContentHash,
       promptTemplateHash,
       scoringContractVersion: SCORING_CONTRACT_VERSION,
@@ -567,7 +696,7 @@ export async function runBenchmark(
       rowCount: safeRows.length,
     };
     const report = regenerateReportFromRaw(manifest, safeRows);
-    assertNoSecrets(report, [apiKey]);
+    assertNoSecrets(report, knownSecrets);
     try {
       writeArtifacts(
         opts,
@@ -617,6 +746,9 @@ export async function runBenchmark(
         candidate,
         maxOutputTokens: opts.maxOutputTokens,
       });
+      const requestBaseUrl = candidateBaseUrl(candidate, baseUrl, env);
+      const requestPath = candidateRequestPath(candidate);
+      const apiKey = candidateCredential(candidate, env)!;
       for (let rep = 1; rep <= opts.repetitions; rep++) {
         const nextRequestEstimate = capReserveCostUsd(
           candidate,
@@ -662,7 +794,7 @@ export async function runBenchmark(
           | undefined;
 
         try {
-          const res = await fetchImpl(`${baseUrl}/chat/completions`, {
+          const res = await fetchImpl(`${requestBaseUrl}${requestPath}`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -695,12 +827,35 @@ export async function runBenchmark(
               };
             }
           } else {
-            const data = (await res.json()) as {
+            const data = (await res.json()) as Record<string, unknown> & {
               choices?: Array<{ message?: { content?: unknown } }>;
               usage?: RawUsage;
+              status?: unknown;
+              id?: unknown;
+              error?: { message?: unknown } | null;
             };
-            const content = data?.choices?.[0]?.message?.content;
-            rawContent = typeof content === "string" ? content : "";
+            if (candidate.apiStyle === "responses") {
+              rawContent = responseOutputText(data);
+              if (!requestId && typeof data.id === "string") requestId = data.id;
+              if (data.status !== undefined && data.status !== "completed") {
+                errorClass = `response_${String(data.status)}`;
+                const upstreamMessage =
+                  data.error &&
+                  typeof data.error === "object" &&
+                  typeof data.error.message === "string"
+                    ? `: ${data.error.message.slice(0, 200)}`
+                    : "";
+                fatalStop = {
+                  reason: "http_error",
+                  message:
+                    `Responses API returned status ${String(data.status)} for ` +
+                    `${candidate.modelId}${upstreamMessage}. Stopping paid run.`,
+                };
+              }
+            } else {
+              const content = data.choices?.[0]?.message?.content;
+              rawContent = typeof content === "string" ? content : "";
+            }
             const normalizedUsage = normalizeUsage(data.usage);
             usage = normalizedUsage.usage;
             billedCostUsd = normalizedUsage.billedCostUsd;
@@ -763,7 +918,7 @@ export async function runBenchmark(
           candidateId: candidate.id,
           candidateLabel: candidate.label,
           modelId: candidate.modelId,
-          gatewayBaseUrl: baseUrl,
+          gatewayBaseUrl: requestBaseUrl,
           promptHash: pHash,
           effectiveRequest: eff,
           responseParserVersion: RESPONSE_PARSER_VERSION,

@@ -43,6 +43,15 @@ export function parseArgs(argv: string[]): CliOptions {
       case "--fixtures":
         opts.fixturesPath = next();
         break;
+      case "--case-ids":
+        opts.caseIds = next()
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        if (opts.caseIds.length === 0) {
+          throw new Error("--case-ids must contain at least one case id");
+        }
+        break;
       case "--repetitions":
         opts.repetitions = positiveInt(next(), "--repetitions");
         break;
@@ -91,6 +100,9 @@ export function parseArgs(argv: string[]): CliOptions {
         throw new Error(`Unexpected argument: ${a}`);
     }
   }
+  if (opts.smoke && opts.caseIds) {
+    throw new Error("--smoke and --case-ids are mutually exclusive");
+  }
   return opts;
 }
 
@@ -138,11 +150,14 @@ Options:
                            default|primary = 3.1 Flash-Lite, 3.5 Flash-Lite, Luna low, Grok 4.5 low
                            flash-lite      = 3.1 vs 3.5 Flash-Lite only
                            extended|all    = primary + Luna none + Grok high
+                           Requesty Chat candidate: luna-high-requesty
+                           direct Responses candidates: luna-low-responses,luna-max
   --fixtures <path>        Gold corpus JSON (default: fixtures/model-benchmark/corpus.json)
+  --case-ids <ids>         Comma-separated case ids from the corpus
   --repetitions <n>        Repetitions per candidate/case (default: 1)
   --concurrency <n>        Max in-flight paid requests (default: 1)
   --timeout-ms <n>         Per-request timeout (default: 60000)
-  --max-output-tokens <n>  max_tokens (default: 8192)
+  --max-output-tokens <n>  max_tokens/max_output_tokens (default: 8192)
   --condition-id <id>      Stable run condition identity (for example: reference-a)
   --max-total-cost-usd <n> Stop before the next request would cross this runtime cap
   --require-clean-git      Block paid calls unless the worktree is clean
@@ -150,12 +165,14 @@ Options:
                            Permit replacing existing output targets (default: fail closed)
   --dry-run                Default: no network, print preflight disclosure
   --confirm-cost           Required for paid network calls
-  --smoke                  Use the 3 smoke cases only
+  --smoke                  Use the 3 smoke cases only (exclusive with --case-ids)
   --out-raw <path>         JSONL + manifest output prefix (.jsonl)
   --out-report <path>      Markdown report path
   --base-url <url>         Override gateway base URL (no credentials)
   --help                   Show help
 
-Paid runs require OPENROUTER_API_KEY (legacy name) or REQUESTY_API_KEY.
+Configured-gateway runs require REQUESTY_API_KEY or OPENROUTER_API_KEY.
+Direct OpenAI Responses candidates require OPENAI_API_KEY.
+Inject credentials through the approved secret manager; never put them on the command line.
 Never print secret values. CI must not pass --confirm-cost.
 `;

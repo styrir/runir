@@ -249,6 +249,31 @@ describe("runir-model-benchmark/v1 review adapter", () => {
     });
   });
 
+  it("includes API style, endpoint, and actual gateway identity in config provenance", () => {
+    const chatRows = [row({ runId: "chat-run" })];
+    const responsesRows = [
+      row({
+        runId: "responses-run",
+        gatewayBaseUrl: "https://api.openai.com/v1",
+        effectiveRequest: {
+          modelId: "model/a",
+          apiStyle: "responses",
+          endpoint: "openai_direct",
+          max_tokens: 100,
+          textFormat: { type: "json_object" },
+          reasoning: "max",
+          reasoningParam: { reasoning: { effort: "max" } },
+          notes: [],
+        },
+      }),
+    ];
+    const chat = adaptBenchmarkRun(bundle("chat-run", chatRows));
+    const responses = adaptBenchmarkRun(bundle("responses-run", responsesRows));
+
+    expect(chat.configHash).not.toBe(responses.configHash);
+    expect(responses.provenance.compatibility).toBe("verified");
+  });
+
   it("computes aggregate and case deltas with metric direction", () => {
     const baselineRows = [row({ runId: "baseline", latencyMs: 100 })];
     const candidateRows = [
