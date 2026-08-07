@@ -37,13 +37,28 @@ The scorer therefore marks each individually correct claim unsupported and
 reports zero answer completeness.
 
 This conflicts with the production Think prompt's claim-addressable output
-contract, which encourages separate checkable claims. The raw 4/5 score must
-remain unchanged as immutable evidence, but it is not evidence that Luna lost
-or fabricated an identifier.
+contract, which encourages separate checkable claims. The raw 4/5 score remains
+unchanged as immutable evidence, but it is not evidence that Luna lost or
+fabricated an identifier.
 
-The correction is tracked in `Rúnir-41z`. Stage 2 should wait until the fixture
-and scorer accept separately cited gold claims without weakening the existing
-rejection of arbitrary unsupported claims or merged shotgun claims.
+## Zero-network correction verification
+
+`Rúnir-41z` corrects the fixture by representing the bead, path, and URL as
+three independently checkable gold claims backed by the same evidence item.
+The scorer itself remains strict and unchanged.
+
+Re-scoring the five saved responses against the corrected fixture made no
+network calls and produced 5/5 strict passes. The identifier row now has:
+
+- answer completeness `1`;
+- unsupported-claim rate `0`;
+- citation precision `1`;
+- matched gold claims `benchmark-bead`, `benchmark-path`, and `benchmark-url`.
+
+A regression test proves the other side of the contract: one output claim that
+merges all three gold facts remains an unsupported shotgun claim and receives
+zero answer completeness. The original JSONL and manifest retain their exact
+bytes and their original raw 4/5 verdict.
 
 ## Evidence bundle
 

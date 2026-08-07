@@ -85,8 +85,18 @@
       "answerExpected": true,
       "supportedClaims": [
         {
-          "id": "exact-identifiers",
-          "mustContain": ["Rúnir-84d", "/workspace/runir", "http://127.0.0.1:7711/"],
+          "id": "benchmark-bead",
+          "mustContain": ["Rúnir-84d"],
+          "evidenceIds": ["semiote:55555555-5555-4555-8555-555555555555"]
+        },
+        {
+          "id": "benchmark-path",
+          "mustContain": ["/workspace/runir"],
+          "evidenceIds": ["semiote:55555555-5555-4555-8555-555555555555"]
+        },
+        {
+          "id": "benchmark-url",
+          "mustContain": ["http://127.0.0.1:7711/"],
           "evidenceIds": ["semiote:55555555-5555-4555-8555-555555555555"]
         }
       ],

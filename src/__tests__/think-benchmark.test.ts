@@ -23,6 +23,10 @@ const CASE: ThinkBenchmarkCase = {
   },
 };
 
+const FIXTURE_TEXT = readFileSync(join(process.cwd(), "fixtures/think-benchmark/corpus.json"), "utf8");
+const CORPUS = JSON.parse(FIXTURE_TEXT) as ThinkBenchmarkCase[];
+const IDENTIFIER_CASE = CORPUS.find((item) => item.id === "identifier-path-url")!;
+
 function synthesis(claimText: string): ThinkSynthesis {
   return {
     answer: claimText,
@@ -97,17 +101,56 @@ describe("Think deterministic scoring", () => {
     expect(quality.answerCompleteness).toBe(0);
     expect(quality.forbiddenMatches).toEqual(["PostgreSQL"]);
   });
+
+  it("accepts separately cited identifier claims while rejecting one merged claim", () => {
+    const evidenceId = IDENTIFIER_CASE.evidence[0]!.id;
+    const split: ThinkSynthesis = {
+      answer: "Bead Rúnir-84d; path /workspace/runir; URL http://127.0.0.1:7711/.",
+      claims: [
+        { text: "The bead is Rúnir-84d.", citations: [{ id: evidenceId, index: 0 }], droppedCitations: [] },
+        { text: "The path is /workspace/runir.", citations: [{ id: evidenceId, index: 0 }], droppedCitations: [] },
+        { text: "The URL is http://127.0.0.1:7711/.", citations: [{ id: evidenceId, index: 0 }], droppedCitations: [] },
+      ],
+      citations: [{ id: evidenceId, index: 0 }],
+      gaps: [],
+      droppedCitations: [],
+      schemaValid: true,
+      parseClassification: "valid",
+    };
+    const splitQuality = scoreThinkSynthesis(IDENTIFIER_CASE, split, true);
+    expect(splitQuality).toMatchObject({
+      answerCompleteness: 1,
+      unsupportedClaimRate: 0,
+      citationValidity: 1,
+      citationPrecision: 1,
+      citationCompleteness: 1,
+    });
+    expect(splitQuality.matchedClaimIds).toEqual([
+      "benchmark-bead",
+      "benchmark-path",
+      "benchmark-url",
+    ]);
+
+    const merged: ThinkSynthesis = {
+      ...split,
+      claims: [{
+        text: "The bead is Rúnir-84d, the path is /workspace/runir, and the URL is http://127.0.0.1:7711/.",
+        citations: [{ id: evidenceId, index: 0 }],
+        droppedCitations: [],
+      }],
+    };
+    const mergedQuality = scoreThinkSynthesis(IDENTIFIER_CASE, merged, true);
+    expect(mergedQuality.unsupportedClaimRate).toBe(1);
+    expect(mergedQuality.answerCompleteness).toBe(0);
+  });
 });
 
 describe("Think benchmark runner", () => {
-  const fixtureText = readFileSync(join(process.cwd(), "fixtures/think-benchmark/corpus.json"), "utf8");
-  const corpus = JSON.parse(fixtureText) as ThinkBenchmarkCase[];
-
   it("defaults to a zero-network preflight", async () => {
     const fetchFn = vi.fn();
     const result = await runThinkBenchmark([], {
       cwd: process.cwd(),
-      readFile: () => fixtureText,
+      readFile: () => FIXTURE_TEXT,
       fetchFn,
       git: () => ({ sha: "a".repeat(40), dirty: false }),
       log: () => undefined,
@@ -141,7 +184,7 @@ describe("Think benchmark runner", () => {
       "--out-report", "out/think.md",
     ], {
       cwd: "/tmp/runir-think-test",
-      readFile: () => fixtureText,
+      readFile: () => FIXTURE_TEXT,
       fetchFn,
       env: { OPENROUTER_API_KEY: "infisical-injected" },
       git: () => ({ sha: "b".repeat(40), dirty: false }),
@@ -170,7 +213,7 @@ describe("Think benchmark runner", () => {
       "--output-usd-per-1m", "0",
     ], {
       cwd: "/tmp/runir-think-collision-test",
-      readFile: () => fixtureText,
+      readFile: () => FIXTURE_TEXT,
       fetchFn,
       env: { OPENROUTER_API_KEY: "infisical-injected" },
       git: () => ({ sha: "b".repeat(40), dirty: false }),
@@ -205,7 +248,7 @@ describe("Think benchmark runner", () => {
   it("runs the e2e suite through a loopback /memory/think contract without requiring a model key in the runner", async () => {
     const fetchFn = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       const request = JSON.parse(String(init?.body)) as { question: string };
-      const benchmarkCase = corpus.find((item) => item.question === request.question)!;
+      const benchmarkCase = CORPUS.find((item) => item.question === request.question)!;
       const claims = benchmarkCase.gold.supportedClaims.map((claim) => ({
         text: claim.mustContain.join(" "),
         citations: claim.evidenceIds.map((id, index) => ({ id, index })),
@@ -247,7 +290,7 @@ describe("Think benchmark runner", () => {
       "--out-report", "out/e2e.md",
     ], {
       cwd: "/tmp/runir-think-e2e-test",
-      readFile: () => fixtureText,
+      readFile: () => FIXTURE_TEXT,
       fetchFn,
       env: {},
       git: () => ({ sha: "c".repeat(40), dirty: false }),

@@ -288,11 +288,15 @@ That model choice is independent from capture extraction.
 
 The first clean paid fixed-evidence Luna run completed 5/5 requests with HTTP
 200 and schema-valid output for `$0.0008986` in observed gateway billing. The
-frozen scorer recorded 4/5 strict passes. Review of the fifth row found that
-Luna preserved the exact bead, path, and URL and cited the correct evidence,
-but the fixture modeled those three separately checkable facts as one compound
-gold claim. The raw result remains immutable; `Rúnir-41z` tracks the harness
-correction that must land before the end-to-end stage.
+original frozen scorer recorded 4/5 strict passes. Review of the fifth row
+found that Luna preserved the exact bead, path, and URL and cited the correct
+evidence, but the fixture modeled those three separately checkable facts as one
+compound gold claim.
+
+`Rúnir-41z` corrects the fixture by splitting those facts into three gold
+claims. A zero-network re-score of the unchanged paid responses produces 5/5
+strict passes, while regression coverage confirms that a merged shotgun claim
+still fails. The original raw result and its 4/5 verdict remain immutable.
 
 See
 [`docs/analysis/luna-think-synthesis-2026-08-07-requesty-review.md`](analysis/luna-think-synthesis-2026-08-07-requesty-review.md)
