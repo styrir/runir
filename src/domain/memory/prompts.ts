@@ -12,7 +12,7 @@ Preserve BOTH:
 1. developer/code/project facts, including exact technical artifacts; and
 2. personal/social/episodic facts, including preferences, people, relationships, events, updates, and negative facts.
 
-Return ONLY valid JSON in this exact shape:
+Return ONLY a valid json object (JSON) in this exact shape:
 
 {
   "facts": [
@@ -345,4 +345,4 @@ This conversation is being captured because the session is about to be reset. Pa
 These work-in-progress facts are HIGH PRIORITY — they are the most likely to be lost on reset and the most valuable for session continuity.`;
 
 /** System prompt for session topic segmentation. */
-export const SEGMENTATION_SYSTEM_PROMPT = `You are a session analyst. Given a conversation transcript, identify distinct topics discussed and write a concise summary for each. Return ONLY valid JSON: { "topics": [{"title": "...", "summary": "..."}, ...] }. Aim for 1-8 topics per session.`;
+export const SEGMENTATION_SYSTEM_PROMPT = `You are a session analyst. Given a conversation transcript, identify distinct topics discussed and write a concise summary for each. Return ONLY a valid json object (JSON): { "topics": [{"title": "...", "summary": "..."}, ...] }. Aim for 1-8 topics per session.`;
