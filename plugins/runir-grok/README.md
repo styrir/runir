@@ -21,7 +21,32 @@ Native Grok lifecycle adapter for Rúnir (thin HTTP client).
 | `skills/runir/SKILL.md` | `/runir` slash skill (SoT; user-invocable) |
 | `skills/runir-recall/SKILL.md` | Explicit recall skill (**prompt-blind / session-stale** ambient is not enough) |
 | `scripts/memory_bridge.py` | Idempotent `[memory]` config + write-only **global** MEMORY.md bridge |
+| `scripts/restart_validation/` | Versioned restart-validation kit (hash-only public surface, 0600 redact, preflight G1–G6, provenance sidecar) |
 | `tests/` | Unit/integration + isolated-`GROK_HOME` canaries |
+
+### Restart-validation kit (Rúnir-pzt.3)
+
+After a self-test setup under `$GROK_HOME/state/runir/restart-validation/<testId>/`:
+
+```bash
+# Post-self-test: remove body dumps, force 0600, emit redact-receipt.json
+python3 plugins/runir-grok/scripts/restart_validation/redact.py --kit-dir "$STATE"
+
+# Preflight must pass before a blind fresh-session rerun (identity, ownership,
+# POST /hooks/recall selection, perms, bridge, redaction). Never invents userId.
+python3 plugins/runir-grok/scripts/restart_validation/preflight.py --kit-dir "$STATE"
+
+# Hash-only answer check (no plaintext echo)
+python3 plugins/runir-grok/scripts/restart_validation/validate_answer.py \
+  --kind ambient --answer-file "$STATE/ambient.answer.txt" --kit-dir "$STATE"
+
+# Provenance sidecar AFTER the blind turn (does not touch blind-prompt files)
+python3 plugins/runir-grok/scripts/restart_validation/provenance.py --kit-dir "$STATE" \
+  --set launchMethod=fresh_quit_relaunch --set firstPromptIsBlindAmbient=true \
+  --set blindPromptOrdinal=1 --set grokSessionId="$SESSION"
+```
+
+Self-tests: `pytest plugins/runir-grok/tests/test_restart_validation_kit.py -q`
 
 ## Lifecycle (TUI floor — honest)
 
@@ -153,7 +178,10 @@ Flow:
    turn, or use the existing `--resume` UUID for a resumed turn. Use that same
    UUID for recall and capture.
 2. `POST /hooks/recall` → `prependContext` + `retrievalTraceId` + `memoryIds`
-   (fail-open empty inject on error).
+   (fail-open empty inject on error). Headless recall softens **client only**
+   via `preferredClient` (default `grok`) so null-client working-tier noemas can
+   rank under prefer mode; it does **not** send hard `client`. Workspace `path`
+   is the same immutable footprint as Grok `--cwd` and capture (receipt identity).
 3. Build `grok --prompt-json` content blocks: **memory text first** (with
    `RECALL_FEEDBACK_PREFIX` untrusted envelope), **user prompt second**. Never
    sets `systemPromptOverride`.
@@ -161,7 +189,8 @@ Flow:
    pre-generated UUID with `--session-id`; resume turns pass only `--resume`.
    `RUNIR_GROK_DISABLE_GATE=1` makes installed TUI hooks no-op for this child
    (including first-turn native publish). Credentials (`RUNIR_API_KEY`,
-   `RUNIR_ENV_FILE`) are stripped from the child env.
+   `RUNIR_ENV_FILE`) are stripped from the child env. `--cwd` uses the same
+   workspace path as recall and capture.
 5. Parses Grok `sessionId` + `modelUsage.*.modelCalls`, preferring the summed
    raw `modelUsage` counters over compatibility fallbacks, then requires Grok's
    returned `sessionId` to exactly match the UUID used for recall. A missing or
@@ -169,11 +198,13 @@ Flow:
    gate re-burn or tool loop occurs under `--max-turns 1`.
 6. `POST /hooks/capture` with the **original** user text + assistant reply,
    plus the verified real Grok `sessionId`, `retrievalTraceId`, and `memoryIds`.
-   The headless client requests an opt-in capture receipt; Rúnir validates those
-   fields against the owner-scoped retrieval trace and persists the exact prompt
-   and answer on that trace for `GET /hooks/traces/:id` readback. This is capture
-   evidence, not usefulness feedback. Skipped under `--no-capture`; capture failure
-   remains non-fatal to the returned model answer.
+   Capture attributes hard `client=grok` as **write provenance** and the same
+   workspace `path` as recall. The headless client requests an opt-in capture
+   receipt; Rúnir validates those fields against the owner-scoped retrieval
+   trace (path/projectKey footprint must match) and persists the exact prompt
+   and answer on that trace for `GET /hooks/traces/:id` readback. This is
+   capture evidence, not usefulness feedback. Skipped under `--no-capture`;
+   capture failure remains non-fatal to the returned model answer.
 
 ### Flags
 
@@ -242,8 +273,13 @@ pytest plugins/runir-grok/tests -q
 RUNIR_E2E=1 \
 RUNIR_E2E_EXPECTED_HEAD="$(git rev-parse HEAD)" \
 pytest plugins/runir-grok/tests/test_e2e_headless_live.py -q -s
-# The live canary hard-requires fresh + resumed receipt readback for the exact
-# sessionId, retrievalTraceId, memoryIds, original prompt, and final answer.
+# Printed live evidence is hash-only: sha256 digests, lengths, booleans, and
+# non-sensitive ids (session/trace/memory). Prompt, answer, recall context,
+# and owner userId query strings are not emitted in the proof JSON or in
+# live-test assertion diagnostics. Unit regression
+# `test_live_proof_serialization_is_hash_only_no_plaintext` enforces the
+# serialized proof contract. Receipt equality against prompt/answer is still
+# checked in memory; only serialized/log evidence is redacted.
 ```
 
 ## Non-goals

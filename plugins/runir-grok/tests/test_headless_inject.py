@@ -8,7 +8,9 @@ import pytest
 
 
 @pytest.fixture
-def inject(load_inject):
+def inject(load_inject, monkeypatch):
+    # Avoid host RUNIR_ENV_FILE conflicting with per-test process RUNIR_USER_ID.
+    monkeypatch.delenv("RUNIR_ENV_FILE", raising=False)
     return load_inject()
 
 
@@ -279,8 +281,14 @@ def test_run_inject_exit_4_on_unparseable(inject, monkeypatch):
 def test_run_inject_exit_2_missing_user(inject, monkeypatch):
     monkeypatch.delenv("RUNIR_USER_ID", raising=False)
     monkeypatch.setenv("RUNIR_ENV_FILE", "")
-    # Force resolve to None even if process has RUNIR_USER_ID from ambient.
-    monkeypatch.setattr(inject.core, "resolve_credential", lambda *a, **k: None)
+    # Effective resolver (not process-first credential) must see no identity.
+    monkeypatch.setattr(
+        inject.core,
+        "resolve_effective_user_id",
+        lambda *a, **k: inject.core.EffectiveUserId(
+            user_id=None, source="none", conflict=None
+        ),
+    )
     code = inject.run_inject("hi", no_capture=True)
     assert code == 2
 

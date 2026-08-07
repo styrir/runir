@@ -11,6 +11,7 @@ RUNIR_GROK_DISABLE_GATE=1 is actually honored by the hook process.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -19,6 +20,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import pytest
@@ -222,9 +224,15 @@ def _read_trace(
     result = core.get_json(trace_url, timeout=20.0, api_key=api_key)
     assert result, f"trace read failed for {trace_id!r}"
     status, body = result
-    assert 200 <= status < 300, f"trace read status={status}: {body!r}"
-    trace = body.get("trace")
-    assert isinstance(trace, dict), f"trace read missing trace object: {body!r}"
+    assert 200 <= status < 300, (
+        f"trace read status={status}: body_keys="
+        f"{sorted(body.keys()) if isinstance(body, dict) else type(body).__name__}"
+    )
+    trace = body.get("trace") if isinstance(body, dict) else None
+    assert isinstance(trace, dict), (
+        f"trace read missing trace object: body_keys="
+        f"{sorted(body.keys()) if isinstance(body, dict) else type(body).__name__}"
+    )
     return trace, trace_url
 
 
@@ -237,9 +245,9 @@ def _assert_capture_receipt(
     api_key: str | None,
 ) -> tuple[dict, str]:
     trace_id = result.get("retrievalTraceId")
-    assert trace_id, f"missing retrievalTraceId: {result!r}"
+    assert trace_id, f"missing retrievalTraceId: {_result_diag(result)}"
     expected_memory_ids = list(result.get("memoryIds") or [])
-    assert expected_memory_ids, f"expected live recall memoryIds: {result!r}"
+    assert expected_memory_ids, f"expected live recall memoryIds: {_result_diag(result)}"
 
     trace, trace_url = _read_trace(
         core,
@@ -248,19 +256,88 @@ def _assert_capture_receipt(
         api_key=api_key,
     )
     assert trace.get("id") == trace_id, (
-        f"trace readback id mismatch: expected {trace_id!r}, got {trace!r}"
+        f"trace readback id mismatch: expected {trace_id!r}, "
+        f"got id={trace.get('id')!r}"
     )
     receipt = trace.get("captureReceipt")
-    assert isinstance(receipt, dict), f"capture receipt not persisted: {trace!r}"
+    assert isinstance(receipt, dict), (
+        f"capture receipt not persisted: keys={sorted(trace.keys())!r}"
+    )
     assert receipt.get("retrievalTraceId") == trace_id
     assert receipt.get("sessionId") == result.get("sessionId")
     assert receipt.get("memoryIds") == expected_memory_ids
-    assert receipt.get("prompt") == prompt
-    assert receipt.get("answer") == result.get("text")
+    # Use pytest.fail helpers so assertion rewriting cannot dump bodies.
+    _assert_text_equal_redacted(
+        receipt.get("prompt"), prompt, label="receipt.prompt"
+    )
+    _assert_text_equal_redacted(
+        receipt.get("answer"), result.get("text"), label="receipt.answer"
+    )
     assert trace.get("sessionId") == result.get("sessionId")
-    assert trace.get("prompt") == prompt
+    _assert_text_equal_redacted(
+        trace.get("prompt"), prompt, label="trace.prompt"
+    )
     assert [item.get("id") for item in trace.get("items") or []] == expected_memory_ids
     return trace, trace_url
+
+
+def _seed_body_diag(body: object) -> dict[str, Any]:
+    """Seed capture diagnostics: keys/booleans/type-checked counts only.
+
+    Never includes raw body values or error free text. Safe for pytest.fail
+    messages and for any residual assert messaging.
+    """
+    if not isinstance(body, dict):
+        return {"type": type(body).__name__}
+    facts = body.get("factsFound")
+    # bool is a subclass of int — reject it so True/False never count as facts.
+    if isinstance(facts, bool) or not isinstance(facts, int):
+        facts_meta: dict[str, Any] = {
+            "present": "factsFound" in body,
+            "type": type(facts).__name__ if facts is not None else "NoneType",
+            "positive": False,
+        }
+    else:
+        facts_meta = {
+            "present": True,
+            "type": "int",
+            "count": facts,
+            "positive": facts > 0,
+        }
+    return {
+        "keys": sorted(str(k) for k in body.keys()),
+        "skipped": body.get("skipped") is True,
+        "hasError": "error" in body,
+        "factsFound": facts_meta,
+    }
+
+
+def _assert_seed_capture_response(status: object, body: object) -> dict:
+    """Validate seed capture without pytest rewrite dumping body/error free text.
+
+    Ordered plain ``if`` + ``pytest.fail`` (keys/booleans/counts/digest meta only):
+    mapping type → error → HTTP status → skipped → factsFound.
+    Error is checked before other response-status checks so an error-bearing
+    mapping never reaches rewriteable ``body.get("skipped")`` / factsFound
+    asserts that would render the full body (including error free text).
+    """
+    if not isinstance(body, dict):
+        pytest.fail(
+            f"seed capture body not a mapping: type={type(body).__name__}"
+        )
+    diag = _seed_body_diag(body)
+    # Error first — before status/skipped/factsFound.
+    if "error" in body:
+        pytest.fail(f"seed capture error: {diag}")
+    if not isinstance(status, int) or not (200 <= status < 300):
+        # status is int/non-int only; never interpolate body or error value.
+        pytest.fail(f"seed capture status={status!r}: {diag}")
+    if body.get("skipped") is True:
+        pytest.fail(f"seed capture skipped: {diag}")
+    facts = body.get("factsFound", 0)
+    if isinstance(facts, bool) or not isinstance(facts, int) or facts <= 0:
+        pytest.fail(f"seed capture extracted no facts: {diag}")
+    return body
 
 
 def _seed_fact(
@@ -293,11 +370,7 @@ def _seed_fact(
     )
     assert result, "seed capture request failed — is Rúnir running?"
     status, body = result
-    assert 200 <= status < 300, f"seed capture status={status}: {body!r}"
-    assert body.get("skipped") is not True, f"seed capture skipped: {body!r}"
-    assert "error" not in body, f"seed capture error: {body!r}"
-    assert body.get("factsFound", 0) > 0, f"seed capture extracted no facts: {body!r}"
-    return body
+    return _assert_seed_capture_response(status, body)
 
 
 def _repo_state() -> tuple[str, str, bool]:
@@ -333,10 +406,16 @@ def _repo_state() -> tuple[str, str, bool]:
 
 def _strict_model_usage_calls(inject, result: dict) -> int:
     usage = result.get("modelUsage")
-    assert isinstance(usage, dict), f"live proof requires raw modelUsage: {result!r}"
+    assert isinstance(usage, dict), (
+        f"live proof requires raw modelUsage: {_result_diag(result)}"
+    )
     total, fields_present = inject.sum_model_usage_calls(usage)
-    assert fields_present, f"live proof requires modelUsage modelCalls: {result!r}"
-    assert total is not None, f"live proof rejects malformed modelUsage: {result!r}"
+    assert fields_present, (
+        f"live proof requires modelUsage modelCalls: {_result_diag(result)}"
+    )
+    assert total is not None, (
+        f"live proof rejects malformed modelUsage: {_result_diag(result)}"
+    )
     return total
 
 
@@ -408,21 +487,540 @@ def test_repo_state_returns_required_exact_match(monkeypatch):
     assert _repo_state() == (expected_head, expected_head, True)
 
 
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _text_digest_meta(value: str | None) -> dict[str, Any]:
+    """Hash-only view of a sensitive string (no plaintext body)."""
+    text = value if isinstance(value, str) else ""
+    return {
+        "sha256": _sha256_text(text),
+        "length": len(text),
+        "nonEmpty": bool(text),
+    }
+
+
 def _owner_trace_proof(trace: dict) -> dict:
+    """Owner-scoped receipt evidence: digests/lengths/ids only (no bodies)."""
     receipt = trace["captureReceipt"]
     return {
         "id": trace.get("id"),
         "sessionId": trace.get("sessionId"),
-        "prompt": trace.get("prompt"),
+        "prompt": _text_digest_meta(trace.get("prompt")),
         "memoryIds": [item.get("id") for item in trace.get("items") or []],
         "captureReceipt": {
             "retrievalTraceId": receipt.get("retrievalTraceId"),
             "sessionId": receipt.get("sessionId"),
             "memoryIds": receipt.get("memoryIds"),
-            "prompt": receipt.get("prompt"),
-            "answer": receipt.get("answer"),
+            "prompt": _text_digest_meta(receipt.get("prompt")),
+            "answer": _text_digest_meta(receipt.get("answer")),
         },
     }
+
+
+def _wrapper_json_proof(result: dict) -> dict[str, Any]:
+    """Serialize inject wrapper fields without assistant text / prompt bodies."""
+    return {
+        "sessionId": result.get("sessionId"),
+        "retrievalTraceId": result.get("retrievalTraceId"),
+        "memoryIds": list(result.get("memoryIds") or []),
+        "memoryInjected": result.get("memoryInjected"),
+        "modelCalls": result.get("modelCalls"),
+        "modelCallsSource": result.get("modelCallsSource"),
+        "promptBlockOrder": result.get("promptBlockOrder"),
+        "answer": _text_digest_meta(result.get("text")),
+    }
+
+
+def _redact_url_query(url: str) -> str:
+    """Drop query/fragment (e.g. userId) from proof URLs."""
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def _model_usage_proof(usage: object) -> dict[str, Any]:
+    """Numeric-only modelUsage summary (no free-text keys or nested strings).
+
+    Untrusted Grok payloads may carry extra string fields; never serialize them.
+    Model ids are reduced to short digests; only non-negative modelCalls ints
+    are retained.
+    """
+    if not isinstance(usage, dict):
+        return {
+            "present": False,
+            "modelCount": 0,
+            "summedModelCalls": 0,
+            "entries": [],
+        }
+    entries: list[dict[str, Any]] = []
+    total = 0
+    for key, row in usage.items():
+        if not isinstance(row, dict):
+            continue
+        value = row.get("modelCalls")
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            continue
+        key_text = key if isinstance(key, str) else ""
+        entries.append(
+            {
+                "modelKeySha256_12": _sha256_text(key_text)[:12],
+                "modelCalls": value,
+            }
+        )
+        total += value
+    entries.sort(key=lambda item: (item["modelKeySha256_12"], item["modelCalls"]))
+    return {
+        "present": True,
+        "modelCount": len(entries),
+        "summedModelCalls": total,
+        "entries": entries,
+    }
+
+
+def _process_stdout_diag(stdout: str) -> dict[str, Any]:
+    """Hash-only view of inject stdout (JSON wrapper or opaque blob)."""
+    try:
+        parsed = json.loads(stdout)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {"kind": "opaque", **_text_digest_meta(stdout)}
+    if isinstance(parsed, dict):
+        return {"kind": "wrapper", **_wrapper_json_proof(parsed)}
+    return {"kind": "opaque", **_text_digest_meta(stdout)}
+
+
+def _result_diag(result: dict) -> str:
+    """Stable hash-only diagnostic for assertion messages (no bodies)."""
+    return _serialize_live_proof(_wrapper_json_proof(result))
+
+
+def _serialize_live_proof(proof: dict) -> str:
+    """Canonical proof JSON (same shape as pytest -s stdout dump)."""
+    return json.dumps(proof, ensure_ascii=False, sort_keys=True)
+
+
+def _assert_proof_has_no_plaintext(serialized: str, forbidden: list[str]) -> None:
+    """Fail closed without pytest rewrite dumping the forbidden bodies."""
+    samples = [s for s in forbidden if isinstance(s, str) and s]
+    if not samples:
+        pytest.fail("forbidden samples must include at least one non-empty string")
+    for sample in samples:
+        if sample in serialized:
+            # Digest-only message: do not interpolate sample or serialized body.
+            pytest.fail(
+                "live proof serialization must not contain plaintext canary bodies "
+                f"(sample={_text_digest_meta(sample)}; "
+                f"serialized={_text_digest_meta(serialized)})"
+            )
+
+
+def _assert_text_equal_redacted(actual: object, expected: object, *, label: str) -> None:
+    """Equality without pytest assertion-rewrite dumping plaintext operands."""
+    if actual != expected:
+        pytest.fail(
+            f"{label} mismatch: actual={_text_digest_meta(actual if isinstance(actual, str) else '')} "
+            f"expected={_text_digest_meta(expected if isinstance(expected, str) else '')}"
+        )
+
+
+def _assert_contains_redacted(haystack: object, needle: str, *, label: str) -> None:
+    """Membership check without dumping haystack plaintext on failure."""
+    text = haystack if isinstance(haystack, str) else ""
+    if needle not in text:
+        pytest.fail(f"{label}: needle absent; haystack={_text_digest_meta(text)}")
+
+
+def _assert_not_contains_redacted(
+    haystack: object, needle: str, *, label: str
+) -> None:
+    """Negative membership without pytest rewrite dumping plaintext operands.
+
+    pytest rewrites ``assert secret not in msg`` so a failure can echo the
+    secret/owner/model free-text operand. Call this helper instead: it uses
+    plain ``if`` + ``pytest.fail`` with digest/length metadata only.
+    """
+    text = haystack if isinstance(haystack, str) else ""
+    sample = needle if isinstance(needle, str) else ""
+    if not sample:
+        # Fail closed: empty canary would make ``not in`` always false-pass.
+        pytest.fail(f"{label}: forbidden sample must be a non-empty string")
+    if sample in text:
+        pytest.fail(
+            f"{label}: forbidden sample present; "
+            f"sample={_text_digest_meta(sample)}; "
+            f"haystack={_text_digest_meta(text)}"
+        )
+
+
+def _assert_mapping_lacks_key_redacted(
+    mapping: object, key: str, *, label: str
+) -> None:
+    """Dict key absence without pytest rewrite dumping mapping values.
+
+    ``assert key not in result`` rewrites and can dump ``result`` including
+    assistant ``text`` / secrets. Fail with keys-only metadata.
+    """
+    if not isinstance(mapping, dict):
+        pytest.fail(f"{label}: expected dict, got {type(mapping).__name__}")
+    if key in mapping:
+        pytest.fail(
+            f"{label}: unexpected key present; "
+            f"keys={sorted(str(k) for k in mapping.keys())}"
+        )
+
+
+def _assert_stderr_lacks_redacted(stderr: object, needle: str, *, label: str) -> None:
+    """stderr negative check without dumping raw process stderr on failure."""
+    text = stderr if isinstance(stderr, str) else ""
+    sample = needle if isinstance(needle, str) else ""
+    if not sample:
+        pytest.fail(f"{label}: forbidden sample must be a non-empty string")
+    if sample in text:
+        pytest.fail(
+            f"{label}: forbidden stderr sample present; "
+            f"sample={_text_digest_meta(sample)}; "
+            f"stderr={_text_digest_meta(text)}"
+        )
+
+
+def test_assert_not_contains_redacted_failure_diagnostics_are_hash_only():
+    """Regression (M2): sanitizer failure must not serialize plaintext operands.
+
+    Fail-before-fix class: a deliberate mismatch must raise via pytest.fail
+    with only digest/length metadata — never the secret or haystack body.
+    """
+    secret = "RUNIR-E2E-NEG-ASSERT-PLAINTEXT-do-not-emit"
+    haystack = f"wrapper-prefix {secret} wrapper-suffix"
+    with pytest.raises(pytest.fail.Exception, match="forbidden sample present") as excinfo:
+        _assert_not_contains_redacted(
+            haystack, secret, label="neg-assert-probe"
+        )
+    fail_msg = str(excinfo.value)
+    # Plain if + pytest.fail: do not use rewriteable ``assert secret not in``.
+    if secret in fail_msg:
+        pytest.fail(
+            "neg-assert-probe: failure message leaked plaintext sample; "
+            f"sample={_text_digest_meta(secret)}; "
+            f"fail_msg={_text_digest_meta(fail_msg)}"
+        )
+    if haystack in fail_msg:
+        pytest.fail(
+            "neg-assert-probe: failure message leaked plaintext haystack; "
+            f"haystack={_text_digest_meta(haystack)}; "
+            f"fail_msg={_text_digest_meta(fail_msg)}"
+        )
+    assert "sha256" in fail_msg
+    assert "length" in fail_msg
+    assert "neg-assert-probe" in fail_msg
+    # Happy path: clean haystack must not raise.
+    _assert_not_contains_redacted(
+        "only digests here sha256=abc length=0",
+        secret,
+        label="clean-haystack",
+    )
+    # Empty needle fails closed (never silent no-op).
+    with pytest.raises(pytest.fail.Exception, match="non-empty string"):
+        _assert_not_contains_redacted("anything", "", label="empty-needle")
+    # Mapping / stderr helpers: failure diagnostics stay non-plaintext.
+    dirty_result = {"sessionId": "sid", "text": secret, "runirSessionId": "alias"}
+    with pytest.raises(pytest.fail.Exception, match="unexpected key present") as key_exc:
+        _assert_mapping_lacks_key_redacted(
+            dirty_result, "runirSessionId", label="alias-probe"
+        )
+    key_msg = str(key_exc.value)
+    if secret in key_msg:
+        pytest.fail(
+            "alias-probe: failure message leaked result text; "
+            f"sample={_text_digest_meta(secret)}; "
+            f"fail_msg={_text_digest_meta(key_msg)}"
+        )
+    dirty_stderr = f"warn: capture failed detail={secret}"
+    with pytest.raises(pytest.fail.Exception, match="forbidden stderr sample") as err_exc:
+        _assert_stderr_lacks_redacted(
+            dirty_stderr, "warn: capture failed", label="stderr-probe"
+        )
+    err_msg = str(err_exc.value)
+    if secret in err_msg:
+        pytest.fail(
+            "stderr-probe: failure message leaked stderr body; "
+            f"sample={_text_digest_meta(secret)}; "
+            f"fail_msg={_text_digest_meta(err_msg)}"
+        )
+    if dirty_stderr in err_msg:
+        pytest.fail(
+            "stderr-probe: failure message leaked full stderr; "
+            f"stderr={_text_digest_meta(dirty_stderr)}; "
+            f"fail_msg={_text_digest_meta(err_msg)}"
+        )
+
+
+def test_seed_capture_response_validation_is_rewrite_safe():
+    """Regression (M2 residual): seed status/skipped/error/facts never dump free text.
+
+    Fail-before-fix: an error-bearing mapping that is also skipped must fail
+    via plain pytest.fail with keys/booleans/counts only — never the error
+    free-text body. pytest rewriting of body.get asserts would otherwise
+    render the full mapping before the sanitized error branch.
+    """
+    secret_error = "RUNIR-E2E-SEED-ERROR-PLAINTEXT-do-not-emit"
+    secret_detail = "RUNIR-E2E-SEED-DETAIL-PLAINTEXT-do-not-emit"
+
+    # Combined skipped + error (the residual finding class).
+    dirty = {
+        "skipped": True,
+        "error": secret_error,
+        "factsFound": 0,
+        "detail": secret_detail,
+        "message": secret_error,
+    }
+    with pytest.raises(pytest.fail.Exception, match="seed capture error") as excinfo:
+        _assert_seed_capture_response(200, dirty)
+    fail_msg = str(excinfo.value)
+    # Must take the error branch (not skipped/facts) and stay non-plaintext.
+    if secret_error in fail_msg:
+        pytest.fail(
+            "seed-skipped+error: failure message leaked error free text; "
+            f"sample={_text_digest_meta(secret_error)}; "
+            f"fail_msg={_text_digest_meta(fail_msg)}"
+        )
+    if secret_detail in fail_msg:
+        pytest.fail(
+            "seed-skipped+error: failure message leaked detail free text; "
+            f"sample={_text_digest_meta(secret_detail)}; "
+            f"fail_msg={_text_digest_meta(fail_msg)}"
+        )
+    # Diag metadata only — keys/booleans/counts, no raw body interpolation.
+    if "hasError" not in fail_msg:
+        pytest.fail(
+            "seed-skipped+error: expected hasError in diag; "
+            f"fail_msg={_text_digest_meta(fail_msg)}"
+        )
+    if "'skipped': True" not in fail_msg and '"skipped": True' not in fail_msg:
+        # dict repr uses True for the boolean flag we set in _seed_body_diag.
+        if "skipped" not in fail_msg:
+            pytest.fail(
+                "seed-skipped+error: expected skipped flag in diag; "
+                f"fail_msg={_text_digest_meta(fail_msg)}"
+            )
+    # Non-mapping body fails closed without dumping the value.
+    with pytest.raises(pytest.fail.Exception, match="not a mapping") as type_exc:
+        _assert_seed_capture_response(200, secret_error)
+    type_msg = str(type_exc.value)
+    if secret_error in type_msg:
+        pytest.fail(
+            "seed-non-mapping: failure message leaked body free text; "
+            f"sample={_text_digest_meta(secret_error)}; "
+            f"fail_msg={_text_digest_meta(type_msg)}"
+        )
+    # Status failure with error-free body still uses sanitized diag only.
+    status_body = {"skipped": False, "factsFound": 2, "note": secret_detail}
+    with pytest.raises(pytest.fail.Exception, match="seed capture status") as st_exc:
+        _assert_seed_capture_response(500, status_body)
+    st_msg = str(st_exc.value)
+    if secret_detail in st_msg:
+        pytest.fail(
+            "seed-status: failure message leaked body free text; "
+            f"sample={_text_digest_meta(secret_detail)}; "
+            f"fail_msg={_text_digest_meta(st_msg)}"
+        )
+    # Skipped-only (no error) fails on skipped branch, still sanitized.
+    skipped_only = {"skipped": True, "factsFound": 3, "note": secret_detail}
+    with pytest.raises(pytest.fail.Exception, match="seed capture skipped") as sk_exc:
+        _assert_seed_capture_response(200, skipped_only)
+    sk_msg = str(sk_exc.value)
+    if secret_detail in sk_msg:
+        pytest.fail(
+            "seed-skipped: failure message leaked body free text; "
+            f"sample={_text_digest_meta(secret_detail)}; "
+            f"fail_msg={_text_digest_meta(sk_msg)}"
+        )
+    # factsFound non-positive / wrong type fails closed with type/count meta only.
+    with pytest.raises(pytest.fail.Exception, match="extracted no facts") as ff_exc:
+        _assert_seed_capture_response(200, {"factsFound": 0})
+    ff_msg = str(ff_exc.value)
+    if secret_error in ff_msg:
+        pytest.fail(
+            "seed-facts: unexpected canary in facts failure; "
+            f"fail_msg={_text_digest_meta(ff_msg)}"
+        )
+    with pytest.raises(pytest.fail.Exception, match="extracted no facts"):
+        _assert_seed_capture_response(200, {"factsFound": True})  # bool must not count
+    # Happy path: clean successful seed mapping returns the body.
+    clean = {"factsFound": 2, "skipped": False}
+    assert _assert_seed_capture_response(201, clean) is clean
+    # Diag helper itself never embeds free-text values.
+    diag = _seed_body_diag(dirty)
+    diag_text = repr(diag)
+    if secret_error in diag_text or secret_detail in diag_text:
+        pytest.fail(
+            "seed-body-diag: diag repr leaked free text; "
+            f"diag={_text_digest_meta(diag_text)}"
+        )
+    assert diag["hasError"] is True
+    assert diag["skipped"] is True
+    assert diag["factsFound"]["positive"] is False
+
+
+def test_live_proof_serialization_is_hash_only_no_plaintext():
+    """Regression: serialized proof excludes prompt/answer bodies (M1).
+
+    Fail-before-fix class: a proof that embeds raw prompt/answer text must
+    not pass the no-plaintext guard. Digests/lengths/booleans/ids remain.
+    Negative plaintext checks use digest-only helpers (M2 rewrite-safe).
+    """
+    secret_prompt = "RUNIR-E2E-PLAINTEXT-PROMPT-TOKEN-do-not-emit"
+    secret_answer = "RUNIR-E2E-PLAINTEXT-ANSWER-TOKEN-do-not-emit"
+    secret_resume = "RUNIR-E2E-PLAINTEXT-RESUME-PROMPT-TOKEN-do-not-emit"
+    session_id = "11111111-2222-4333-8444-555555555555"
+    trace_id = "trace-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    memory_ids = ["d954cd50-0000-4000-8000-000000000001"]
+
+    bad_proof = {
+        "kind": "runir-grok-headless-live-proof",
+        "prompts": {"fresh": secret_prompt, "resume": secret_resume},
+        "wrapperJson": {
+            "fresh": {"sessionId": session_id, "text": secret_answer},
+        },
+        "ownerScopedTraces": {
+            "fresh": {
+                "prompt": secret_prompt,
+                "captureReceipt": {
+                    "prompt": secret_prompt,
+                    "answer": secret_answer,
+                },
+            },
+        },
+    }
+    bad_serialized = _serialize_live_proof(bad_proof)
+    with pytest.raises(pytest.fail.Exception, match="must not contain plaintext") as excinfo:
+        _assert_proof_has_no_plaintext(
+            bad_serialized,
+            [secret_prompt, secret_answer, secret_resume],
+        )
+    # Guard failure message itself must stay hash-only (no rewrite operands).
+    fail_msg = str(excinfo.value)
+    for secret in (secret_prompt, secret_answer, secret_resume, bad_serialized):
+        _assert_not_contains_redacted(
+            fail_msg, secret, label="guard-fail-msg-must-be-hash-only"
+        )
+    assert "sha256" in fail_msg
+
+    safe_proof = {
+        "kind": "runir-grok-headless-live-proof",
+        "repoHead": "a" * 40,
+        "expectedHead": "a" * 40,
+        "expectedHeadMatched": True,
+        "trackedWorktreeClean": True,
+        "apiKeyConfigured": True,
+        "prompts": {
+            "fresh": _text_digest_meta(secret_prompt),
+            "resume": _text_digest_meta(secret_resume),
+        },
+        "wrapperJson": {
+            "fresh": _wrapper_json_proof(
+                {
+                    "sessionId": session_id,
+                    "retrievalTraceId": trace_id,
+                    "memoryIds": memory_ids,
+                    "memoryInjected": True,
+                    "modelCalls": 1,
+                    "modelCallsSource": "modelUsage",
+                    "promptBlockOrder": ["memory", "user"],
+                    "text": secret_answer,
+                }
+            ),
+        },
+        "ownerScopedTraces": {
+            "fresh": _owner_trace_proof(
+                {
+                    "id": trace_id,
+                    "sessionId": session_id,
+                    "prompt": secret_prompt,
+                    "items": [{"id": memory_ids[0]}],
+                    "captureReceipt": {
+                        "retrievalTraceId": trace_id,
+                        "sessionId": session_id,
+                        "memoryIds": memory_ids,
+                        "prompt": secret_prompt,
+                        "answer": secret_answer,
+                    },
+                }
+            ),
+        },
+    }
+    serialized = _serialize_live_proof(safe_proof)
+    _assert_proof_has_no_plaintext(
+        serialized,
+        [secret_prompt, secret_answer, secret_resume],
+    )
+    parsed = json.loads(serialized)
+    assert parsed["prompts"]["fresh"] == _text_digest_meta(secret_prompt)
+    assert parsed["wrapperJson"]["fresh"]["answer"] == _text_digest_meta(secret_answer)
+    assert "text" not in parsed["wrapperJson"]["fresh"]
+    assert isinstance(parsed["prompts"]["fresh"]["sha256"], str)
+    assert parsed["prompts"]["fresh"]["length"] == len(secret_prompt)
+    assert parsed["prompts"]["fresh"]["nonEmpty"] is True
+    assert parsed["ownerScopedTraces"]["fresh"]["id"] == trace_id
+    assert parsed["ownerScopedTraces"]["fresh"]["memoryIds"] == memory_ids
+    # Digests must match independent recomputation (not empty stubs).
+    assert parsed["prompts"]["fresh"]["sha256"] == _sha256_text(secret_prompt)
+    assert parsed["wrapperJson"]["fresh"]["answer"]["sha256"] == _sha256_text(
+        secret_answer
+    )
+    # Query strings (owner userId) must not ride along on proof URLs.
+    owner_email = "owner+proof@example.test"
+    dirty_url = (
+        "http://127.0.0.1:7700/hooks/traces/trace-1"
+        f"?userId={quote(owner_email, safe='')}"
+    )
+    redacted_url = _redact_url_query(dirty_url)
+    _assert_not_contains_redacted(
+        redacted_url, owner_email, label="proof-url-must-strip-owner-userId"
+    )
+    assert "?" not in redacted_url
+    assert redacted_url.endswith("/hooks/traces/trace-1")
+    # Untrusted modelUsage extras / free-text keys must not ride into proof.
+    sneaky = "RUNIR-E2E-MODELUSAGE-PLAINTEXT-do-not-emit"
+    model_id = "grok-4"
+    dirty_usage = {
+        model_id: {
+            "modelCalls": 1,
+            "promptPreview": sneaky,
+            "notes": sneaky,
+        },
+        sneaky: {"modelCalls": 2},
+    }
+    usage_proof = _model_usage_proof(dirty_usage)
+    usage_serialized = _serialize_live_proof(
+        {
+            "modelCallsEvidence": {
+                "fresh": {
+                    "source": "modelUsage",
+                    "modelUsage": usage_proof,
+                    "summedModelCalls": 1,
+                }
+            }
+        }
+    )
+    _assert_not_contains_redacted(
+        usage_serialized, sneaky, label="modelUsage-proof-must-drop-free-text"
+    )
+    _assert_not_contains_redacted(
+        usage_serialized, "promptPreview", label="modelUsage-proof-must-drop-field-names"
+    )
+    _assert_not_contains_redacted(
+        usage_serialized, "notes", label="modelUsage-proof-must-drop-notes-field"
+    )
+    _assert_not_contains_redacted(
+        usage_serialized, model_id, label="modelUsage-proof-must-digest-model-ids"
+    )
+    assert usage_proof["present"] is True
+    assert usage_proof["modelCount"] == 2
+    assert usage_proof["summedModelCalls"] == 3
+    assert {e["modelCalls"] for e in usage_proof["entries"]} == {1, 2}
+    for entry in usage_proof["entries"]:
+        assert set(entry.keys()) == {"modelKeySha256_12", "modelCalls"}
+        assert len(entry["modelKeySha256_12"]) == 12
 
 
 def _recall_until_sentinel(
@@ -436,7 +1034,11 @@ def _recall_until_sentinel(
     attempts: int = 4,
     sleep_s: float = 3.0,
 ) -> str:
-    """Retry recall so cold embedder does not flake memoryInjected=false."""
+    """Retry recall so cold embedder does not flake memoryInjected=false.
+
+    Uses the headless inject shape: preferredClient + same workspace path
+    (receipt identity footprint). Never logs prompt/context plaintext.
+    """
     last = ""
     for i in range(attempts):
         last = core.recall_context(
@@ -445,6 +1047,8 @@ def _recall_until_sentinel(
             session_id="",
             path=path,
             api_key=api_key,
+            client=None,
+            preferred_client=core.DEFAULT_CLIENT,
             timeout=20.0,
         )
         if sentinel in (last or ""):
@@ -535,8 +1139,10 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
         attempts=8,
         sleep_s=2.0,
     )
-    assert sentinel in (pre or ""), (
-        f"seed not recallable after warm/retry (cold embedder?); last={pre!r}"
+    _assert_contains_redacted(
+        pre,
+        sentinel,
+        label="seed not recallable after warm/retry (cold embedder?)",
     )
 
     # Keep inject prompt close to the probe so the same vector wins; still
@@ -588,41 +1194,52 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
     )
     assert proc.returncode == 0, (
         f"headless_inject failed rc={proc.returncode}\n"
-        f"stdout={proc.stdout!r}\nstderr={proc.stderr!r}\n"
+        f"stdout={_process_stdout_diag(proc.stdout)}\n"
+        f"stderr={_text_digest_meta(proc.stderr)}\n"
         f"GROK_HOME={grok_home}\nhooks={hooks_file}"
     )
     result = json.loads(proc.stdout)
     fresh_sid = result.get("sessionId")
     assert fresh_sid, "missing verified Grok sessionId"
     assert str(uuid.UUID(fresh_sid)) == fresh_sid, (
-        f"fresh sessionId is not a canonical UUID: {result!r}"
+        f"fresh sessionId is not a canonical UUID: {_result_diag(result)}"
     )
-    assert "runirSessionId" not in result, (
-        f"unexpected session identity alias: {result!r}"
+    _assert_mapping_lacks_key_redacted(
+        result,
+        "runirSessionId",
+        label="unexpected session identity alias",
     )
     assert result.get("memoryInjected") is True, (
-        f"expected memoryInjected=true, got {result!r}"
+        f"expected memoryInjected=true, got {_result_diag(result)}"
     )
     assert result.get("modelCalls") == 1, (
         f"expected modelCalls=1 (no gate re-burn / no tool loop), "
-        f"got {result.get('modelCalls')}; full={result!r}"
+        f"got {result.get('modelCalls')}; diag={_result_diag(result)}"
     )
     assert result.get("modelCallsSource") == "modelUsage", (
-        f"live proof requires raw modelUsage source: {result!r}"
+        f"live proof requires raw modelUsage source: {_result_diag(result)}"
     )
     raw_model_calls = _strict_model_usage_calls(inject, result)
     assert raw_model_calls == result["modelCalls"] == 1
     assert result.get("promptBlockOrder") == ["memory", "user"], (
-        f"memory must precede user in prompt blocks: {result!r}"
+        f"memory must precede user in prompt blocks: {_result_diag(result)}"
     )
     assert result.get("retrievalTraceId"), (
-        f"expected non-empty retrievalTraceId on memory-hit, got {result!r}"
+        f"expected non-empty retrievalTraceId on memory-hit, "
+        f"got {_result_diag(result)}"
     )
     text = result.get("text") or ""
-    assert sentinel in text, (
-        f"sentinel not model-visible in assistant text:\n{text!r}\nresult={result!r}"
+    _assert_contains_redacted(
+        text,
+        sentinel,
+        label="sentinel not model-visible in assistant text "
+        f"(result={_result_diag(result)})",
     )
-    assert "warn: capture failed" not in proc.stderr
+    _assert_stderr_lacks_redacted(
+        proc.stderr,
+        "warn: capture failed",
+        label="fresh inject capture must not warn",
+    )
     fresh_trace, fresh_trace_url = _assert_capture_receipt(
         core,
         result=result,
@@ -666,37 +1283,52 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
     )
     assert proc2.returncode == 0, (
         f"resume headless_inject failed rc={proc2.returncode}\n"
-        f"stdout={proc2.stdout!r}\nstderr={proc2.stderr!r}"
+        f"stdout={_process_stdout_diag(proc2.stdout)}\n"
+        f"stderr={_text_digest_meta(proc2.stderr)}"
     )
     result2 = json.loads(proc2.stdout)
     assert result2.get("sessionId") == grok_sid, (
-        f"resume sessionId mismatch: expected {grok_sid!r}, got {result2!r}"
+        f"resume sessionId mismatch: expected {grok_sid!r}, "
+        f"got {_result_diag(result2)}"
     )
-    assert "runirSessionId" not in result2, (
-        f"unexpected resume session identity alias: {result2!r}"
+    _assert_mapping_lacks_key_redacted(
+        result2,
+        "runirSessionId",
+        label="unexpected resume session identity alias",
     )
     assert result2.get("memoryInjected") is True, (
-        f"resume expected memoryInjected=true, got {result2!r}"
+        f"resume expected memoryInjected=true, got {_result_diag(result2)}"
     )
     assert result2.get("modelCalls") == 1, (
-        f"resume expected modelCalls=1, got {result2.get('modelCalls')}; full={result2!r}"
+        f"resume expected modelCalls=1, got {result2.get('modelCalls')}; "
+        f"diag={_result_diag(result2)}"
     )
     assert result2.get("modelCallsSource") == "modelUsage", (
-        f"resume live proof requires raw modelUsage source: {result2!r}"
+        f"resume live proof requires raw modelUsage source: "
+        f"{_result_diag(result2)}"
     )
     raw_resume_model_calls = _strict_model_usage_calls(inject, result2)
     assert raw_resume_model_calls == result2["modelCalls"] == 1
     assert result2.get("promptBlockOrder") == ["memory", "user"], (
-        f"resume memory must precede user in prompt blocks: {result2!r}"
+        f"resume memory must precede user in prompt blocks: "
+        f"{_result_diag(result2)}"
     )
     assert result2.get("retrievalTraceId"), (
-        f"resume expected non-empty retrievalTraceId, got {result2!r}"
+        f"resume expected non-empty retrievalTraceId, got "
+        f"{_result_diag(result2)}"
     )
     text2 = result2.get("text") or ""
-    assert sentinel in text2, (
-        f"resume sentinel not model-visible:\n{text2!r}\nresult={result2!r}"
+    _assert_contains_redacted(
+        text2,
+        sentinel,
+        label="resume sentinel not model-visible "
+        f"(result={_result_diag(result2)})",
     )
-    assert "warn: capture failed" not in proc2.stderr
+    _assert_stderr_lacks_redacted(
+        proc2.stderr,
+        "warn: capture failed",
+        label="resume inject capture must not warn",
+    )
     resume_trace, resume_trace_url = _assert_capture_receipt(
         core,
         result=result2,
@@ -705,25 +1337,29 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
         api_key=api_key,
     )
 
+    # Hash-only proof for pytest -s / CI logs: digests, lengths, booleans, and
+    # non-sensitive ids only. Never emit prompt, answer, or recall context bodies.
     proof = {
         "kind": "runir-grok-headless-live-proof",
+        "secrecy": "hash-only",
         "repoHead": repo_head,
         "expectedHead": expected_head,
         "expectedHeadMatched": repo_head == expected_head,
         "trackedWorktreeClean": worktree_clean,
-        "configuredCaptureUrl": configured_capture_url,
+        "configuredCaptureUrl": _redact_url_query(configured_capture_url),
         "derivedTraceUrls": {
-            "fresh": fresh_trace_url,
-            "resume": resume_trace_url,
+            # Path-only: strip ?userId=… identity query from proof URLs.
+            "fresh": _redact_url_query(fresh_trace_url),
+            "resume": _redact_url_query(resume_trace_url),
         },
         "apiKeyConfigured": bool(api_key),
         "prompts": {
-            "fresh": prompt,
-            "resume": resume_prompt,
+            "fresh": _text_digest_meta(prompt),
+            "resume": _text_digest_meta(resume_prompt),
         },
         "wrapperJson": {
-            "fresh": result,
-            "resume": result2,
+            "fresh": _wrapper_json_proof(result),
+            "resume": _wrapper_json_proof(result2),
         },
         "ownerScopedTraces": {
             "fresh": _owner_trace_proof(fresh_trace),
@@ -732,14 +1368,31 @@ def test_live_headless_memory_pre_infer_model_calls_one(tmp_path):
         "modelCallsEvidence": {
             "fresh": {
                 "source": result["modelCallsSource"],
-                "rawModelUsage": result["modelUsage"],
+                "modelUsage": _model_usage_proof(result.get("modelUsage")),
                 "summedModelCalls": raw_model_calls,
             },
             "resume": {
                 "source": result2["modelCallsSource"],
-                "rawModelUsage": result2["modelUsage"],
+                "modelUsage": _model_usage_proof(result2.get("modelUsage")),
                 "summedModelCalls": raw_resume_model_calls,
             },
         },
+        "sentinelMatched": {
+            "fresh": sentinel in (result.get("text") or ""),
+            "resume": sentinel in (result2.get("text") or ""),
+        },
     }
-    print(json.dumps(proof, ensure_ascii=False, sort_keys=True), flush=True)
+    serialized = _serialize_live_proof(proof)
+    _assert_proof_has_no_plaintext(
+        serialized,
+        [
+            prompt,
+            resume_prompt,
+            result.get("text") or "",
+            result2.get("text") or "",
+            sentinel,
+            # Seed/context bodies that must never appear in the printed proof.
+            f"The one-time bridge token for session-tag={session_seed}",
+        ],
+    )
+    print(serialized, flush=True)

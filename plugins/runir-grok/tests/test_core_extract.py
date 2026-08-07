@@ -83,6 +83,82 @@ def test_recall_result_threads_trace_and_memory_ids(core, monkeypatch):
     )
 
 
+def test_recall_result_default_hard_client_omits_null_path(core, monkeypatch):
+    """Default leaf still hard-scopes client=grok; path omitted when unset."""
+    seen = {}
+
+    def fake_post(url, payload, timeout, **kwargs):
+        seen["payload"] = dict(payload)
+        return (200, {"prependContext": "x"})
+
+    monkeypatch.setattr(core, "post_json", fake_post)
+    core.recall_result("hello", user_id="u1", session_id="s1")
+    body = seen["payload"]
+    assert body["client"] == core.DEFAULT_CLIENT
+    assert "preferredClient" not in body
+    assert "path" not in body
+    assert body["userId"] == "u1"
+    assert body["sessionId"] == "s1"
+    assert body["prompt"] == "hello"
+
+
+def test_recall_result_preferred_client_omits_hard_client(core, monkeypatch):
+    seen = {}
+
+    def fake_post(url, payload, timeout, **kwargs):
+        seen["payload"] = dict(payload)
+        return (200, {"prependContext": "y"})
+
+    monkeypatch.setattr(core, "post_json", fake_post)
+    core.recall_result(
+        "hello",
+        user_id="u1",
+        session_id="s1",
+        client=None,
+        preferred_client="grok",
+        path=None,
+    )
+    body = seen["payload"]
+    assert "client" not in body
+    assert body["preferredClient"] == "grok"
+    assert "path" not in body
+
+
+def test_recall_result_preferred_client_wins_over_hard_client(core, monkeypatch):
+    seen = {}
+
+    def fake_post(url, payload, timeout, **kwargs):
+        seen["payload"] = dict(payload)
+        return (200, {"prependContext": "z"})
+
+    monkeypatch.setattr(core, "post_json", fake_post)
+    core.recall_result(
+        "hello",
+        user_id="u1",
+        client="grok",
+        preferred_client="grok",
+        path="/tmp/ws",
+    )
+    body = seen["payload"]
+    assert "client" not in body
+    assert body["preferredClient"] == "grok"
+    assert body["path"] == "/tmp/ws"
+
+
+def test_recall_result_none_mode_omits_all_client_fields(core, monkeypatch):
+    seen = {}
+
+    def fake_post(url, payload, timeout, **kwargs):
+        seen["payload"] = dict(payload)
+        return (200, {"prependContext": ""})
+
+    monkeypatch.setattr(core, "post_json", fake_post)
+    core.recall_result("hello", user_id="u1", client=None, preferred_client=None)
+    body = seen["payload"]
+    assert "client" not in body
+    assert "preferredClient" not in body
+
+
 def test_recall_result_fail_open_empty(core, monkeypatch):
     monkeypatch.setattr(core, "post_json", lambda *a, **k: None)
     r = core.recall_result("hello", user_id="u1")

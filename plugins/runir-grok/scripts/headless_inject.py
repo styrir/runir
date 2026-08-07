@@ -6,7 +6,7 @@ sets RUNIR_GROK_DISABLE_GATE=1 on the child so TUI correction hooks stay inert.
 
 Exit codes:
   0  ok (incl. recall fail-open, capture failure)
-  2  usage / missing RUNIR_USER_ID
+  2  usage / missing RUNIR_USER_ID / identity_conflict
   3  grok spawn failure or non-zero exit
   4  grok stdout unparseable or session identity mismatch
 """
@@ -200,11 +200,17 @@ def recall_with_retry(
     session_id: str = "",
     path: str | None = None,
     api_key: str | None = None,
-    client: str = core.DEFAULT_CLIENT,
+    client: str | None = None,
+    preferred_client: str | None = None,
     user_agent: str = core.DEFAULT_USER_AGENT,
     attempts: int = 2,
 ) -> core.RecallResult:
-    """Recall once, retry once on empty context (cold embedder / short timeout)."""
+    """Recall once, retry once on empty context (cold embedder / short timeout).
+
+    Defaults omit hard client so soft preferredClient (or none) can rank
+    null-client working-tier noemas. Path is identity footprint when provided
+    and must match capture + Grok --cwd for receipt-enabled turns.
+    """
     last = core.RecallResult()
     for i in range(max(1, attempts)):
         try:
@@ -215,6 +221,7 @@ def recall_with_retry(
                 path=path,
                 api_key=api_key,
                 client=client,
+                preferred_client=preferred_client,
                 user_agent=user_agent,
             )
         except Exception as exc:
@@ -247,9 +254,21 @@ def run_inject(
     disable_web_search: bool = False,
     grok_runner=None,
 ) -> int:
-    user_id = core.resolve_credential("RUNIR_USER_ID")
+    effective = core.resolve_effective_user_id()
+    if effective.source == "conflict":
+        print(
+            f"error: identity_conflict {effective.conflict} "
+            "(process and RUNIR_ENV_FILE disagree; refusing to invent or pick silently)",
+            file=sys.stderr,
+        )
+        return 2
+    user_id = effective.user_id
     if not user_id:
-        print("error: RUNIR_USER_ID is required", file=sys.stderr)
+        print(
+            "error: RUNIR_USER_ID is required "
+            "(process env or RUNIR_ENV_FILE; refusing to invent a default)",
+            file=sys.stderr,
+        )
         return 2
     api_key = core.resolve_credential("RUNIR_API_KEY")
     client = os.environ.get("RUNIR_GROK_CLIENT", core.DEFAULT_CLIENT)
@@ -260,13 +279,19 @@ def run_inject(
     # Grok session ID. The same identity threads recall, Grok, and capture.
     session_id = resolve_session_id(resume=resume)
 
+    # Headless recall (Rúnir-pzt.2): soften *client* only via preferredClient so
+    # null-client working-tier noemas can rank under prefer mode. Workspace path
+    # is one immutable footprint across recall, Grok --cwd, and capture so
+    # receipt-enabled capture matches the retrieval-trace canonical identity.
+    # Capture still writes hard client as provenance (not a hard recall filter).
     recall = recall_with_retry(
         prompt,
         user_id=user_id,
         session_id=session_id,
         path=cwd,
         api_key=api_key,
-        client=client,
+        client=None,
+        preferred_client=client,
         user_agent=user_agent,
         attempts=2,
     )
