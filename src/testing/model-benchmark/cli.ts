@@ -151,6 +151,8 @@ Options:
                            flash-lite      = 3.1 vs 3.5 Flash-Lite only
                            extended|all    = primary + Luna none + Grok high
                            Requesty Chat candidate: luna-high-requesty
+                           Gemini Requesty efforts: flash-lite-3.5-reasoning-low,
+                             flash-lite-3.5-reasoning-medium,flash-lite-3.5-reasoning-high
                            direct Responses candidates: luna-low-responses,luna-max
   --fixtures <path>        Gold corpus JSON (default: fixtures/model-benchmark/corpus.json)
   --case-ids <ids>         Comma-separated case ids from the corpus

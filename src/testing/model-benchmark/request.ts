@@ -98,6 +98,9 @@ export function buildEffectiveRequest(args: {
   if (reasoning.param) {
     cfg.reasoningParam = reasoning.param;
     cfg.reasoning = reasoning.effective;
+    if (candidate.reasoningBudgetTokens !== undefined) {
+      cfg.reasoningBudgetTokens = candidate.reasoningBudgetTokens;
+    }
   } else if (candidate.reasoningSupport === "default-only") {
     // Do not set cfg.reasoning to the requested label — would mislabel.
     cfg.notes.push("effective reasoning level: gateway-default (unlabeled)");
@@ -169,7 +172,10 @@ export function disallowedParamsFor(candidate: Candidate): string[] {
     // Gemini/xAI production path does not send response_format by default.
     if (candidate.jsonMode === "off") disallowed.push("response_format");
   }
-  if (candidate.reasoningSupport !== "native") {
+  if (
+    candidate.reasoningSupport !== "native" &&
+    candidate.reasoningSupport !== "gateway-mapped"
+  ) {
     disallowed.push("reasoning_effort", "reasoning");
   }
   if (candidate.modelId.startsWith("anthropic/")) {

@@ -137,6 +137,58 @@ export const LUNA_REQUESTY_EFFORT_CANDIDATES: Candidate[] = [
   },
 ];
 
+/**
+ * Requesty maps Vertex effort strings to thinking budgets. These are explicit
+ * benchmark-only opt-ins and do not alter the ordinary no-reasoning candidate.
+ */
+export const GEMINI_REQUESTY_EFFORT_CANDIDATES: Candidate[] = [
+  {
+    id: "flash-lite-3.5-reasoning-low",
+    label: "Gemini 3.5 Flash-Lite (Requesty mapped reasoning=low / 1,024 tokens)",
+    modelId: "vertex/gemini-3.5-flash-lite",
+    reasoning: "low",
+    reasoningSupport: "gateway-mapped",
+    reasoningBudgetTokens: 1_024,
+    jsonMode: "off",
+    pricePer1M: {
+      input: 0.45,
+      output: 2.7,
+      asOf: PRICE_AS_OF,
+      source: "Google global list pricing orientation (gateway may differ)",
+    },
+  },
+  {
+    id: "flash-lite-3.5-reasoning-medium",
+    label: "Gemini 3.5 Flash-Lite (Requesty mapped reasoning=medium / 8,192 tokens)",
+    modelId: "vertex/gemini-3.5-flash-lite",
+    reasoning: "medium",
+    reasoningSupport: "gateway-mapped",
+    reasoningBudgetTokens: 8_192,
+    jsonMode: "off",
+    pricePer1M: {
+      input: 0.45,
+      output: 2.7,
+      asOf: PRICE_AS_OF,
+      source: "Google global list pricing orientation (gateway may differ)",
+    },
+  },
+  {
+    id: "flash-lite-3.5-reasoning-high",
+    label: "Gemini 3.5 Flash-Lite (Requesty mapped reasoning=high / 24,576 tokens)",
+    modelId: "vertex/gemini-3.5-flash-lite",
+    reasoning: "high",
+    reasoningSupport: "gateway-mapped",
+    reasoningBudgetTokens: 24_576,
+    jsonMode: "off",
+    pricePer1M: {
+      input: 0.45,
+      output: 2.7,
+      asOf: PRICE_AS_OF,
+      source: "Google global list pricing orientation (gateway may differ)",
+    },
+  },
+];
+
 /** Direct OpenAI Responses candidates are explicit opt-ins, not part of `extended`. */
 export const LUNA_RESPONSES_CANDIDATES: Candidate[] = [
   {
@@ -179,6 +231,7 @@ const ALL_KNOWN: Candidate[] = (() => {
     ...DEFAULT_CANDIDATES,
     ...EXTENDED_CANDIDATES,
     ...LUNA_REQUESTY_EFFORT_CANDIDATES,
+    ...GEMINI_REQUESTY_EFFORT_CANDIDATES,
     ...LUNA_RESPONSES_CANDIDATES,
   ]) {
     m.set(c.id, c);
@@ -285,6 +338,38 @@ export function buildReasoningParam(
     return { param: undefined, notes, effective: undefined };
   }
 
+  if (candidate.reasoningSupport === "gateway-mapped") {
+    if (candidate.apiStyle === "responses") {
+      throw new Error(
+        `Candidate ${candidate.id}: gateway-mapped reasoning is only supported on Chat Completions`,
+      );
+    }
+    if (!level || !["low", "medium", "high"].includes(level)) {
+      throw new Error(
+        `Candidate ${candidate.id}: gateway-mapped reasoning requires low|medium|high`,
+      );
+    }
+    const budget = candidate.reasoningBudgetTokens;
+    if (budget === undefined || !Number.isInteger(budget) || budget <= 0) {
+      throw new Error(
+        `Candidate ${candidate.id}: gateway-mapped reasoning requires a positive integer reasoningBudgetTokens`,
+      );
+    }
+    return {
+      param: { reasoning_effort: level },
+      notes: [
+        `Requesty Vertex mapping: reasoning_effort=${level} -> reasoning budget ${budget} tokens`,
+      ],
+      effective: level,
+    };
+  }
+
+  if (candidate.reasoningBudgetTokens !== undefined) {
+    throw new Error(
+      `Candidate ${candidate.id}: reasoningBudgetTokens requires reasoningSupport=gateway-mapped`,
+    );
+  }
+
   // native
   if (!level) {
     notes.push("native reasoning support but no level set; omitting parameter");
@@ -347,5 +432,30 @@ export function assertLunaConfigsDistinct(candidates: Candidate[]): void {
   const unique = new Set(fingerprints);
   if (unique.size !== fingerprints.length) {
     throw new Error("Selected Luna candidates must serialize as distinct effective configurations");
+  }
+}
+
+/** Enforced when ordinary and/or mapped Gemini 3.5 variants share one wire model id. */
+export function assertGeminiConfigsDistinct(candidates: Candidate[]): void {
+  const gemini = candidates.filter(
+    (candidate) => candidate.modelId === "vertex/gemini-3.5-flash-lite",
+  );
+  if (gemini.length < 2) return;
+  const fingerprints = gemini.map((candidate) => {
+    const built = buildReasoningParam(candidate);
+    return JSON.stringify({
+      modelId: candidate.modelId,
+      apiStyle: candidate.apiStyle ?? "chat_completions",
+      endpoint: candidate.endpoint ?? "configured",
+      reasoning: candidate.reasoning,
+      reasoningBudgetTokens: candidate.reasoningBudgetTokens ?? null,
+      param: built.param ?? null,
+      effective: built.effective ?? null,
+    });
+  });
+  if (new Set(fingerprints).size !== fingerprints.length) {
+    throw new Error(
+      "Selected Gemini 3.5 candidates must serialize as distinct effective configurations",
+    );
   }
 }

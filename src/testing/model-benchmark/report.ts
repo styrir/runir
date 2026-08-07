@@ -41,7 +41,8 @@ export function formatPreflightDisclosure(d: PreflightDisclosure): string {
         `  - ${c.id}: modelId=${c.modelId} api=${c.apiStyle ?? "chat_completions"} ` +
         `endpoint=${c.endpoint ?? "configured"} baseUrl=${c.endpointBaseUrl ?? d.gatewayBaseUrl} ` +
         `credentialSource=${c.credentialSourceLabel ?? d.credentialSourceLabel} ` +
-        `reasoning=${c.reasoning ?? "n/a"} support=${c.reasoningSupport}` +
+        `reasoning=${c.reasoning ?? "n/a"} support=${c.reasoningSupport} ` +
+        `reasoningBudgetTokens=${c.reasoningBudgetTokens ?? "n/a"}` +
         (c.effectiveNotes.length ? ` notes=${JSON.stringify(c.effectiveNotes)}` : ""),
     ),
     `costEstimate.available: ${d.costEstimate.available}`,
@@ -123,11 +124,13 @@ export function renderMarkdownReport(args: {
   lines.push("");
   lines.push("## Model / configuration matrix");
   lines.push("");
-  lines.push("| ID | Label | Model ID | API | Endpoint | Reasoning | Support | Notes |");
-  lines.push("|---|---|---|---|---|---|---|---|");
+  lines.push(
+    "| ID | Label | Model ID | API | Endpoint | Reasoning | Support | Mapped budget | Notes |",
+  );
+  lines.push("|---|---|---|---|---|---|---|---:|---|");
   for (const c of d.candidates) {
     lines.push(
-      `| ${c.id} | ${c.label} | \`${c.modelId}\` | ${c.apiStyle ?? "chat_completions"} | ${c.endpoint ?? "configured"} | ${c.reasoning ?? "—"} | ${c.reasoningSupport} | ${c.effectiveNotes.join("; ") || "—"} |`,
+      `| ${c.id} | ${c.label} | \`${c.modelId}\` | ${c.apiStyle ?? "chat_completions"} | ${c.endpoint ?? "configured"} | ${c.reasoning ?? "—"} | ${c.reasoningSupport} | ${c.reasoningBudgetTokens ?? "—"} | ${c.effectiveNotes.join("; ") || "—"} |`,
     );
   }
   lines.push("");

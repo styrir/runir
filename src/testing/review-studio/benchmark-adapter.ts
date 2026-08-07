@@ -238,6 +238,7 @@ function effectiveRequestForHash(value: Record<string, unknown>): Record<string,
     "response_format",
     "textFormat",
     "reasoning",
+    "reasoningBudgetTokens",
     "reasoningParam",
   ];
   const out: Record<string, unknown> = {};
@@ -274,6 +275,10 @@ function buildConfigHash(
         modelId: row.modelId,
         reasoning: disclosureCandidate?.reasoning ?? row.effectiveRequest.reasoning ?? null,
         reasoningSupport: disclosureCandidate?.reasoningSupport ?? null,
+        reasoningBudgetTokens:
+          disclosureCandidate?.reasoningBudgetTokens ??
+          row.effectiveRequest.reasoningBudgetTokens ??
+          null,
         requestVariants: [...candidateConfigs.get(candidateId)!.values()].sort((a, b) =>
           canonicalJson(a).localeCompare(canonicalJson(b)),
         ),

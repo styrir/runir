@@ -6,7 +6,7 @@ export const SCORING_CONTRACT_VERSION = "runir-model-benchmark-scoring/v1";
 
 export type ReasoningLevel = "none" | "low" | "medium" | "high" | "xhigh" | "max";
 export type JsonModePolicy = "required" | "best-effort" | "off";
-export type ReasoningSupport = "native" | "unsupported" | "default-only";
+export type ReasoningSupport = "native" | "gateway-mapped" | "unsupported" | "default-only";
 export type ModelApiStyle = "chat_completions" | "responses";
 export type CandidateEndpoint = "configured" | "openai_direct";
 
@@ -19,11 +19,14 @@ export type Candidate = {
   reasoning?: ReasoningLevel;
   /**
    * How reasoning is supported for this candidate.
-   * - native: emit the configured reasoning parameter
+   * - native: emit the configured reasoning parameter without a declared translation
+   * - gateway-mapped: emit the parameter and record its declared translated token budget
    * - unsupported: fail closed if a non-default reasoning is requested
    * - default-only: do not claim low/none; omit reasoning params and mark provenance
    */
   reasoningSupport: ReasoningSupport;
+  /** Conservative output-token budget introduced by a documented gateway translation. */
+  reasoningBudgetTokens?: number;
   jsonMode: JsonModePolicy;
   /** Wire protocol used by this candidate. Defaults to Chat Completions. */
   apiStyle?: ModelApiStyle;
@@ -102,6 +105,7 @@ export type EffectiveRequestConfig = {
   response_format?: { type: "json_object" };
   textFormat?: { type: "json_object" };
   reasoning?: ReasoningLevel;
+  reasoningBudgetTokens?: number;
   reasoningParam?: Record<string, unknown>;
   notes: string[];
 };
@@ -189,6 +193,7 @@ export type PreflightDisclosure = {
     modelId: string;
     reasoning?: ReasoningLevel;
     reasoningSupport: ReasoningSupport;
+    reasoningBudgetTokens?: number;
     apiStyle?: ModelApiStyle;
     endpoint?: CandidateEndpoint;
     endpointBaseUrl?: string;
