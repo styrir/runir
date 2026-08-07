@@ -23,6 +23,7 @@
     "review-studio:test": "vitest run --config tools/review-studio/vitest.config.ts",
     "review-studio:check": "npm run review-studio:test && tsc -p tsconfig.json --noEmit",
     "review-studio:stub": "node --import tsx/esm tools/review-studio/stub-server.ts",
+    "benchmark:think": "tsx scripts/model-benchmark-think.ts",
     "build:plugin-archives": "python3 scripts/build-plugin-marketplace-archives.py",
     "build:runir-mcp": "node scripts/build-runir-mcp.mjs",
     "test:runir-mcp:installed": "tsx scripts/runir-mcp-installed-smoke.ts",

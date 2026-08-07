@@ -5,6 +5,7 @@ import {
   buildCaseSelection,
   candidateDescriptor,
   loadCaseEntries,
+  renderThinkCaseDetail,
 } from "../ui/review-studio.js";
 
 const baselineCase = {
@@ -91,5 +92,29 @@ describe("Review Studio comparison selection helpers", () => {
     expect(requestedSides).toEqual(["baseline", "candidate"]);
     expect(entries[0]).toMatchObject({ side: "baseline", case: null, unavailableReason: "not present in this run" });
     expect(entries[1]).toMatchObject({ side: "candidate", case: candidateCase, unavailableReason: "" });
+  });
+
+  it("renders a claim-to-evidence matrix and escapes hostile Think text", () => {
+    const markup = renderThinkCaseDetail({
+      kind: "think-synthesis",
+      question: "<script>question</script>",
+      evidence: [{ id: "semiote:1", preview: "<img src=x onerror=alert(1)>" }],
+      answer: "bounded answer",
+      claims: [{
+        text: "supported <b>claim</b>",
+        citationIds: ["semiote:1"],
+        droppedCitationIds: ["invented"],
+      }],
+      gaps: ["missing <iframe>"],
+      quality: { citationPrecision: 1 },
+      usage: {},
+      latencyMs: 10,
+    });
+    expect(markup).toContain("Claim → evidence matrix");
+    expect(markup).toContain("semiote:1");
+    expect(markup).not.toContain("<script>");
+    expect(markup).not.toContain("<img");
+    expect(markup).not.toContain("<iframe>");
+    expect(markup).toContain("&lt;script&gt;");
   });
 });

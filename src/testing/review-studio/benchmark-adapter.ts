@@ -68,8 +68,6 @@ export const REVIEW_METRIC_DEFINITIONS: readonly ReviewMetricDefinition[] = [
   { id: "costPerCorrectGoldFact", label: "Cost per correct gold fact", direction: "lower_is_better" },
 ];
 
-const METRIC_BY_ID = new Map(REVIEW_METRIC_DEFINITIONS.map((metric) => [metric.id, metric]));
-
 const KNOWN_MANIFEST_FIELDS = new Set([
   "schemaVersion",
   "runId",
@@ -427,6 +425,16 @@ function adaptCase(row: ResultRow, manifest: Record<string, unknown>): ReviewCas
     inputRef: artifactRef("benchmark-case", encodeURIComponent(row.caseId)),
     outputRef: artifactRef("benchmark-row", encodeURIComponent(comparisonKey)),
     diagnostics: rowDiagnostics(row),
+    detail: {
+      kind: "capture-extraction",
+      parse: sanitizedRecord(row.parse as unknown as Record<string, unknown>),
+      effectiveRequest: sanitizedRecord(row.effectiveRequest as unknown as Record<string, unknown>),
+      quality: sanitizedRecord(row.quality as unknown as Record<string, unknown>),
+      usage: sanitizedRecord(row.usage as unknown as Record<string, unknown>),
+      latencyMs: row.latencyMs,
+      retryCount: row.retryCount,
+      ...(row.errorClass ? { errorClass: row.errorClass } : {}),
+    },
     rawEvidence,
   };
 }
@@ -436,7 +444,7 @@ function mean(values: Array<number | null>): number | null {
   return present.length ? present.reduce((sum, value) => sum + value, 0) / present.length : null;
 }
 
-function percentile(values: number[], p: number): number | null {
+export function percentile(values: number[], p: number): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
   if (sorted.length === 1) return sorted[0]!;
@@ -720,8 +728,11 @@ export function adaptBenchmarkRun(bundle: BenchmarkRunBundle): ReviewRun {
     runId,
     conditionId,
     suiteId: MODEL_BENCHMARK_SUITE_ID,
+    suiteLabel: "Capture extraction",
     suiteVersion,
     runKind: "model-benchmark",
+    casePresentation: "capture-extraction",
+    metricDefinitions: [...REVIEW_METRIC_DEFINITIONS],
     createdAt: requiredString(manifest, "createdAt", "manifest"),
     git: { sha: gitSha, dirty: git.dirty },
     configHash: buildConfigHash(manifest, rows, dryRun),
@@ -796,8 +807,11 @@ export function adaptBenchmarkRuns(bundles: readonly BenchmarkRunBundle[]): Revi
   };
 }
 
-function directionFor(metricId: string): ReviewMetricDirection {
-  return METRIC_BY_ID.get(metricId)?.direction ?? "neutral";
+function directionFor(
+  metricId: string,
+  definitions: ReadonlyMap<string, ReviewMetricDefinition>,
+): ReviewMetricDirection {
+  return definitions.get(metricId)?.direction ?? "neutral";
 }
 
 function assessDelta(delta: number | null, direction: ReviewMetricDirection): ReviewMetricAssessment {
@@ -812,12 +826,13 @@ function metricDelta(
   baseline: number | null | undefined,
   candidate: number | null | undefined,
   metricId: string,
+  definitions: ReadonlyMap<string, ReviewMetricDefinition>,
 ): { delta: number | null; assessment: ReviewMetricAssessment } {
   const delta =
     typeof baseline === "number" && typeof candidate === "number" && Number.isFinite(baseline) && Number.isFinite(candidate)
       ? candidate - baseline
       : null;
-  return { delta, assessment: assessDelta(delta, directionFor(metricId)) };
+  return { delta, assessment: assessDelta(delta, directionFor(metricId, definitions)) };
 }
 
 function sortedMetricIds(values: Array<Record<string, number | null>>): string[] {
@@ -829,6 +844,7 @@ function sortedMetricIds(values: Array<Record<string, number | null>>): string[]
 function aggregateDelta(
   baseline: ReviewAggregate | null,
   candidate: ReviewAggregate | null,
+  definitions: ReadonlyMap<string, ReviewMetricDefinition>,
 ): ReviewAggregateDelta {
   const metricIds = sortedMetricIds([
     baseline?.metrics ?? {},
@@ -841,13 +857,17 @@ function aggregateDelta(
     metrics: Object.fromEntries(
       metricIds.map((metricId) => [
         metricId,
-        metricDelta(baseline?.metrics[metricId], candidate?.metrics[metricId], metricId),
+        metricDelta(baseline?.metrics[metricId], candidate?.metrics[metricId], metricId, definitions),
       ]),
     ),
   };
 }
 
-function caseDelta(baseline: ReviewCaseResult | null, candidate: ReviewCaseResult | null): ReviewCaseDelta {
+function caseDelta(
+  baseline: ReviewCaseResult | null,
+  candidate: ReviewCaseResult | null,
+  definitions: ReadonlyMap<string, ReviewMetricDefinition>,
+): ReviewCaseDelta {
   const source = baseline ?? candidate!;
   const metricIds = sortedMetricIds([
     baseline?.metrics ?? {},
@@ -864,7 +884,7 @@ function caseDelta(baseline: ReviewCaseResult | null, candidate: ReviewCaseResul
     metrics: Object.fromEntries(
       metricIds.map((metricId) => [
         metricId,
-        metricDelta(baseline?.metrics[metricId], candidate?.metrics[metricId], metricId),
+        metricDelta(baseline?.metrics[metricId], candidate?.metrics[metricId], metricId, definitions),
       ]),
     ),
   };
@@ -881,6 +901,9 @@ export function assessReviewCompatibility(
   }
   if (baseline.suiteVersion !== candidate.suiteVersion) {
     reasons.push("suiteVersion differs; fixture, prompt, parser, or scoring provenance changed");
+  }
+  if (canonicalJson(baseline.metricDefinitions) !== canonicalJson(candidate.metricDefinitions)) {
+    reasons.push("metric definitions differ");
   }
   if (baseline.provenance.compatibility === "legacy-unverified" || candidate.provenance.compatibility === "legacy-unverified") {
     warnings.push("one or both runs lack additive compatibility provenance");
@@ -930,6 +953,9 @@ export function compareReviewRuns(
 ): ReviewComparison {
   const assessed = assessReviewCompatibility(baseline, candidate);
   const explicitOverride = options.allowIncompatible === true || options.allowUnverifiedPairing === true;
+  if (baseline.suiteId !== candidate.suiteId) {
+    throw new ReviewCompatibilityError(assessed);
+  }
   if (assessed.status === "incompatible" && !options.allowIncompatible) {
     throw new ReviewCompatibilityError(assessed);
   }
@@ -940,6 +966,9 @@ export function compareReviewRuns(
     ...assessed,
     pairing: explicitOverride ? "explicit-override" : "automatic",
   };
+  const metricDefinitions = new Map(
+    [...baseline.metricDefinitions, ...candidate.metricDefinitions].map((definition) => [definition.id, definition]),
+  );
 
   const baselineAggregates = new Map(baseline.aggregates.map((aggregate) => [aggregate.candidateId, aggregate]));
   const candidateAggregates = new Map(candidate.aggregates.map((aggregate) => [aggregate.candidateId, aggregate]));
@@ -964,8 +993,10 @@ export function compareReviewRuns(
     baselineRunId: baseline.runId,
     candidateRunId: candidate.runId,
     compatibility,
-    aggregateDeltas: aggregateIds.map((id) => aggregateDelta(baselineAggregates.get(id) ?? null, candidateAggregates.get(id) ?? null)),
-    caseDeltas: caseKeys.map((key) => caseDelta(baselineCases.get(key) ?? null, candidateCases.get(key) ?? null)),
+    aggregateDeltas: aggregateIds.map((id) =>
+      aggregateDelta(baselineAggregates.get(id) ?? null, candidateAggregates.get(id) ?? null, metricDefinitions)),
+    caseDeltas: caseKeys.map((key) =>
+      caseDelta(baselineCases.get(key) ?? null, candidateCases.get(key) ?? null, metricDefinitions)),
     diagnostics,
   };
 }

@@ -78,14 +78,23 @@ function escapeHtml(value) {
 
 function json(value) { return escapeHtml(JSON.stringify(value, null, 2)); }
 function enc(value) { return encodeURIComponent(value); }
-function labelFor(metric) { return METRICS[metric]?.[0] || metric; }
-function isRate(metric) { return /Rate$|Accuracy$|Precision$|Recall$|Fidelity$|Compliance$|Correct$|SuccessRate$/.test(metric); }
+function metricDefinition(metric) {
+  for (const run of state.runs) {
+    const definition = (run.metricDefinitions || []).find((item) => item.id === metric);
+    if (definition) return definition;
+  }
+  return METRICS[metric] ? { id: metric, label: METRICS[metric][0], direction: METRICS[metric][1] } : null;
+}
+function labelFor(metric) { return metricDefinition(metric)?.label || metric; }
+function isRate(metric) {
+  return /Rate$|Accuracy$|Precision$|Recall$|Fidelity$|Compliance$|Correct$|Pass$|SuccessRate$|Completeness$|Validity$/iu.test(metric);
+}
 
 function formatMetric(metric, value) {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
   if (isRate(metric)) return `${(Number(value) * 100).toFixed(1)}%`;
-  if (/Cost|Usd/.test(metric)) return `$${Number(value).toFixed(4)}`;
-  if (/Latency|Tokens/.test(metric)) return `${Number(value).toFixed(0)}${/Latency/.test(metric) ? " ms" : ""}`;
+  if (/cost|usd/iu.test(metric)) return `$${Number(value).toFixed(4)}`;
+  if (/latency|tokens/iu.test(metric)) return `${Number(value).toFixed(0)}${/latency/iu.test(metric) ? " ms" : ""}`;
   return Number(value).toFixed(3);
 }
 
@@ -93,8 +102,8 @@ function formatDelta(metric, delta) {
   if (delta === null || delta === undefined || Number.isNaN(delta)) return "—";
   const sign = delta > 0 ? "+" : "";
   if (isRate(metric)) return `${sign}${(Number(delta) * 100).toFixed(1)} pp`;
-  if (/Cost|Usd/.test(metric)) return `${sign}$${Number(delta).toFixed(4)}`;
-  if (/Latency|Tokens/.test(metric)) return `${sign}${Number(delta).toFixed(0)}${/Latency/.test(metric) ? " ms" : ""}`;
+  if (/cost|usd/iu.test(metric)) return `${sign}$${Number(delta).toFixed(4)}`;
+  if (/latency|tokens/iu.test(metric)) return `${sign}${Number(delta).toFixed(0)}${/latency/iu.test(metric) ? " ms" : ""}`;
   return `${sign}${Number(delta).toFixed(3)}`;
 }
 
@@ -284,7 +293,7 @@ function renderRuns() {
 
 function renderRunRow(run) {
   const candidateText = (run.candidates || []).map((candidate) => candidate.label || candidate.id).join(", ");
-  return `<tr><td><button class="ledger-run" data-open-run="${escapeHtml(run.catalogId)}">${escapeHtml(run.conditionId || run.runId)}<small>${run.conditionId ? `${escapeHtml(run.runId)} · ` : ""}${escapeHtml(run.createdAt)} · <span class="mono">${escapeHtml(run.git?.sha || "unknown")}</span></small></button></td><td><div class="badge-row">${statusBadges(run)}</div></td><td><span class="mono">${escapeHtml(run.suiteId)}</span><small class="muted">${escapeHtml(run.suiteVersion)}</small></td><td>${escapeHtml(candidateText || "declared matrix unavailable")}</td><td><span class="mono">${escapeHtml(run.caseCount)}</span><small class="muted">${escapeHtml(run.provenance?.expectedRowCount ?? "planned n/a")} planned</small></td><td><span class="mono">${escapeHtml(run.artifact?.rootLabel || "root")}</span><small class="muted">${escapeHtml(run.artifact?.relativeManifest || "")}</small></td></tr>`;
+  return `<tr><td><button class="ledger-run" data-open-run="${escapeHtml(run.catalogId)}">${escapeHtml(run.conditionId || run.runId)}<small>${run.conditionId ? `${escapeHtml(run.runId)} · ` : ""}${escapeHtml(run.createdAt)} · <span class="mono">${escapeHtml(run.git?.sha || "unknown")}</span></small></button></td><td><div class="badge-row">${statusBadges(run)}</div></td><td><strong>${escapeHtml(run.suiteLabel || run.suiteId)}</strong><small class="mono">${escapeHtml(run.suiteId)}</small><small class="muted">${escapeHtml(run.suiteVersion)}</small></td><td>${escapeHtml(candidateText || "declared matrix unavailable")}</td><td><span class="mono">${escapeHtml(run.caseCount)}</span><small class="muted">${escapeHtml(run.provenance?.expectedRowCount ?? "planned n/a")} planned</small></td><td><span class="mono">${escapeHtml(run.artifact?.rootLabel || "root")}</span><small class="muted">${escapeHtml(run.artifact?.relativeManifest || "")}</small></td></tr>`;
 }
 
 function renderCompare() {
@@ -292,11 +301,16 @@ function renderCompare() {
   const baseline = state.runs.find((run) => run.catalogId === state.baselineId) || state.runs[0];
   const candidate = state.runs.find((run) => run.catalogId === state.candidateId);
   if (!state.baselineId) state.baselineId = baseline.catalogId;
-  const options = state.runs.map((run) => `<option value="${escapeHtml(run.catalogId)}" ${run.catalogId === state.baselineId ? "selected" : ""}>${escapeHtml(runLabel(run))} · ${escapeHtml(run.provenance?.compatibility === "verified" ? "verified" : "legacy")}</option>`).join("");
-  const candidateOptions = state.runs.map((run) => `<option value="${escapeHtml(run.catalogId)}" ${run.catalogId === state.candidateId ? "selected" : ""}>${escapeHtml(runLabel(run))} · ${escapeHtml(run.suiteVersion === baseline.suiteVersion ? "same suite" : "incompatible suite")}</option>`).join("");
+  const options = state.runs.map((run) => `<option value="${escapeHtml(run.catalogId)}" ${run.catalogId === state.baselineId ? "selected" : ""}>${escapeHtml(run.suiteLabel || run.suiteId)} · ${escapeHtml(runLabel(run))} · ${escapeHtml(run.provenance?.compatibility === "verified" ? "verified" : "legacy")}</option>`).join("");
+  const candidateOptions = state.runs.map((run) => {
+    const sameSuite = run.suiteId === baseline.suiteId;
+    const sameVersion = sameSuite && run.suiteVersion === baseline.suiteVersion;
+    const compatibility = sameVersion ? "same suite + version" : sameSuite ? "same suite, version differs" : "different suite — blocked";
+    return `<option value="${escapeHtml(run.catalogId)}" ${run.catalogId === state.candidateId ? "selected" : ""}>${escapeHtml(run.suiteLabel || run.suiteId)} · ${escapeHtml(runLabel(run))} · ${escapeHtml(compatibility)}</option>`;
+  }).join("");
   return `<div class="section-intro"><div><p class="eyebrow">02 / comparison canvas</p><h2>Compare</h2><p>Shapes are chosen for the question: dumbbells for aggregate deltas, a distribution for latency, and a heatmap for case-level drift.</p></div><div class="control-row"><button class="button-quiet" data-print>Print</button><button class="button-quiet" data-export-comparison ${state.comparison ? "" : "disabled"}>Export JSON</button></div></div>
     <div class="compare-toolbar"><div class="selector-block"><label for="baseline-select">Baseline / control</label><select id="baseline-select" data-baseline>${options}</select></div><div class="versus">VS</div><div class="selector-block"><label for="candidate-select">Candidate / specimen</label><select id="candidate-select" data-candidate>${candidateOptions}</select></div></div>
-    <div class="control-row space-below"><label><input type="checkbox" data-allow-pairing ${state.allowPairing ? "checked" : ""}> allow explicit legacy/incompatible pairing</label><button class="button-primary" data-load-comparison>Load comparison</button>${candidate ? `<span class="muted mono">${escapeHtml(candidate.provenance?.compatibility === "verified" ? "hash-stamped" : "unverified")}</span>` : ""}</div>
+    <div class="control-row space-below"><label><input type="checkbox" data-allow-pairing ${state.allowPairing ? "checked" : ""}> allow same-suite legacy/version override</label><button class="button-primary" data-load-comparison>Load comparison</button>${candidate ? `<span class="muted mono">${escapeHtml(candidate.provenance?.compatibility === "verified" ? "hash-stamped" : "unverified")}</span>` : ""}</div>
     ${state.comparisonError ? `<div class="notice"><div>${badge("comparison blocked", "warn")}</div><p>${escapeHtml(state.comparisonError.message || "The selected runs are not compatible by default.")} ${state.comparisonError.payload?.compatibility?.reasons?.join(" ") || "Use the explicit pairing control only when a human accepts the provenance warning."}</p></div>` : ""}
     ${state.comparison ? renderComparison(state.comparison) : `<div class="empty-state"><h3>Choose two runs</h3><p>Compatible hash-stamped runs are the default path. Legacy runs and suite mismatches remain selectable so their refusal is visible.</p></div>`}`;
 }
@@ -304,12 +318,18 @@ function renderCompare() {
 function renderComparison(comparison) {
   const status = comparison.compatibility?.status;
   const tone = status === "compatible" ? "good" : "warn";
-  const preferredMetricIds = ["meanAtomicPrecision", "meanAtomicRecall", "meanHallucinationRate", "meanOmissionRate", "p95LatencyMs", "meanCostPerExtraction"];
-  const allAggregateMetricIds = [...new Set(comparison.aggregateDeltas.flatMap((delta) => Object.keys(delta.metrics || {})))];
-  const metricIds = [...preferredMetricIds.filter((metric) => allAggregateMetricIds.includes(metric)), ...allAggregateMetricIds.filter((metric) => !preferredMetricIds.includes(metric))];
-  const caseMetricIds = ["atomicPrecision", "atomicRecall", "hallucinationRate", "omissionRate", "latencyMs", "evidenceFidelity"];
   const baseline = state.runs.find((run) => run.catalogId === state.baselineId);
   const candidate = state.runs.find((run) => run.catalogId === state.candidateId);
+  const think = baseline?.runKind === "think-synthesis" || baseline?.runKind === "think-e2e";
+  const e2e = baseline?.runKind === "think-e2e";
+  const preferredMetricIds = think
+    ? [...(e2e ? ["retrievalSuccessRate"] : []), "meanAnswerCompleteness", "meanUnsupportedClaimRate", "meanCitationPrecision", "meanCitationCompleteness", "meanGapAccuracy", "p95LatencyMs", "meanCostPerThink"]
+    : ["meanAtomicPrecision", "meanAtomicRecall", "meanHallucinationRate", "meanOmissionRate", "p95LatencyMs", "meanCostPerExtraction"];
+  const allAggregateMetricIds = [...new Set(comparison.aggregateDeltas.flatMap((delta) => Object.keys(delta.metrics || {})))];
+  const metricIds = [...preferredMetricIds.filter((metric) => allAggregateMetricIds.includes(metric)), ...allAggregateMetricIds.filter((metric) => !preferredMetricIds.includes(metric))];
+  const caseMetricIds = think
+    ? [...(e2e ? ["retrievalPass"] : []), "answerCompleteness", "unsupportedClaimRate", "citationPrecision", "citationCompleteness", "gapAccuracy", "latencyMs"]
+    : ["atomicPrecision", "atomicRecall", "hallucinationRate", "omissionRate", "latencyMs", "evidenceFidelity"];
   return `<div class="notice ${status === "compatible" ? "good" : ""}"><div>${badge(status || "unknown", tone)}</div><p>${escapeHtml((comparison.compatibility?.reasons || []).join(" "))} ${escapeHtml((comparison.compatibility?.warnings || []).join(" "))} ${comparison.compatibility?.pairing === "explicit-override" ? "Human pairing override is recorded." : ""}</p></div>
     <div class="compare-grid"><section class="paper-card card-pad"><h3>Aggregate deltas</h3><p class="card-caption">Candidate minus baseline. Every candidate in the matrix gets its own row; direction is metric metadata and no composite health score is invented.</p><table class="metric-table"><thead><tr><th>Metric</th><th>Candidate identity</th><th>Baseline</th><th>Candidate</th><th>Delta</th></tr></thead><tbody>${metricIds.map((metric) => aggregateDeltasForMetric(comparison, metric).map((delta) => renderAggregateMetric(delta, metric)).join("")).join("")}</tbody></table></section><section class="paper-card card-pad"><h3>Dumbbell field</h3><p class="card-caption">Each candidate has a labeled dumbbell. Click a mark to list that candidate's contributing case rows.</p>${renderDumbbells(comparison, metricIds)}</section></div>
     <section class="paper-card card-pad section-stack"><h3>Latency distribution</h3><p class="card-caption">Each bar is a bucket of exact latency rows; click one to reveal contributors.</p>${renderLatencyDistribution(comparison)}<div class="distribution-legend"><span><i class="legend-dot"></i>baseline</span><span><i class="legend-dot amber"></i>candidate</span></div></section>
@@ -411,8 +431,26 @@ function renderCaseColumn(entry) {
     const reason = entry.unavailableReason || "evidence unavailable";
     return `<section class="paper-card card-pad evidence-column evidence-unavailable-column"><h3>${escapeHtml(entry.side)}</h3><p class="case-meta">run <span class="mono">${escapeHtml(entry.runId || "run unavailable")}</span></p><div class="evidence-unavailable"><strong>${escapeHtml(reason)}</strong><span>${entry.errorMessage ? escapeHtml(entry.errorMessage) : "This case has no loaded evidence in this run."}</span></div></section>`;
   }
-  const row = item.rawEvidence?.row || {};
-  return `<section class="paper-card card-pad evidence-column"><h3>${escapeHtml(entry.side)}</h3><p class="case-meta">${escapeHtml(item.candidateId)} · repetition ${escapeHtml(item.repetition)} · ${badge(item.status, item.status === "pass" ? "good" : item.status === "fail" || item.status === "error" ? "warn" : "neutral")}</p><div class="metric-pills">${Object.entries(item.metrics || {}).filter(([, value]) => value !== null).slice(0, 8).map(([metric, value]) => `<span class="metric-pill">${escapeHtml(labelFor(metric))}: <strong>${escapeHtml(formatMetric(metric, value))}</strong></span>`).join("")}</div><div class="evidence-block"><h4>Input / row reference</h4><pre>${escapeHtml(`case: ${item.inputRef?.locator || item.caseId}\nrow: ${item.outputRef?.locator || item.comparisonKey}`)}</pre></div><div class="evidence-block"><h4>Output / parser</h4><pre>${json({ parse: row.parse, diagnostics: item.diagnostics })}</pre></div><div class="evidence-block"><h4>Request / scoring</h4><pre>${json({ effectiveRequest: row.effectiveRequest, quality: row.quality, usage: row.usage, latencyMs: row.latencyMs, retryCount: row.retryCount, errorClass: row.errorClass })}</pre></div><button class="button-primary" data-open-raw="${escapeHtml(entry.catalogId)}" data-raw-key="${escapeHtml(item.comparisonKey)}">Open exact raw evidence</button></section>`;
+  const content = item.detail?.kind === "think-synthesis" || item.detail?.kind === "think-e2e"
+    ? renderThinkCaseDetail(item.detail)
+    : renderCaptureCaseDetail(item.detail || {});
+  return `<section class="paper-card card-pad evidence-column"><h3>${escapeHtml(entry.side)}</h3><p class="case-meta">${escapeHtml(item.candidateId)} · repetition ${escapeHtml(item.repetition)} · ${badge(item.status, item.status === "pass" ? "good" : item.status === "fail" || item.status === "error" ? "warn" : "neutral")}</p><div class="metric-pills">${Object.entries(item.metrics || {}).filter(([, value]) => value !== null).slice(0, 10).map(([metric, value]) => `<span class="metric-pill">${escapeHtml(labelFor(metric))}: <strong>${escapeHtml(formatMetric(metric, value))}</strong></span>`).join("")}</div><div class="evidence-block"><h4>Input / row reference</h4><pre>${escapeHtml(`case: ${item.inputRef?.locator || item.caseId}\nrow: ${item.outputRef?.locator || item.comparisonKey}`)}</pre></div>${content}<button class="button-primary" data-open-raw="${escapeHtml(entry.catalogId)}" data-raw-key="${escapeHtml(item.comparisonKey)}">Open exact raw evidence</button></section>`;
+}
+
+function renderCaptureCaseDetail(detail) {
+  return `<div class="evidence-block"><h4>Output / parser</h4><pre>${json({ parse: detail.parse, diagnostics: detail.diagnostics })}</pre></div><div class="evidence-block"><h4>Request / scoring</h4><pre>${json({ effectiveRequest: detail.effectiveRequest, quality: detail.quality, usage: detail.usage, latencyMs: detail.latencyMs, retryCount: detail.retryCount, errorClass: detail.errorClass })}</pre></div>`;
+}
+
+function renderThinkCaseDetail(detail) {
+  const evidenceById = new Map((detail.evidence || []).map((item) => [item.id, item]));
+  const claims = detail.claims || [];
+  const matrix = claims.length
+    ? `<div class="claim-matrix-wrap"><table class="claim-matrix"><thead><tr><th>Claim</th><th>Citations</th><th>Supporting evidence</th></tr></thead><tbody>${claims.map((claim) => {
+      const evidence = (claim.citationIds || []).map((id) => evidenceById.get(id)).filter(Boolean);
+      return `<tr><td>${escapeHtml(claim.text)}</td><td>${(claim.citationIds || []).map((id) => `<span class="mono citation-chip">${escapeHtml(id)}</span>`).join("") || `<span class="muted">none</span>`}${(claim.droppedCitationIds || []).length ? `<small class="warn-text">dropped: ${escapeHtml(claim.droppedCitationIds.join(", "))}</small>` : ""}</td><td>${evidence.map((item) => `<strong class="mono">${escapeHtml(item.id)}</strong><p>${escapeHtml(item.preview)}</p>`).join("") || `<span class="muted">no validated support</span>`}</td></tr>`;
+    }).join("")}</tbody></table></div>`
+    : `<div class="evidence-unavailable"><strong>No answer claims</strong><span>The model abstained or produced no claim-addressable output.</span></div>`;
+  return `<div class="evidence-block"><h4>Question</h4><p>${escapeHtml(detail.question)}</p></div><div class="evidence-block"><h4>Answer ${badge(detail.synthesisVerdict || "unknown", detail.synthesisVerdict === "pass" ? "good" : detail.synthesisVerdict === "fail" ? "warn" : "neutral")}</h4><p>${detail.answer ? escapeHtml(detail.answer) : `<span class="muted">null / abstained</span>`}</p></div><div class="evidence-block"><h4>Claim → evidence matrix</h4>${matrix}</div><div class="evidence-block"><h4>Knowledge gaps</h4>${(detail.gaps || []).length ? `<ul>${detail.gaps.map((gap) => `<li>${escapeHtml(gap)}</li>`).join("")}</ul>` : `<p class="muted">No gaps reported.</p>`}</div>${detail.retrieval ? `<div class="evidence-block"><h4>Retrieval contract</h4><pre>${json(detail.retrieval)}</pre></div>` : ""}<div class="evidence-block"><h4>Scoring / usage</h4><pre>${json({ quality: detail.quality, usage: detail.usage, latencyMs: detail.latencyMs, estimatedCostUsd: detail.estimatedCostUsd, costBasis: detail.costBasis })}</pre></div>`;
 }
 
 function traceStatus(trace) {
@@ -522,7 +560,13 @@ async function loadRuns(refresh = false) {
     state.traceEnabled = capabilities.trace?.enabled === true;
     state.generatedAt = payload.generatedAt; state.runs = payload.runs || []; state.diagnostics = payload.diagnostics || []; state.duplicateRunIds = payload.duplicateRunIds || [];
     if (!state.baselineId && state.runs[0]) state.baselineId = state.runs[0].catalogId;
-    if (!state.candidateId && state.runs[1]) state.candidateId = state.runs[1].catalogId;
+    if (!state.candidateId && state.runs[0]) {
+      const compatible = state.runs.find((run, index) =>
+        index > 0 &&
+        run.suiteId === state.runs[0].suiteId &&
+        run.suiteVersion === state.runs[0].suiteVersion);
+      state.candidateId = compatible?.catalogId || "";
+    }
   } catch (error) { state.error = error; }
   state.loading = false; render();
 }
@@ -681,6 +725,12 @@ root?.addEventListener("click", (event) => {
   if (target.dataset.exportComparison !== undefined && state.comparison) { void download(`/api/compare/export?baseline=${enc(state.baselineId)}&candidate=${enc(state.candidateId)}${state.allowPairing ? "&allowUnverified=true&allowIncompatible=true" : ""}`, `runir-comparison-${state.baselineId}-${state.candidateId}.json`); }
 });
 
-export { aggregateDeltasForMetric, candidateDescriptor, buildCaseSelection, loadCaseEntries };
+export {
+  aggregateDeltasForMetric,
+  candidateDescriptor,
+  buildCaseSelection,
+  loadCaseEntries,
+  renderThinkCaseDetail,
+};
 
 if (typeof document !== "undefined") void loadRuns();

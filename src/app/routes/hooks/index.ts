@@ -1,7 +1,6 @@
 import type { Hono } from "hono";
 import { recordSessionTurns } from "../../../storage/surreal/session-turn-store.js";
 import { resolveLlmBaseUrl, resolveLlmTimeoutMs } from "../../../shared/config.js";
-import { jsonrepair } from "jsonrepair";
 import type { EntityMention, ExtractedFact, MemoryRole, RawExtractedFact } from "../../../domain/memory/types.js";
 import {
   scoreHexisFit,
@@ -72,6 +71,8 @@ import { resolveRunirSession } from "../../../storage/surreal/runir-session-stor
 import type { RunirSessionRecord } from "../../../domain/memory/types.js";
 import { resolveBodyCanonicalContext } from "../../../recall/body-resolution.js";
 import { orchestrateRecall } from "../../../recall/orchestrator/recall-orchestrator.js";
+import { THINK_RETRIEVAL_TOP_K } from "../../../recall/orchestrator/think-synthesis.js";
+import { registerThinkRoute } from "./think-route.js";
 import {
   bm25StatsCache,
   cfg,
@@ -776,86 +777,38 @@ export function registerHookRoutes(app: Hono) {
 
   // Agent-steered THINK surface (Rúnir-b40x.6): explicit question → recall →
   // ONE gateway synthesis call under cite-or-gap hard rules → {answer,
-  // citations, gaps}. Empty retrieval returns an honest no-answer WITHOUT an
+  // claims, citations, gaps}. Empty retrieval returns an honest no-answer WITHOUT an
   // LLM call. Verbatim-content sensitivity: requires an EXPLICIT userId (same
   // rule as the trace endpoints). The ambient hooks stay raw-prepend; this
   // surface exists for deliberate deeper queries (see the runir-search skill).
-  app.post("/memory/think", async (c) => {
-    const body = await c.req.json().catch(() => ({}));
-    if (typeof body.userId !== "string" || !body.userId.trim()) {
-      return c.json({ error: "explicit userId required" }, 400);
-    }
-    let uid: string;
-    try { uid = resolveUserId(body.userId, cfg); } catch { return c.json({ error: "unauthorized" }, 400); }
-    const question = typeof body.question === "string" && body.question.trim()
-      ? body.question.trim()
-      : typeof body.prompt === "string" ? body.prompt.trim() : "";
-    if (!question) return c.json({ error: "question required" }, 400);
-
-    const {
-      buildThinkPrompt,
-      parseThinkResponse,
-      emptyThinkResponse,
-      resolveThinkModel,
-    } = await import("../../../recall/orchestrator/think-synthesis.js");
-    const result = await orchestrateRecall(
-      { db: runtime.db, provider, overlayRegistry: runtime.overlayRegistry, cfg, debugLogger, retrievalStats, resolveActiveHexis },
-      { body: { ...body, prompt: question, hexisDebug: false }, prompt: question, uid },
-    );
-    const recallBody: any = result.body ?? {};
-    const selected: any[] = Array.isArray(recallBody.selected) ? recallBody.selected : [];
-    const evidence = selected
-      .map((hit) => ({ id: String(hit.id ?? ""), text: String(hit.content ?? hit.text ?? hit.l2 ?? "") }))
-      .filter((item) => item.id && item.text)
-      .slice(0, 12);
-
-    if (result.kind === "skipped" || evidence.length === 0) {
-      return c.json({ ...emptyThinkResponse(question), retrievalTraceId: recallBody.retrievalTraceId, evidenceCount: 0 });
-    }
-
-    const apiKey = resolveCaptureApiKey(cfg);
-    if (!apiKey) return c.json({ error: "think requires the gateway API key" }, 500);
-    const model = resolveThinkModel();
-    const { system, user } = buildThinkPrompt(question, evidence);
-    let synthesis;
-    try {
-      const response = await fetch(`${resolveLlmBaseUrl()}/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: "system", content: system }, { role: "user", content: user }],
-          max_tokens: 1200,
-          temperature: 0.2,
-        }),
-        signal: AbortSignal.timeout(resolveLlmTimeoutMs()),
-      });
-      if (!response.ok) throw new Error(`gateway ${response.status}`);
-      const data: any = await response.json();
-      const raw = String(data?.choices?.[0]?.message?.content ?? "");
-      synthesis = parseThinkResponse(raw, evidence, jsonrepair);
-    } catch (err) {
-      synthesis = {
-        answer: null, citations: [], droppedCitations: [],
-        gaps: [`synthesis call failed: ${String(err).slice(0, 120)} — raw evidence is in the citations-capable /memory/search surface`],
-      };
-    }
-
-    // Persist the synthesis onto the recall's own trace row (additive,
-    // SCHEMALESS) so usefulness tooling can credit cited memories later.
-    if (typeof recallBody.retrievalTraceId === "string" && recallBody.retrievalTraceId) {
-      void runtime.db.query(
+  registerThinkRoute(app, {
+    resolveUserId: (requestedUserId) => resolveUserId(requestedUserId, cfg),
+    recall: ({ body, question, userId }) =>
+      orchestrateRecall(
+        {
+          db: runtime.db,
+          provider,
+          overlayRegistry: runtime.overlayRegistry,
+          cfg: { ...cfg, topK: Math.max(cfg.topK, THINK_RETRIEVAL_TOP_K) },
+          debugLogger,
+          retrievalStats,
+          resolveActiveHexis,
+        },
+        {
+          body: { ...body, prompt: question, hexisDebug: false },
+          prompt: question,
+          uid: userId,
+        },
+      ),
+    resolveApiKey: () => resolveCaptureApiKey(cfg),
+    resolveBaseUrl: () => resolveLlmBaseUrl(),
+    resolveTimeoutMs: () => resolveLlmTimeoutMs(),
+    persistSynthesis: ({ retrievalTraceId, synthesis }) =>
+      runtime.db.query(
         `UPDATE type::record('retrieval_trace', $traceId) SET synthesis = $synthesis;`,
-        { traceId: recallBody.retrievalTraceId, synthesis: { question, ...synthesis, model } },
-      ).catch((err: unknown) => console.warn(`memory-hybrid: think synthesis persist failed: ${String(err).slice(0, 120)}`));
-    }
-
-    return c.json({
-      ...synthesis,
-      retrievalTraceId: recallBody.retrievalTraceId,
-      evidenceCount: evidence.length,
-      evidence: evidence.map((item) => ({ id: item.id, preview: item.text.slice(0, 140) })),
-    });
+        { traceId: retrievalTraceId, synthesis },
+      ),
+    warn: (message) => console.warn(message),
   });
 
   app.post("/hooks/feedback", async (c) => {

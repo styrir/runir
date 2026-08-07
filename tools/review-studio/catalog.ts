@@ -1,9 +1,9 @@
 import {
-  adaptBenchmarkRun,
   assessReviewCompatibility,
   compareReviewRuns,
   type CompareReviewRunsOptions,
 } from "../../src/testing/review-studio/benchmark-adapter.js";
+import { adaptReviewRun } from "../../src/testing/review-studio/adapter-registry.js";
 import type {
   BenchmarkRunBundle,
   ReviewCaseResult,
@@ -416,7 +416,7 @@ function buildSnapshot(options: ReviewCatalogOptions): ReviewCatalogSnapshot {
   const adapted: ReviewCatalogRun[] = [];
   for (const item of loaded) {
     try {
-      const run = adaptBenchmarkRun(item.bundle);
+      const run = adaptReviewRun(item.bundle);
       adapted.push({
         catalogId: "",
         run,

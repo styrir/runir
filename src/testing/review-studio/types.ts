@@ -10,6 +10,9 @@ export type ReviewMetricDefinition = {
   direction: ReviewMetricDirection;
 };
 
+export type ReviewRunKind = "model-benchmark" | "think-synthesis" | "think-e2e";
+export type ReviewCasePresentation = "capture-extraction" | "think-synthesis" | "think-e2e";
+
 export type ReviewCandidate = {
   id: string;
   label: string;
@@ -18,7 +21,13 @@ export type ReviewCandidate = {
 };
 
 export type ReviewArtifactRef = {
-  kind: "benchmark-case" | "benchmark-row" | "benchmark-manifest";
+  kind:
+    | "benchmark-case"
+    | "benchmark-row"
+    | "benchmark-manifest"
+    | "think-case"
+    | "think-row"
+    | "think-manifest";
   locator: string;
 };
 
@@ -40,6 +49,39 @@ export type ReviewRawEvidence = {
 
 export type ReviewCaseStatus = "pass" | "fail" | "error" | "unscored";
 
+export type ReviewCaptureCaseDetail = {
+  kind: "capture-extraction";
+  parse: Record<string, unknown>;
+  effectiveRequest: Record<string, unknown>;
+  quality: Record<string, unknown>;
+  usage: Record<string, unknown>;
+  latencyMs: number;
+  retryCount: number;
+  errorClass?: string;
+};
+
+export type ReviewThinkCaseDetail = {
+  kind: "think-synthesis" | "think-e2e";
+  question: string;
+  evidence: Array<{ id: string; preview: string }>;
+  answer: string | null;
+  claims: Array<{
+    text: string;
+    citationIds: string[];
+    droppedCitationIds: string[];
+  }>;
+  gaps: string[];
+  synthesisVerdict: "pass" | "fail" | "not-scored";
+  quality: Record<string, unknown>;
+  usage: Record<string, unknown>;
+  latencyMs: number;
+  estimatedCostUsd: number | null;
+  costBasis: string;
+  retrieval?: Record<string, unknown>;
+};
+
+export type ReviewCaseDetail = ReviewCaptureCaseDetail | ReviewThinkCaseDetail;
+
 export type ReviewCaseResult = {
   comparisonKey: string;
   caseId: string;
@@ -50,6 +92,7 @@ export type ReviewCaseResult = {
   inputRef: ReviewArtifactRef;
   outputRef: ReviewArtifactRef;
   diagnostics: ReviewDiagnostic[];
+  detail: ReviewCaseDetail;
   rawEvidence: ReviewRawEvidence;
 };
 
@@ -89,8 +132,11 @@ export type ReviewRun = {
   runId: string;
   conditionId?: string;
   suiteId: string;
+  suiteLabel: string;
   suiteVersion: string;
-  runKind: "model-benchmark";
+  runKind: ReviewRunKind;
+  casePresentation: ReviewCasePresentation;
+  metricDefinitions: ReviewMetricDefinition[];
   createdAt: string;
   git: { sha: string; dirty: boolean };
   configHash: string;

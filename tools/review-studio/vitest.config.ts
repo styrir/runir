@@ -6,7 +6,11 @@ export default defineConfig({
     environment: "node",
     testTimeout: 60_000,
     hookTimeout: 60_000,
-    include: ["tools/review-studio/__tests__/**/*.{test,spec}.{ts,tsx,js,mjs,cjs}"],
+    include: [
+      "tools/review-studio/__tests__/**/*.{test,spec}.{ts,tsx,js,mjs,cjs}",
+      "src/__tests__/review-studio-think-adapter.test.ts",
+      "src/__tests__/think-benchmark.test.ts",
+    ],
     exclude: ["**/node_modules/**", "**/dist/**"],
   },
 });
