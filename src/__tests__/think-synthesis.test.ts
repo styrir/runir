@@ -45,7 +45,7 @@ describe("buildThinkPrompt", () => {
     expect(system).toContain("Cite EVERY substantive claim");
     expect(system).toContain('"gaps"');
     expect(system).toContain("Do NOT make");
-    expect(user).toContain('<evidence id="a1b2c3d4">');
+    expect(user).toContain(`<evidence id="${EVIDENCE[0].id}">`);
     expect(user).toContain("User prefers terse answers.");
   });
 });
@@ -57,6 +57,50 @@ describe("parseThinkResponse", () => {
     expect(result.answer).toBe("You prefer terse answers.");
     expect(result.citations).toEqual([{ id: EVIDENCE[0].id, index: 0 }]);
     expect(result.droppedCitations).toEqual([]);
+  });
+
+  it("parses claim-addressable output with full evidence ids", () => {
+    const raw = JSON.stringify({
+      answer: "You prefer terse answers.",
+      claims: [{ text: "You prefer terse answers.", citations: [EVIDENCE[0].id] }],
+      gaps: [],
+    });
+    const result = parseThinkResponse(raw, EVIDENCE, jsonrepair);
+    expect(result.schemaValid).toBe(true);
+    expect(result.parseClassification).toBe("valid");
+    expect(result.claims).toEqual([{
+      text: "You prefer terse answers.",
+      citations: [{ id: EVIDENCE[0].id, index: 0 }],
+      droppedCitations: [],
+    }]);
+  });
+
+  it("can re-validate the route's normalized citation-object shape", () => {
+    const raw = JSON.stringify({
+      answer: "You prefer terse answers.",
+      claims: [{
+        text: "You prefer terse answers.",
+        citations: [{ id: EVIDENCE[0].id, index: 0 }],
+      }],
+      gaps: [],
+    });
+    expect(parseThinkResponse(raw, EVIDENCE, jsonrepair).claims[0]?.citations)
+      .toEqual([{ id: EVIDENCE[0].id, index: 0 }]);
+  });
+
+  it("drops an ambiguous legacy short id instead of citing the wrong evidence", () => {
+    const collisionEvidence = [
+      { id: "semiote:deadbeef-1111", text: "first" },
+      { id: "semiote:deadbeef-2222", text: "second" },
+    ];
+    const raw = JSON.stringify({
+      answer: "x",
+      claims: [{ text: "x", citations: ["deadbeef"] }],
+      gaps: [],
+    });
+    const result = parseThinkResponse(raw, collisionEvidence, jsonrepair);
+    expect(result.citations).toEqual([]);
+    expect(result.droppedCitations).toEqual(["deadbeef"]);
   });
 
   it("DROPS invented citations instead of trusting them", () => {

@@ -1,15 +1,16 @@
-# Extraction Model Benchmark and Review Studio
+# Model Benchmarks and Review Studio
 
 This guide explains how to run Rúnir's capture-extraction model benchmark,
-produce reviewable evidence, and inspect or compare that evidence in Review
-Studio. It is intended for Rúnir maintainers and for operators evaluating their
-own models through an OpenAI-compatible gateway.
+the explicit `/memory/think` benchmark, produce reviewable evidence, and
+inspect or compare that evidence in Review Studio. It is intended for Rúnir
+maintainers and for operators evaluating their own models through an
+OpenAI-compatible gateway.
 
-The benchmark covers **capture extraction only**. It does not evaluate Rúnir's
-entity extraction, reranking, staleness detection, supersession judge,
-`/memory/think`, continuity synthesis, or other model-backed stages.
+The capture and Think suites are independent. A model cannot improve its
+capture score by doing well at Think synthesis, and Review Studio permanently
+refuses Capture-versus-Think comparisons.
 
-## Current benchmark decision
+## Current capture benchmark decision
 
 As of 2026-08-07, the selected extraction profile is:
 
@@ -53,9 +54,11 @@ The runner and Studio are deliberately separate:
 1. `scripts/model-benchmark-extraction.ts` loads the frozen corpus, calls the
    selected models, scores their extraction output, and writes a JSONL result,
    a manifest, and a Markdown report.
-2. Review Studio scans explicit artifact roots and turns those files into Runs,
+2. `scripts/model-benchmark-think.ts` does the same for fixed-evidence Think
+   synthesis or a loopback end-to-end `/memory/think` lane.
+3. Review Studio scans explicit artifact roots and turns those files into Runs,
    Compare, and Case Detail views.
-3. Review Studio never schedules or pays for a model call. To see a new run,
+4. Review Studio never schedules or pays for a model call. To see a new run,
    execute the runner first and then refresh the Studio catalog.
 
 This is the middle ground between a bare test script and a benchmark-management
@@ -238,6 +241,130 @@ To use your own corpus, copy the default corpus and preserve its shape:
 
 Keep gold human-authored and freeze the corpus before comparing models.
 
+## Evaluate `/memory/think`
+
+Think has two deliberately separate suites:
+
+- `runir-think-synthesis` sends frozen evidence directly through the production
+  Think prompt, request body, parser, and deterministic scorer. This isolates
+  model behavior from retrieval.
+- `runir-think-e2e` calls a loopback Rúnir `/memory/think` endpoint and records
+  retrieval selection, the 12-item evidence cap, whether synthesis ran, and
+  synthesis quality. This measures the assembled route. The corpus's expected
+  evidence IDs must already be seeded in that test tenant before this lane can
+  make a retrieval-quality claim.
+
+The frozen Think corpus is
+[`fixtures/think-benchmark/corpus.json`](../fixtures/think-benchmark/corpus.json).
+Its human gold defines independently checkable claims, allowed evidence IDs,
+forbidden traps, and required knowledge gaps. The model response is also
+claim-addressable: every output claim carries its own citation list.
+
+The deterministic scorer keeps these dimensions separate:
+
+- schema validity and abstention correctness;
+- answer completeness;
+- unsupported-claim rate, including arbitrary unmatched claims rather than
+  only known trap phrases;
+- citation validity, precision, and completeness;
+- knowledge-gap accuracy;
+- latency, token use, and cost.
+
+In the end-to-end suite, retrieval gets its own pass/fail metric. If expected
+supporting evidence is not retained, the row records `synthesisVerdict:
+not-scored` and Review Studio leaves synthesis-quality metrics empty instead of
+charging the retrieval miss to the model.
+
+Production Think currently defaults to `openai/gpt-5.6-luna` and intentionally
+sends no reasoning-effort parameter:
+
+```dotenv
+RUNIR_THINK_MODEL=openai/gpt-5.6-luna
+```
+
+That model choice is independent from capture extraction.
+
+### Think zero-network preflight
+
+The default command validates the corpus, prints the complete request count and
+provenance disclosure, and makes no network calls:
+
+```bash
+npm run benchmark:think -- \
+  --suite synthesis \
+  --fixtures fixtures/think-benchmark/corpus.json \
+  --model openai/gpt-5.6-luna \
+  --candidate-id luna-think \
+  --candidate-label "GPT-5.6 Luna" \
+  --repetitions 1 \
+  --timeout-ms 30000 \
+  --max-output-tokens 1200
+```
+
+Dry preflight does not write model-quality rows. It proves only that the
+bounded run shape, corpus, request contract, and source provenance are valid.
+
+### Approved fixed-evidence Think run
+
+Run paid execution only through the approved Infisical injection wrapper. The
+runner never accepts a secret as a command-line flag and logs only the
+credential source:
+
+```bash
+npm run benchmark:think -- \
+  --suite synthesis \
+  --fixtures fixtures/think-benchmark/corpus.json \
+  --model openai/gpt-5.6-luna \
+  --candidate-id luna-think \
+  --candidate-label "GPT-5.6 Luna" \
+  --repetitions 1 \
+  --confirm-cost \
+  --max-total-cost-usd 0.15 \
+  --input-usd-per-1m <current-input-price> \
+  --output-usd-per-1m <current-output-price> \
+  --out-raw docs/analysis/raw/luna-think.jsonl \
+  --out-report docs/analysis/luna-think.md
+```
+
+Paid execution fails closed unless the worktree is clean, the injected
+`OPENROUTER_API_KEY` is present, the price inputs and cap are explicit, and the
+worst-case token reservation fits beneath the cap. Existing artifacts are
+refused before any request unless `--allow-overwrite` is explicit.
+`--allow-dirty` is an emergency provenance escape hatch: it permits execution,
+but the manifest remains dirty and Review Studio displays a `dirty_git`
+warning. Do not use it for reference or promotion evidence.
+
+### Loopback end-to-end Think run
+
+Start a Rúnir instance whose test tenant contains the corpus's expected
+memories, then use:
+
+```bash
+npm run benchmark:think -- \
+  --suite e2e \
+  --service-url http://127.0.0.1:7700 \
+  --user-id owner \
+  --model openai/gpt-5.6-luna \
+  --candidate-id luna-think-e2e \
+  --confirm-cost \
+  --max-total-cost-usd 0.15 \
+  --input-usd-per-1m <current-input-price> \
+  --output-usd-per-1m <current-output-price> \
+  --out-raw docs/analysis/raw/luna-think-e2e.jsonl \
+  --out-report docs/analysis/luna-think-e2e.md
+```
+
+The runner refuses non-loopback service URLs. `RUNIR_API_KEY`, when required by
+the local service, is read from the injected process environment. A mocked
+route-contract test proves wiring; only a seeded run with expected IDs proves
+retrieval quality. The production route returns token usage when the gateway
+provides it; the runner estimates that row from the explicit price inputs. If
+usage is unavailable, the row is marked `reserved_worst_case` and reserves a
+conservative bound based on 12 evidence items capped at 4,000 characters each
+plus the fixed prompt overhead and output ceiling. The manifest records
+`route_usage_or_reservation` so Review Studio does not present that cost basis
+as gateway billing.
+
 ## Open the results in Review Studio
 
 Point Studio at the directory containing paired `.jsonl` and `.manifest.json`
@@ -256,13 +383,15 @@ Use:
 - **Runs** for aggregate quality, latency, reliability, cost, configuration,
   and provenance;
 - **Compare** for compatible baseline/candidate dumbbells and heatmaps;
-- **Case Detail** for exact input, output, parse classification, and scores;
+- **Case Detail** for exact capture parser evidence or a Think
+  claim-to-evidence matrix, knowledge gaps, retrieval contract, and scores;
 - **Refresh** after the runner writes a new artifact beneath a configured root;
 - **Export JSON** or Print for a review handoff.
 
-Runs are comparison-compatible only when their corpus, scoring contract,
-prompt template, and relevant condition provenance align. Do not override an
-incompatibility merely to produce a favorable chart.
+Runs are comparison-compatible only when their suite, corpus, scoring contract,
+prompt template, metric contract, and relevant condition provenance align.
+Legacy or same-suite version mismatches require a deliberate override.
+Different suite IDs can never be overridden into one comparison.
 
 ## Why Gemini 3.1 was selected
 

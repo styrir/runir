@@ -314,13 +314,29 @@ The deep escalation surface for "didn't we decide…", entity-centric, and cross
 
 // Response — contract shape (derived from the route contract and skill doc, not captured live)
 { "answer": "…claims, each citation-backed…",
+  "claims": [
+    { "text": "one independently checkable claim",
+      "citations": [ { "id": "<semiote-id>", "index": 1 } ],
+      "droppedCitations": [] }
+  ],
   "citations": [ { "id": "<semiote-id>", "index": 1 } ],
   "gaps": [ "what memory does NOT contain, stated honestly" ],
   "evidence": [ { "id": "<semiote-id>", "preview": "…" } ],
-  "retrievalTraceId": "…", "evidenceCount": 3 }
+  "retrievalTraceId": "…", "evidenceCount": 3,
+  "model": "openai/gpt-5.6-luna",
+  "usage": { "promptTokens": 900, "completionTokens": 120, "totalTokens": 1020 },
+  "retrieval": {
+    "selectedBeforeCap": 18,
+    "selectedIds": [ "<semiote-id>", "…" ],
+    "retainedIds": [ "<semiote-id>", "…" ],
+    "cap": 12,
+    "synthesisSkipped": false
+  } }
 ```
 
-- Empty retrieval returns an honest no-answer (`answer: null`, populated `gaps`) **without calling the LLM** — it never invents an answer.
+- Empty retrieval returns the same top-level shape with `answer: null`,
+  `claims: []`, `citations: []`, `evidence: []`, and populated `gaps`
+  **without calling the LLM** — it never invents an answer.
 - Citation ids are semiote ids — follow up via `GET /memory/get/<id>?userId=…` or `GET /memory/lineage/<id>?userId=…`.
 - Full agent-facing contract: [plugins/runir-claudecode/skills/runir-search/SKILL.md](plugins/runir-claudecode/skills/runir-search/SKILL.md).
 

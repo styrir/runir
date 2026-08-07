@@ -369,6 +369,13 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 .evidence-panels details { margin-top: 0.65rem; border-top: 1px solid var(--line); }
 .evidence-panels summary { padding: 0.65rem 0; color: var(--teal); cursor: pointer; font: 700 0.68rem var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
 .evidence-panels pre { max-height: 24rem; margin: 0 0 0.8rem; overflow: auto; padding: 0.8rem; background: rgba(232, 224, 209, 0.48); white-space: pre-wrap; overflow-wrap: anywhere; font: 0.7rem/1.55 var(--mono); }
+.claim-matrix-wrap { overflow: auto; border: 1px solid var(--line); }
+.claim-matrix { width: 100%; min-width: 680px; border-collapse: collapse; }
+.claim-matrix th { padding: 0.55rem; border-bottom: 1px solid var(--line-dark); background: rgba(232, 224, 209, 0.38); color: var(--slate); text-align: left; font: 700 0.59rem var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.claim-matrix td { width: 33.33%; padding: 0.65rem 0.55rem; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 0.78rem; }
+.claim-matrix td p { margin: 0.25rem 0 0.55rem; color: var(--ink-soft); line-height: 1.45; }
+.citation-chip { display: block; margin-bottom: 0.3rem; overflow-wrap: anywhere; color: var(--teal); font-size: 0.62rem; }
+.warn-text { display: block; margin-top: 0.4rem; color: var(--amber-dark); font: 0.61rem/1.4 var(--mono); }
 .timeline { position: relative; display: grid; gap: 0.2rem; margin: 1rem 0; }
 .timeline::before { position: absolute; top: 0.8rem; bottom: 0.8rem; left: 0.8rem; width: 1px; background: var(--line-dark); content: ""; }
 .timeline-entry { position: relative; display: grid; grid-template-columns: 1.7rem 1fr; gap: 0.7rem; padding: 0.65rem 0; }
