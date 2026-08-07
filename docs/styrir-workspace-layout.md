@@ -53,6 +53,8 @@ vendor or agent:
 │   ├── raw/
 │   └── reports/
 ├── pipelines/
+├── build/
+├── cache/
 ├── logs/
 └── tmp/
 ```
@@ -62,6 +64,12 @@ Styrir workflows. Existing Rúnir benchmark tools currently use
 `.styrir/analysis/raw` for JSONL and manifests and
 `.styrir/analysis/reports` for derived Markdown. Review Studio reads the raw
 root and does not initiate runs.
+
+`pipelines/<lane>` holds local execution plans, state, and handoffs.
+`build/` holds agent-created build or packaging products that do not belong in
+an established product build root. `cache/` is only for small,
+checkout-specific disposable caches; reusable or large caches belong in the
+platform user cache described below.
 
 The directory is ignored in its entirety. Do not put a tracked file inside it
 with a Git negation rule; that makes the boundary hard to audit.
