@@ -14,7 +14,8 @@
     "cli/**/*.ts",
     "scripts/deploy-preflight.ts",
     "scripts/runir-claudecode-hook-contract.ts",
-    "scripts/runir-codex-hook-contract.ts"
+    "scripts/runir-codex-hook-contract.ts",
+    "tools/review-studio/**/*.ts"
   ],
   "exclude": [
     "node_modules",
@@ -28,5 +29,3 @@
     "src/testing/transcript-derived-fixtures.ts"
   ]
 }
-
-

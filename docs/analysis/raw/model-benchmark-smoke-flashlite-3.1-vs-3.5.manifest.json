@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "runir-model-benchmark/v1",
+  "runId": "paid-2026-07-22T23-34-33-311Z-a2ef5c91",
+  "createdAt": "2026-07-22T23:34:42.305Z",
+  "git": {
+    "sha": "561b113e7fb9694776f9db7a94d80d95b0b19f4c",
+    "dirty": true
+  },
+  "disclosure": {
+    "candidateModelIds": [
+      "vertex/gemini-3.1-flash-lite@us",
+      "vertex/gemini-3.5-flash-lite"
+    ],
+    "candidates": [
+      {
+        "id": "flash-lite-3.1-control",
+        "label": "Gemini 3.1 Flash-Lite @us (control / production)",
+        "modelId": "vertex/gemini-3.1-flash-lite@us",
+        "reasoningSupport": "unsupported",
+        "effectiveNotes": [
+          "reasoning unsupported; no reasoning parameter sent",
+          "jsonMode=off: response_format omitted (matches production non-openai extract path)"
+        ]
+      },
+      {
+        "id": "flash-lite-3.5",
+        "label": "Gemini 3.5 Flash-Lite (challenger)",
+        "modelId": "vertex/gemini-3.5-flash-lite",
+        "reasoningSupport": "unsupported",
+        "effectiveNotes": [
+          "reasoning unsupported; no reasoning parameter sent",
+          "jsonMode=off: response_format omitted (matches production non-openai extract path)"
+        ]
+      }
+    ],
+    "corpusSize": 3,
+    "smokeMode": true,
+    "repetitions": 1,
+    "plannedRequestCount": 6,
+    "gatewayBaseUrl": "https://router.requesty.ai/v1",
+    "credentialSourceLabel": "env:REQUESTY_API_KEY",
+    "maxOutputTokens": 8192,
+    "timeoutMs": 120000,
+    "concurrency": 1,
+    "costEstimate": {
+      "available": true,
+      "currency": "USD",
+      "conservativeTotalUsd": 0.018360000000000005,
+      "note": "Conservative estimate assumes ~2k input + ~800 output tokens/request at max list price among candidates (in=$0.45/1M, out=$2.7/1M as of candidate tables). Gateway billing may differ."
+    },
+    "dryRun": false,
+    "confirmCost": true
+  },
+  "promptHash": "5674d7f8116dd8f5153853e981e386e9cc20bee9bc5fd5dcc8d32bb6c956f2b2",
+  "fixturePath": "/Users/brooks/Code/runir/fixtures/model-benchmark/corpus.json",
+  "rowCount": 6
+}

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "runir-model-benchmark/v1",
+  "runId": "synthetic-baseline-2026-08-06",
+  "createdAt": "2026-08-06T08:00:00.000Z",
+  "git": { "sha": "baseline-demo", "dirty": false },
+  "disclosure": {
+    "candidates": [
+      {
+        "id": "luna-max-review",
+        "label": "Luna Max / review fixture",
+        "modelId": "luna-max-review",
+        "reasoningSupport": "native",
+        "effectiveNotes": ["synthetic fixture; no network"]
+      }
+    ],
+    "plannedRequestCount": 5,
+    "repetitions": 1,
+    "smokeMode": false,
+    "maxOutputTokens": 512,
+    "timeoutMs": 30000,
+    "concurrency": 1,
+    "gatewayBaseUrl": "http://synthetic.local/v1",
+    "dryRun": true,
+    "synthetic": true
+  },
+  "fixtureContentHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "promptTemplateHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "scoringContractVersion": "runir-model-benchmark-scoring/v1",
+  "promptHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "fixturePath": "fixtures/model-benchmark/corpus.json",
+  "rowCount": 5
+}
