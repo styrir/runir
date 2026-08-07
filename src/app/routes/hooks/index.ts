@@ -792,7 +792,12 @@ export function registerHookRoutes(app: Hono) {
       : typeof body.prompt === "string" ? body.prompt.trim() : "";
     if (!question) return c.json({ error: "question required" }, 400);
 
-    const { buildThinkPrompt, parseThinkResponse, emptyThinkResponse } = await import("../../../recall/orchestrator/think-synthesis.js");
+    const {
+      buildThinkPrompt,
+      parseThinkResponse,
+      emptyThinkResponse,
+      resolveThinkModel,
+    } = await import("../../../recall/orchestrator/think-synthesis.js");
     const result = await orchestrateRecall(
       { db: runtime.db, provider, overlayRegistry: runtime.overlayRegistry, cfg, debugLogger, retrievalStats, resolveActiveHexis },
       { body: { ...body, prompt: question, hexisDebug: false }, prompt: question, uid },
@@ -810,7 +815,7 @@ export function registerHookRoutes(app: Hono) {
 
     const apiKey = resolveCaptureApiKey(cfg);
     if (!apiKey) return c.json({ error: "think requires the gateway API key" }, 500);
-    const model = process.env.RUNIR_THINK_MODEL || process.env.RUNIR_EXTRACTOR_MODEL || "vertex/gemini-3.1-flash-lite@us";
+    const model = resolveThinkModel();
     const { system, user } = buildThinkPrompt(question, evidence);
     let synthesis;
     try {

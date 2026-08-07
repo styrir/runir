@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { jsonrepair } from "jsonrepair";
 import {
+  DEFAULT_THINK_MODEL,
   buildThinkPrompt,
   parseThinkResponse,
   emptyThinkResponse,
+  resolveThinkModel,
   shortId,
 } from "../recall/orchestrator/think-synthesis.js";
 
@@ -11,6 +13,24 @@ const EVIDENCE = [
   { id: "semiote:a1b2c3d4-1111-2222-3333-444455556666", text: "User prefers terse answers." },
   { id: "semiote:⟨f9e8d7c6-aaaa-bbbb-cccc-ddddeeeeffff⟩", text: "Project uses SurrealDB." },
 ];
+
+describe("resolveThinkModel", () => {
+  it("defaults to GPT-5.6 Luna", () => {
+    expect(DEFAULT_THINK_MODEL).toBe("openai/gpt-5.6-luna");
+    expect(resolveThinkModel({})).toBe("openai/gpt-5.6-luna");
+  });
+
+  it("prefers the dedicated Think override", () => {
+    expect(resolveThinkModel({
+      RUNIR_THINK_MODEL: "custom/think",
+      RUNIR_EXTRACTOR_MODEL: "legacy/shared",
+    })).toBe("custom/think");
+  });
+
+  it("preserves the legacy shared extractor fallback", () => {
+    expect(resolveThinkModel({ RUNIR_EXTRACTOR_MODEL: "legacy/shared" })).toBe("legacy/shared");
+  });
+});
 
 describe("shortId", () => {
   it("strips table prefix and angle brackets, takes 8 chars", () => {
