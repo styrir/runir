@@ -11,6 +11,7 @@ import {
   THINK_MAX_EVIDENCE_TEXT_CHARS,
   THINK_MAX_OUTPUT_TOKENS,
   THINK_PROMPT_OVERHEAD_CHARS,
+  type ThinkEvidenceItem,
 } from "../../recall/orchestrator/think-synthesis.js";
 import { resolveLlmBaseUrl } from "../../shared/config.js";
 import {
@@ -288,6 +289,40 @@ function normalizedRouteClaims(value: unknown): Array<{ text: string; citations:
   });
 }
 
+function bareSemioteId(value: string): string {
+  return value.replace(/^semiote:/u, "");
+}
+
+/**
+ * Production recall exposes semiote record ids in bare form while the frozen
+ * corpus uses source-qualified `semiote:<id>` references. Align only those
+ * equivalent semiote ids to the route evidence actually scored; noema and
+ * unknown source ids retain their explicit identity.
+ */
+function alignE2eGoldEvidenceIds(
+  benchmarkCase: ThinkBenchmarkCase,
+  evidence: ThinkEvidenceItem[],
+): ThinkBenchmarkCase {
+  const routeSemioteIds = new Map(
+    evidence
+      .filter((item) => !item.id.includes(":"))
+      .map((item) => [bareSemioteId(item.id), item.id]),
+  );
+  return {
+    ...benchmarkCase,
+    gold: {
+      ...benchmarkCase.gold,
+      supportedClaims: benchmarkCase.gold.supportedClaims.map((claim) => ({
+        ...claim,
+        evidenceIds: claim.evidenceIds.map((id) =>
+          id.startsWith("semiote:")
+            ? routeSemioteIds.get(bareSemioteId(id)) ?? id
+            : id),
+      })),
+    },
+  };
+}
+
 function reportFor(manifest: ThinkRunManifest, rows: ThinkBenchmarkRow[]): string {
   const passCount = rows.filter((row) => row.synthesisVerdict === "pass").length;
   const retrievalPasses = rows.filter((row) => row.retrieval?.status === "pass").length;
@@ -487,7 +522,10 @@ export async function runThinkBenchmark(
           const selectedIds = stringArray(retrievalSource.selectedIds).length
             ? stringArray(retrievalSource.selectedIds)
             : retainedIds;
-          const retrievalStatus = expectedIds.every((id) => retainedIds.includes(id)) ? "pass" : "fail";
+          const retainedCanonicalIds = new Set(retainedIds.map(bareSemioteId));
+          const retrievalStatus = expectedIds.every((id) => retainedCanonicalIds.has(bareSemioteId(id)))
+            ? "pass"
+            : "fail";
           const routeUsage = asRecord(data.usage);
           const usage = {
             promptTokens: typeof routeUsage.promptTokens === "number" ? routeUsage.promptTokens : undefined,
@@ -502,7 +540,8 @@ export async function runThinkBenchmark(
             options.outputUsdPer1M,
           );
           cumulativeCostUsd += cost;
-          const quality = scoreThinkSynthesis(benchmarkCase, synthesis, synthesis.schemaValid);
+          const scoringCase = alignE2eGoldEvidenceIds(benchmarkCase, evidence);
+          const quality = scoreThinkSynthesis(scoringCase, synthesis, synthesis.schemaValid);
           rows.push({
             schemaVersion: THINK_BENCHMARK_SCHEMA_VERSION,
             runId,
@@ -514,7 +553,7 @@ export async function runThinkBenchmark(
             modelId: typeof data.model === "string" ? data.model : options.modelId,
             question: benchmarkCase.question,
             evidence,
-            gold: benchmarkCase.gold,
+            gold: scoringCase.gold,
             effectiveRequest: request as ThinkBenchmarkRow["effectiveRequest"],
             responseParserVersion: THINK_RESPONSE_PARSER_VERSION,
             synthesis,
