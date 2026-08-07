@@ -100,7 +100,8 @@ Beyond the real-time turn lifecycle, Rúnir runs asynchronous maintenance:
 | Database | SurrealDB | Single DB for vector + graph + document + FTS — no separate stores |
 | Embeddings | Nomic `nomic-embed-text:v1.5` (768-dim) via Ollama | Local, no API cost; same vector space as cloud Nomic API |
 | LLM (capture extraction) | OpenAI-compatible gateway (`RUNIR_LLM_BASE_URL`; code default OpenRouter) | `vertex/gemini-3.1-flash-lite@us`, no reasoning parameter; selected by the frozen 15-case benchmark |
-| LLM (other stages) | Stage-specific gateway profiles | Entity extraction, topic segmentation, continuity, reranking, and `/memory/think` are configured separately and were not promoted by the capture benchmark |
+| LLM (Think synthesis) | OpenAI-compatible gateway | `openai/gpt-5.6-luna`, no reasoning parameter; isolated from capture extraction |
+| LLM (other stages) | Stage-specific gateway profiles | Entity extraction, topic segmentation, continuity, and reranking are configured separately and were not promoted by the capture benchmark |
 | Runtime | Node.js ≥ 22.12 + tsx | Direct TypeScript execution, no build step |
 
 ## Setup
@@ -132,6 +133,7 @@ That is the whole flow: `npm run dev` and `npm start` load `.env` themselves via
 | `SURREAL_URL` / `SURREAL_USER` / `SURREAL_PASS` / `SURREAL_NS` / `SURREAL_DB` | Required. SurrealDB connection. |
 | `OPENROUTER_API_KEY` | Extraction-gateway bearer (**legacy variable name** — it authenticates to whichever OpenAI-compatible gateway `RUNIR_LLM_BASE_URL` points at; code default OpenRouter, operator deployments may point it elsewhere, e.g. Requesty). Required for `/hooks/capture`, `/memory/think`, and maintenance; recall works without it. |
 | `EXTRACT_MODEL` | Capture-only model override. Defaults to `vertex/gemini-3.1-flash-lite@us`. Prefer this over `RUNIR_EXTRACTOR_MODEL`, whose legacy shared fallback can also affect topic segmentation, entity extraction, continuity, and `/memory/think`. |
+| `RUNIR_THINK_MODEL` | Model for explicit `/memory/think` cited-answer synthesis. Defaults to `openai/gpt-5.6-luna`; this does not change capture extraction. |
 | `RUNIR_API_KEY` | Service auth bearer for all non-public routes. Without it the service is **fail-open outside production** and logs a loud startup WARNING (see auth posture below). |
 | `RUNIR_USER_ID` | Default tenant when requests omit `userId`. Set it. |
 | `RUNIR_RECALL_RELEVANCE_FLOOR` | Set `0.55` (the calibrated value, shipped in `.env.example`). Code default `0` = gate off. |
@@ -304,7 +306,7 @@ Malformed bodies never 500 the hook surface: they degrade to the endpoint's natu
 
 ### `POST /memory/think` — synthesized, cited answer
 
-The deep escalation surface for "didn't we decide…", entity-centric, and cross-session questions. Requires an **explicit `userId`** and (for synthesis) the extraction-gateway key — this is the gateway key, distinct from the `RUNIR_API_KEY` request auth.
+The deep escalation surface for "didn't we decide…", entity-centric, and cross-session questions. Requires an **explicit `userId`** and (for synthesis) the extraction-gateway key — this is the gateway key, distinct from the `RUNIR_API_KEY` request auth. Think synthesis defaults to `openai/gpt-5.6-luna` with no reasoning parameter and can be overridden independently with `RUNIR_THINK_MODEL`.
 
 ```json
 // Request

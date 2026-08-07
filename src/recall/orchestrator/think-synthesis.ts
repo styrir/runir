@@ -20,6 +20,24 @@ export type ThinkSynthesis = {
   droppedCitations: string[];
 };
 
+/** Default model for explicit /memory/think answer synthesis. This lane is
+ *  independent from capture extraction and intentionally sends no
+ *  reasoning-effort parameter. */
+export const DEFAULT_THINK_MODEL = "openai/gpt-5.6-luna";
+
+/** Resolve the Think model without coupling it to the capture-only
+ *  EXTRACT_MODEL override. RUNIR_EXTRACTOR_MODEL remains a legacy shared
+ *  fallback for existing deployments. */
+export function resolveThinkModel(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const own = env.RUNIR_THINK_MODEL?.trim();
+  if (own) return own;
+  const shared = env.RUNIR_EXTRACTOR_MODEL?.trim();
+  if (shared) return shared;
+  return DEFAULT_THINK_MODEL;
+}
+
 export function shortId(fullId: string): string {
   const bare = fullId.replace(/^[^:]+:/, "").replace(/[⟨⟩]/g, "");
   return bare.slice(0, 8);

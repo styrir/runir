@@ -56,14 +56,15 @@ Capture extraction mirrors the accepted benchmark profile:
 ```dotenv
 RUNIR_LLM_BASE_URL=https://router.requesty.ai/v1
 EXTRACT_MODEL=vertex/gemini-3.1-flash-lite@us
-RUNIR_THINK_MODEL=openai/gpt-5.4-mini
+RUNIR_THINK_MODEL=openai/gpt-5.6-luna
 ```
 
 The Requesty credential is injected by the launch wrapper from Infisical
 Universal Auth; it is not supplied in this configuration block.
 `EXTRACT_MODEL` is capture-only. Topic segmentation, entity extraction, and
-continuity keep their existing `openai/gpt-5.4-mini` code defaults, while the
-explicit think pin preserves the prior owner-local `/memory/think` behavior.
+continuity keep their existing `openai/gpt-5.4-mini` code defaults. The
+independent Think pin selects GPT-5.6 Luna for `/memory/think`; its request does
+not include a reasoning-effort parameter.
 
 Do not use `RUNIR_EXTRACTOR_MODEL` for a capture-only promotion. It is a legacy
 shared fallback and also feeds topic segmentation, entity extraction,
