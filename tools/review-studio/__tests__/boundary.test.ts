@@ -28,6 +28,7 @@ describe("Review Studio packaging and dependency boundary", () => {
 
   it("keeps the tool out of the public Styrir export and exposes a repeatable test lane", () => {
     const denylist = readFileSync(join(process.cwd(), "docs/release/styrir-export-denylist.txt"), "utf8");
+    expect(denylist.split(/\r?\n/u)).toContain("prefix:.styrir");
     expect(denylist.split(/\r?\n/u)).toContain("prefix:tools/review-studio");
     const packageJson = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as { scripts?: Record<string, string> };
     expect(packageJson.scripts?.["review-studio:test"]).toContain("tools/review-studio/vitest.config.ts");

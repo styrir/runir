@@ -9,6 +9,7 @@
 
 exact:.env
 exact:.env.local
+prefix:.styrir
 prefix:.beads
 prefix:.pipeline
 prefix:.omc
