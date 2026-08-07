@@ -274,6 +274,32 @@ describe("runir-model-benchmark/v1 review adapter", () => {
     expect(responses.provenance.compatibility).toBe("verified");
   });
 
+  it("includes gateway-mapped reasoning budgets in config provenance", () => {
+    const mapped = (runId: string, reasoningBudgetTokens: number) =>
+      adaptBenchmarkRun(
+        bundle(runId, [
+          row({
+            runId,
+            effectiveRequest: {
+              modelId: "vertex/gemini-3.5-flash-lite",
+              apiStyle: "chat_completions",
+              endpoint: "configured",
+              max_tokens: 2_048,
+              temperature: 0,
+              reasoning: "low",
+              reasoningBudgetTokens,
+              reasoningParam: { reasoning_effort: "low" },
+              notes: [],
+            },
+          }),
+        ]),
+      );
+
+    expect(mapped("mapped-1024", 1_024).configHash).not.toBe(
+      mapped("mapped-2048", 2_048).configHash,
+    );
+  });
+
   it("computes aggregate and case deltas with metric direction", () => {
     const baselineRows = [row({ runId: "baseline", latencyMs: 100 })];
     const candidateRows = [

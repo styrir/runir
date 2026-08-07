@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { execSync } from "node:child_process";
 import { resolveLlmBaseUrl } from "../../shared/config.js";
 import {
+  assertGeminiConfigsDistinct,
   assertLunaConfigsDistinct,
   resolveCandidateMatrix,
 } from "./candidates.js";
@@ -91,12 +92,16 @@ function calibratedPlanningCostUsd(
 ): number | null {
   return requestCostUsd(
     candidate,
-    Math.min(COST_CALIBRATION_COMPLETION_TOKENS, maxOutputTokens),
+    Math.min(COST_CALIBRATION_COMPLETION_TOKENS, maxOutputTokens) +
+      (candidate.reasoningBudgetTokens ?? 0),
   );
 }
 
 function capReserveCostUsd(candidate: Candidate, maxOutputTokens: number): number | null {
-  return requestCostUsd(candidate, maxOutputTokens);
+  return requestCostUsd(
+    candidate,
+    maxOutputTokens + (candidate.reasoningBudgetTokens ?? 0),
+  );
 }
 
 type RawUsage = {
@@ -317,6 +322,11 @@ export function buildDisclosure(args: {
       `${assumedCompletionTokens} output tokens/request at each candidate's dated list-price table. ` +
       "The input assumption is rounded above the 6,958-token live-smoke mean. " +
       "This is not a guaranteed ceiling; runtime enforcement prefers gateway-billed cost, then token-estimated cost.";
+    if (candidates.some((candidate) => candidate.reasoningBudgetTokens !== undefined)) {
+      costNote +=
+        " For gateway-mapped reasoning candidates, the full declared reasoning budget is added " +
+        "to planning cost and to the per-request runtime reserve as output tokens.";
+    }
   }
 
   return {
@@ -332,6 +342,7 @@ export function buildDisclosure(args: {
         modelId: c.modelId,
         reasoning: c.reasoning,
         reasoningSupport: c.reasoningSupport,
+        reasoningBudgetTokens: c.reasoningBudgetTokens,
         apiStyle: c.apiStyle ?? "chat_completions",
         endpoint: c.endpoint ?? "configured",
         endpointBaseUrl: candidateBaseUrl(c, baseUrl, env),
@@ -492,6 +503,7 @@ export async function runBenchmark(
   try {
     candidates = resolveCandidateMatrix(opts.models);
     assertLunaConfigsDistinct(candidates);
+    assertGeminiConfigsDistinct(candidates);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     stderr(msg);
@@ -762,7 +774,7 @@ export async function runBenchmark(
         ) {
           const msg =
             `Cost cap stop before request ${rows.length + 1}: cumulative billed/estimated ` +
-            `$${spent.toFixed(6)} + calibrated next-request estimate ` +
+            `$${spent.toFixed(6)} + reserved next-request ceiling ` +
             `$${nextRequestEstimate.toFixed(6)} would exceed ` +
             `--max-total-cost-usd $${opts.maxTotalCostUsd.toFixed(6)}.`;
           stderr(msg);

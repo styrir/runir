@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   DEFAULT_CANDIDATES,
   EXTENDED_CANDIDATES,
+  assertGeminiConfigsDistinct,
   assertLunaConfigsDistinct,
   buildReasoningParam,
   resolveCandidateMatrix,
@@ -372,6 +373,114 @@ describe("model-benchmark-extraction — reasoning configs", () => {
     });
     expect(body.reasoning).toBeUndefined();
     expect(body.max_output_tokens).toBeUndefined();
+  });
+
+  it("serializes benchmark-only Gemini Requesty effort mappings with budgeted provenance", () => {
+    const ids = [
+      "flash-lite-3.5-reasoning-low",
+      "flash-lite-3.5-reasoning-medium",
+      "flash-lite-3.5-reasoning-high",
+    ];
+    const matrix = resolveCandidateMatrix(ids);
+    expect(matrix).toHaveLength(3);
+    assertGeminiConfigsDistinct(matrix);
+    expect(
+      resolveCandidateMatrix(["default"])
+        .map((candidate) => candidate.id)
+        .filter((id) => ids.includes(id)),
+    ).toEqual([]);
+    expect(
+      resolveCandidateMatrix(["extended"])
+        .map((candidate) => candidate.id)
+        .filter((id) => ids.includes(id)),
+    ).toEqual([]);
+    expect(() => resolveCandidateMatrix(["vertex/gemini-3.5-flash-lite"])).toThrow(
+      /multiple benchmark configurations/i,
+    );
+
+    const expected = [
+      { effort: "low", budget: 1_024 },
+      { effort: "medium", budget: 8_192 },
+      { effort: "high", budget: 24_576 },
+    ] as const;
+    for (const [index, candidate] of matrix.entries()) {
+      const mapping = expected[index]!;
+      expect(candidate).toMatchObject({
+        reasoning: mapping.effort,
+        reasoningSupport: "gateway-mapped",
+        reasoningBudgetTokens: mapping.budget,
+      });
+      const built = buildReasoningParam(candidate);
+      expect(built.param).toEqual({ reasoning_effort: mapping.effort });
+      expect(built.effective).toBe(mapping.effort);
+      expect(built.notes.join(" ")).toContain(`reasoning budget ${mapping.budget} tokens`);
+
+      const effective = buildEffectiveRequest({
+        candidate,
+        maxOutputTokens: 2_048,
+      });
+      const body = serializeRequestBody(effective, "system prompt", "user content");
+      expect(effective).toMatchObject({
+        apiStyle: "chat_completions",
+        endpoint: "configured",
+        reasoning: mapping.effort,
+        reasoningBudgetTokens: mapping.budget,
+      });
+      expect(body).toMatchObject({
+        model: "vertex/gemini-3.5-flash-lite",
+        max_tokens: 2_048,
+        reasoning_effort: mapping.effort,
+      });
+      expect(disallowedParamsFor(candidate)).not.toContain("reasoning_effort");
+    }
+
+    expect(() =>
+      buildReasoningParam({
+        ...matrix[0]!,
+        id: "missing-mapped-budget",
+        reasoningBudgetTokens: undefined,
+      }),
+    ).toThrow(/positive integer reasoningBudgetTokens/i);
+  });
+
+  it("budgets Gemini mapped reasoning in disclosure instead of using visible output alone", () => {
+    const ids = [
+      "flash-lite-3.5-reasoning-low",
+      "flash-lite-3.5-reasoning-medium",
+      "flash-lite-3.5-reasoning-high",
+    ];
+    const candidates = resolveCandidateMatrix(ids);
+    const cases = selectCases(loadCorpus(CORPUS), false, ["identifiers-path-url"]);
+    const opts = parseArgs([
+      "--models",
+      ids.join(","),
+      "--case-ids",
+      "identifiers-path-url",
+      "--max-output-tokens",
+      "2048",
+      "--max-total-cost-usd",
+      "0.15",
+    ]);
+    const disclosure = buildDisclosure({
+      candidates,
+      cases,
+      opts,
+      baseUrl: "https://router.requesty.ai/v1",
+      env: { REQUESTY_API_KEY: "present-for-label-only" },
+    });
+
+    expect(disclosure.plannedRequestCount).toBe(3);
+    expect(disclosure.candidates.map((candidate) => candidate.reasoningBudgetTokens)).toEqual([
+      1_024,
+      8_192,
+      24_576,
+    ]);
+    expect(disclosure.costEstimate.estimatedTotalUsd).toBeCloseTo(0.1078434, 8);
+    expect(disclosure.costEstimate.note).toContain("full declared reasoning budget");
+    const text = formatPreflightDisclosure(disclosure);
+    expect(text).toContain("reasoningBudgetTokens=1024");
+    expect(text).toContain("reasoningBudgetTokens=8192");
+    expect(text).toContain("reasoningBudgetTokens=24576");
   });
 
   it("8. provider-specific unsupported parameters are not sent", () => {
@@ -915,6 +1024,48 @@ describe("model-benchmark-extraction — paid path with mocked fetch", () => {
     expect(result.code).toBe(3);
     expect(result.error).toMatch(/worktree is dirty/i);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("reserves the mapped Gemini reasoning budget before the first paid request", async () => {
+    const fetchImpl = vi.fn();
+    const result = await runBenchmark(
+      [
+        "--confirm-cost",
+        "--models",
+        "flash-lite-3.5-reasoning-high",
+        "--case-ids",
+        "identifiers-path-url",
+        "--max-total-cost-usd",
+        "0.075",
+        "--max-output-tokens",
+        "2048",
+        "--out-raw",
+        "gemini-reasoning-cap.jsonl",
+        "--out-report",
+        "gemini-reasoning-cap.md",
+      ],
+      {
+        cwd: ROOT,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        env: { REQUESTY_API_KEY: "sk-gemini-reasoning-cap-test" },
+        writeFile: () => {},
+        stdout: () => {},
+        stderr: () => {},
+        gitInfo: () => ({ sha: "cleansha", dirty: false }),
+      },
+    );
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(result.code).toBe(5);
+    expect(result.rows).toHaveLength(0);
+    expect(result.error).toContain("reserved next-request ceiling");
+    expect(result.manifest?.completion).toMatchObject({
+      status: "partial",
+      stopReason: "cost_cap",
+      plannedRequestCount: 1,
+      completedRequestCount: 0,
+      cumulativeCostUsd: 0,
+    });
   });
 
   it("stops before the next request crosses the cost cap and preserves partial artifacts", async () => {

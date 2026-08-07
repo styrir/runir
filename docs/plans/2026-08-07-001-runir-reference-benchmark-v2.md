@@ -1,6 +1,6 @@
 # Rúnir Reference Benchmark v2
 
-**Status:** REQUESTY LUNA HIGH PILOT READY — awaiting clean commit and exact paid approval
+**Status:** GEMINI REASONING ACCEPTANCE PROBE READY — awaiting clean commit and exact paid approval
 **Date:** 2026-08-07
 **Product boundary:** capture/extraction model quality and Review Studio evidence flow
 **Not a claim about:** complete Rúnir retrieval, correction, decay, or competitor superiority
@@ -174,17 +174,79 @@ proposed paid cap: $0.15
 ```
 
 The two selected cases are exactly the Run A rows where Luna Low merged two
-gold facts into one extracted memory object. A paid run requires a clean
+gold facts into one extracted memory object. The paid run required a clean
 checkpoint commit and separate explicit approval naming Requesty, the two case
 IDs, six requests, and the `$0.15` cap. The direct native-Max lane remains
-implemented but deferred; this Requesty run must be labeled High, not Max.
+implemented but deferred; this Requesty run is labeled High, not Max.
 
 The Infisical-injected zero-network preflight completed 6/6 synthetic rows with
 the exact case, repetition, candidate, transport, endpoint, effort, output-token
 limit, estimate, and cap shown above. Its disclosure identified
 `env:REQUESTY_API_KEY` without exposing the value, and a value-aware audit
 confirmed that the injected credential was absent from the JSONL, manifest, and
-Markdown artifacts. No paid model call was made.
+Markdown artifacts. No paid model call was made during that preflight.
+
+### Requesty Luna High diagnostic — passed
+
+The approved diagnostic executed from clean SHA
+`8718cfd0c3ede0c8283e64a6fefae0d0c1bcb5f7` through Infisical Universal
+Auth and Requesty:
+
+- 6/6 planned requests completed with HTTP 200 and schema-valid output;
+- zero retries, request errors, timeouts, hallucinations, or omissions;
+- all six rows emitted two separate memory objects and matched both gold facts;
+- actual gateway-billed cost was `$0.00693504` against the `$0.15` cap;
+- mean latency was `4,689.5 ms`;
+- Review Studio cataloged the bundle with verified provenance and zero
+  diagnostics;
+- the Requesty credential value was absent from all three artifacts.
+
+High fixed the targeted atomicity regression in every repetition. On the same
+six rows, Luna Low had 50% recall and 50% granularity compliance, while High
+had 100% for both. This remains a targeted result rather than a full-corpus
+production verdict.
+
+### Gemini 3.5 Requesty reasoning matrix — implementation complete
+
+The existing `flash-lite-3.5` candidate remains unchanged with reasoning
+unsupported. Three explicit benchmark-only candidates now exercise Requesty's
+documented Vertex effort-to-budget mapping:
+
+| Candidate | Wire effort | Declared mapped budget |
+|---|---|---:|
+| `flash-lite-3.5-reasoning-low` | `low` | 1,024 |
+| `flash-lite-3.5-reasoning-medium` | `medium` | 8,192 |
+| `flash-lite-3.5-reasoning-high` | `high` | 24,576 |
+
+These candidates are excluded from `default`, `extended`, and `all`.
+Production capture behavior is unchanged. Raw rows, manifests, reports, and
+Review Studio provenance record both the requested effort and mapped budget.
+
+Planning estimates add the full mapped reasoning budget to the calibrated
+visible-output assumption. Runtime cap reservation conservatively adds the
+full mapped budget to `max-output-tokens` before every request. A regression
+test proves that the High candidate stops before network when the cap cannot
+cover this reserve.
+
+The Infisical-backed zero-network acceptance preflight passed:
+
+```text
+1 case × 1 repetition × 3 efforts = 3 requests
+case: identifiers-path-url
+model: vertex/gemini-3.5-flash-lite through Requesty Chat Completions
+max visible output tokens: 2,048
+calibrated budget-inclusive planning estimate: $0.1078434
+proposed paid cap: $0.15
+```
+
+All three synthetic rows serialized the exact intended `reasoning_effort`,
+mapped budget, candidate identity, endpoint, and credential-source label.
+Focused benchmark and adapter tests, TypeScript, scoped lint, diff validation,
+and a value-aware secret audit pass. No paid Gemini reasoning call was made.
+
+The next gate requires one clean checkpoint commit and explicit approval for
+exactly three Requesty calls—Low, Medium, and High—on
+`identifiers-path-url`, with a `$0.15` cap.
 
 ## Decision
 

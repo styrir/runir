@@ -1,0 +1,75 @@
+{
+  "schemaVersion": "runir-model-benchmark/v1",
+  "runId": "paid-2026-08-07T08-04-11-449Z-a53ab8e1",
+  "createdAt": "2026-08-07T08:04:11.449Z",
+  "git": {
+    "sha": "8718cfd0c3ede0c8283e64a6fefae0d0c1bcb5f7",
+    "dirty": false
+  },
+  "conditionId": "luna-high-requesty-pilot-2026-08-07",
+  "completion": {
+    "status": "complete",
+    "plannedRequestCount": 6,
+    "completedRequestCount": 6,
+    "cumulativeCostUsd": 0.00693504
+  },
+  "artifactTargets": {
+    "rawPath": "/Users/brooks/Code/runir/docs/analysis/raw/model-benchmark-v2/luna-high-requesty-pilot-2026-08-07-requesty.jsonl",
+    "manifestPath": "/Users/brooks/Code/runir/docs/analysis/raw/model-benchmark-v2/luna-high-requesty-pilot-2026-08-07-requesty.manifest.json",
+    "reportPath": "/Users/brooks/Code/runir/docs/analysis/model-benchmark-v2-luna-high-requesty-pilot-2026-08-07-requesty.md"
+  },
+  "disclosure": {
+    "candidateModelIds": [
+      "openai/gpt-5.6-luna"
+    ],
+    "candidates": [
+      {
+        "id": "luna-high-requesty",
+        "label": "GPT-5.6 Luna (Requesty Chat Completions, reasoning=high)",
+        "modelId": "openai/gpt-5.6-luna",
+        "reasoning": "high",
+        "reasoningSupport": "native",
+        "apiStyle": "chat_completions",
+        "endpoint": "configured",
+        "endpointBaseUrl": "https://router.requesty.ai/v1",
+        "credentialSourceLabel": "env:REQUESTY_API_KEY",
+        "effectiveNotes": [
+          "native reasoning_effort=high"
+        ]
+      }
+    ],
+    "corpusSize": 2,
+    "caseIds": [
+      "alias-ambiguous",
+      "quantity-port"
+    ],
+    "smokeMode": false,
+    "repetitions": 3,
+    "plannedRequestCount": 6,
+    "gatewayBaseUrl": "https://router.requesty.ai/v1",
+    "credentialSourceLabel": "env:REQUESTY_API_KEY",
+    "maxOutputTokens": 2048,
+    "timeoutMs": 180000,
+    "concurrency": 1,
+    "conditionId": "luna-high-requesty-pilot-2026-08-07",
+    "requireCleanGit": true,
+    "allowArtifactOverwrite": false,
+    "costEstimate": {
+      "available": true,
+      "currency": "USD",
+      "estimatedTotalUsd": 0.0738,
+      "assumedPromptTokensPerRequest": 7500,
+      "assumedCompletionTokensPerRequest": 800,
+      "maxTotalCostUsd": 0.15,
+      "note": "Calibrated planning estimate assumes 7500 input + 800 output tokens/request at each candidate's dated list-price table. The input assumption is rounded above the 6,958-token live-smoke mean. This is not a guaranteed ceiling; runtime enforcement prefers gateway-billed cost, then token-estimated cost."
+    },
+    "dryRun": false,
+    "confirmCost": true
+  },
+  "fixtureContentHash": "8c37c2d13119086dfe437d80816728a55574ad7ce7372b5e47ede324770d5f5e",
+  "promptTemplateHash": "ef76dcb4865eaf962d553bf5a2fcc6b1e11ba00a235544ee3219cc313a8beccc",
+  "scoringContractVersion": "runir-model-benchmark-scoring/v1",
+  "promptHash": "3a41493e30daac5acd1c2531139e99dc348bb3090b6c319bb90f16f7dcc26a7b",
+  "fixturePath": "/Users/brooks/Code/runir/fixtures/model-benchmark/corpus.json",
+  "rowCount": 6
+}
