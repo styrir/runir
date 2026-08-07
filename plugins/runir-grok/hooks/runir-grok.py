@@ -51,6 +51,7 @@ from runir_core import (  # noqa: E402
     read_dotenv_value as read_dotenv_value,
     read_json,
     resolve_credential,
+    resolve_effective_user_id,
     unwrap_user_query,
     write_json_atomic,
 )
@@ -75,7 +76,12 @@ def post_json(
     return result
 
 
-RUNIR_USER_ID = resolve_credential("RUNIR_USER_ID")
+# Identity: fail-loud conflict → None (TUI main still fail-open). Never invent.
+_EFFECTIVE_USER = resolve_effective_user_id()
+RUNIR_USER_ID = _EFFECTIVE_USER.user_id
+RUNIR_USER_ID_SOURCE = _EFFECTIVE_USER.source
+RUNIR_USER_ID_CONFLICT = _EFFECTIVE_USER.conflict
+# API keys stay process-first without conflict detection (key freshness).
 RUNIR_API_KEY = resolve_credential("RUNIR_API_KEY")
 RUNIR_CLIENT = os.environ.get("RUNIR_GROK_CLIENT", "grok")
 RUNIR_USER_AGENT = os.environ.get("RUNIR_GROK_USER_AGENT", "runir-grok-hook/0.1")
@@ -836,7 +842,10 @@ def maybe_sync_bridge(event: dict[str, Any]) -> None:
 
 
 def main() -> int:
+    # Missing or conflict (RUNIR_USER_ID is None) → fail-open for TUI.
     if not RUNIR_USER_ID:
+        if RUNIR_DEBUG and RUNIR_USER_ID_SOURCE == "conflict":
+            debug(f"identity conflict (fail-open): {RUNIR_USER_ID_CONFLICT}")
         return 0
     # Programmatic headless path owns recall+capture; full no-op all events.
     # Call-time env read (not import-time) so tests can monkeypatch.setenv.

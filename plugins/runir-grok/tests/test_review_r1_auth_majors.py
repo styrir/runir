@@ -15,8 +15,13 @@ VERIFY_SCRIPT = PLUGIN_ROOT / "scripts" / "verify_hooks.py"
 
 
 def _load(path: Path, name: str):
+    # Always reload so identity rewires are visible within one pytest session.
     if name in sys.modules:
-        return sys.modules[name]
+        del sys.modules[name]
+    # Ensure plugin lib is importable (verify/install path-load runir_core).
+    lib = str(PLUGIN_ROOT / "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
@@ -102,10 +107,11 @@ def test_live_recall_probe_missing_user_id_exits_3_no_owner(verify_mod, monkeypa
 def test_resolve_live_credential_prefers_process_env_over_wiring(
     tmp_path, verify_mod, monkeypatch
 ):
-    """Review r2 major: verify must match adapter process-env-first order.
+    """Review r2 major: API key stays process-first; identity detects conflict.
 
     Stale inherited RUNIR_API_KEY must not be masked by installed wiring's
     fresher file key (otherwise verify --live can pass while hooks fail).
+    User id process≠file is a conflict (Rúnir-pzt.1) — never silent process win.
     """
     env_path = tmp_path / "wired.env"
     env_path.write_text(
@@ -115,10 +121,24 @@ def test_resolve_live_credential_prefers_process_env_over_wiring(
     cmd = f'RUNIR_ENV_FILE={shlex.quote(str(env_path))} python3 "x.py"'
     monkeypatch.setenv("RUNIR_API_KEY", "from-process-stale")
     monkeypatch.setenv("RUNIR_USER_ID", "process-user")
+    monkeypatch.delenv("RUNIR_ENV_FILE", raising=False)
     api_key, user_id, source = verify_mod.resolve_live_credential(cmd, None)
     assert source == "process_env"
     assert api_key == "from-process-stale"
-    assert user_id == "process-user"
+    # Identity conflict: process-user ≠ wired-user → None (fail loud).
+    assert user_id is None
+    effective = verify_mod.resolve_live_identity(cmd, None)
+    assert effective.source == "conflict"
+
+    # Agreeing identities still return the shared id.
+    env_path.write_text(
+        "RUNIR_API_KEY=from-wiring-file\nRUNIR_USER_ID=process-user\n",
+        encoding="utf-8",
+    )
+    api_key2, user_id2, source2 = verify_mod.resolve_live_credential(cmd, None)
+    assert source2 == "process_env"
+    assert api_key2 == "from-process-stale"
+    assert user_id2 == "process-user"
 
 
 def test_resolve_live_credential_falls_back_to_wiring_when_no_process_key(
