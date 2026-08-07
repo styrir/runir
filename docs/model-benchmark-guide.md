@@ -302,6 +302,26 @@ See
 [`docs/analysis/luna-think-synthesis-2026-08-07-requesty-review.md`](analysis/luna-think-synthesis-2026-08-07-requesty-review.md)
 for the result, latency, cost, and false-negative analysis.
 
+### Current end-to-end result
+
+The first clean seeded end-to-end Luna run used an isolated single-tenant
+SurrealDB database containing only the seven synthetic corpus evidence items.
+All five `/memory/think` requests passed retrieval retention and strict
+synthesis scoring. Every row was schema-valid, fully cited, free of unsupported
+claims, and correct on required gaps and abstention. Latency was 1,989 ms p50
+and 3,695 ms maximum. Route-visible token usage estimates `$0.006838`; the
+gateway did not return billed cost through the production route.
+
+Because the tenant had seven memories and Think's retrieval window is 24,
+every query selected all seven. This proves assembled-route retention and
+grounded synthesis under distractors, not retrieval selectivity at scale.
+`Rúnir-atg` tracks a larger zero-network distractor lane with retrieval
+precision and rank metrics.
+
+See
+[`docs/analysis/luna-think-e2e-2026-08-07-requesty-review.md`](analysis/luna-think-e2e-2026-08-07-requesty-review.md)
+for isolation, preflight, retrieval, synthesis, latency, cost, and limitations.
+
 ### Think zero-network preflight
 
 The default command validates the corpus, prints the complete request count and

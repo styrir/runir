@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "runir-think-benchmark/v1",
+  "runId": "think-2026-08-07T17-47-48-745Z",
+  "suiteId": "runir-think-e2e",
+  "createdAt": "2026-08-07T17:48:00.441Z",
+  "git": {
+    "sha": "4740fb7fa72dc66dea8fff86efa219376cf001a7",
+    "dirty": false
+  },
+  "fixtureContentHash": "1833d293c216673012fb19245146c68e2593b908e49abd7f47a6390e5c7046ac",
+  "promptTemplateHash": "0e5fdd709d3d22b2f5edeff166969720e4d371ee2cb68e3d8f90dd8172da452d",
+  "scoringContractVersion": "runir-think-scoring/v2",
+  "rowCount": 5,
+  "disclosure": {
+    "candidateId": "luna-think-e2e-requesty",
+    "candidateLabel": "GPT-5.6 Luna Think e2e (Requesty)",
+    "modelId": "openai/gpt-5.6-luna",
+    "repetitions": 1,
+    "plannedRequestCount": 5,
+    "dryRun": false,
+    "synthetic": false,
+    "maxOutputTokens": 1200,
+    "timeoutMs": 120000,
+    "gatewayBaseUrl": "http://127.0.0.1:7724",
+    "costObservation": "route_usage_or_reservation"
+  },
+  "completion": {
+    "status": "complete",
+    "plannedRequestCount": 5,
+    "completedRequestCount": 5,
+    "cumulativeCostUsd": 0.006838
+  }
+}
