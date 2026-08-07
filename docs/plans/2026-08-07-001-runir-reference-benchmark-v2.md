@@ -5,6 +5,12 @@
 **Product boundary:** capture/extraction model quality and Review Studio evidence flow
 **Not a claim about:** complete Rúnir retrieval, correction, decay, or competitor superiority
 
+> **Workspace migration, 2026-08-07:** Generated benchmark bundles are no
+> longer tracked under `docs/analysis`. Paths in this plan use the ignored
+> `.styrir/analysis` contract. The converting checkout retains the original
+> bytes under `.styrir/analysis/migrated-docs-analysis-2026-08-07`, and Git
+> history remains the cross-clone recovery path.
+
 ## Implementation checkpoint — 2026-08-07
 
 Phase 0 is implemented and independently reviewed with no revisions remaining.
@@ -46,7 +52,7 @@ the benchmark child process.
 - the runner stopped immediately with `model_rejected`; no remaining requests
   were sent;
 - the immutable partial bundle is
-  `docs/analysis/raw/model-benchmark-v2/pilot-2026-08-07-requesty.*`;
+  `.styrir/analysis/raw/model-benchmark-v2/pilot-2026-08-07-requesty.*`;
 - no gateway-billed cost was reported; the manifest's `$0.0123` cumulative
   value is the calibrated fallback estimate, not confirmed billing.
 
@@ -74,7 +80,7 @@ Auth into fresh no-clobber artifact paths.
   value appears in the JSONL, manifest, or Markdown report.
 
 The immutable replacement bundle is
-`docs/analysis/raw/model-benchmark-v2/pilot-replacement-2026-08-07-requesty.*`.
+`.styrir/analysis/raw/model-benchmark-v2/pilot-replacement-2026-08-07-requesty.*`.
 
 ### Reference Run A — complete with an atomicity regression
 
@@ -107,9 +113,9 @@ no-new-omission gate and is recorded explicitly for owner review.
 
 The exact-byte canonical bundle is:
 
-- `docs/analysis/raw/model-benchmark-v2/reference-a-2026-08-07-requesty.jsonl`
-- `docs/analysis/raw/model-benchmark-v2/reference-a-2026-08-07-requesty.manifest.json`
-- `docs/analysis/model-benchmark-v2-reference-a-2026-08-07-requesty.md`
+- `.styrir/analysis/raw/model-benchmark-v2/reference-a-2026-08-07-requesty.jsonl`
+- `.styrir/analysis/raw/model-benchmark-v2/reference-a-2026-08-07-requesty.manifest.json`
+- `.styrir/analysis/reports/model-benchmark-v2-reference-a-2026-08-07-requesty.md`
 
 The original low-effort Reference Run B was canceled by the 2026-08-07 owner
 decision. Running it would spend another 90 requests on a candidate that is no
@@ -279,9 +285,9 @@ High-only pilot across `identifiers-path-url`, `alias-ambiguous`, and
 
 The immutable acceptance bundle is:
 
-- `docs/analysis/raw/model-benchmark-v2/gemini-3.5-reasoning-acceptance-2026-08-07-requesty.jsonl`
-- `docs/analysis/raw/model-benchmark-v2/gemini-3.5-reasoning-acceptance-2026-08-07-requesty.manifest.json`
-- `docs/analysis/model-benchmark-v2-gemini-3.5-reasoning-acceptance-2026-08-07-requesty.md`
+- `.styrir/analysis/raw/model-benchmark-v2/gemini-3.5-reasoning-acceptance-2026-08-07-requesty.jsonl`
+- `.styrir/analysis/raw/model-benchmark-v2/gemini-3.5-reasoning-acceptance-2026-08-07-requesty.manifest.json`
+- `.styrir/analysis/reports/model-benchmark-v2-gemini-3.5-reasoning-acceptance-2026-08-07-requesty.md`
 
 ## Decision
 
@@ -382,7 +388,7 @@ No paid full-corpus run begins until these gates pass.
   one for Run B. Each run writes only to its own worktree after the preflight
   clean check, so Run A artifacts cannot make the Run B source checkout dirty.
 - After both bundles pass their gates, copy the exact artifact bytes into the
-  canonical `docs/analysis/raw/model-benchmark-v2/` integration directory;
+  canonical `.styrir/analysis/raw/model-benchmark-v2/` integration directory;
   never rerun or regenerate raw rows during collection.
 - Record branch, SHA, fixture hash, prompt-template hash, scoring-contract
   version, candidate matrix, gateway base URL, timeout, concurrency,
@@ -591,7 +597,7 @@ a first-class within-run model comparison view is necessary.
 Write immutable bundles beneath:
 
 ```text
-docs/analysis/raw/model-benchmark-v2/
+.styrir/analysis/raw/model-benchmark-v2/
 ```
 
 Each run produces:

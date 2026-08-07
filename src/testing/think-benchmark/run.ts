@@ -76,8 +76,8 @@ export type ThinkBenchmarkResult = {
 };
 
 const DEFAULT_FIXTURES = "fixtures/think-benchmark/corpus.json";
-const DEFAULT_RAW = "docs/analysis/raw/think-benchmark-latest.jsonl";
-const DEFAULT_REPORT = "docs/analysis/think-benchmark-latest.md";
+const DEFAULT_RAW = ".styrir/analysis/raw/think-benchmark-latest.jsonl";
+const DEFAULT_REPORT = ".styrir/analysis/reports/think-benchmark-latest.md";
 
 function usage(): string {
   return `Rúnir Think synthesis benchmark

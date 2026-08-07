@@ -157,6 +157,8 @@ describe("Think benchmark runner", () => {
     });
     expect(result.code).toBe(0);
     expect(result.options.dryRun).toBe(true);
+    expect(result.options.outRaw).toBe(".styrir/analysis/raw/think-benchmark-latest.jsonl");
+    expect(result.options.outReport).toBe(".styrir/analysis/reports/think-benchmark-latest.md");
     expect(result.rows).toEqual([]);
     expect(fetchFn).not.toHaveBeenCalled();
   });

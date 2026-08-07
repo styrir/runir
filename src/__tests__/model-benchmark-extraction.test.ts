@@ -119,6 +119,8 @@ describe("model-benchmark-extraction — paid-run gate", () => {
     expect(result.disclosure?.dryRun).toBe(true);
     expect(result.rows.every((r) => r.errorClass === "dry_run")).toBe(true);
     expect(writes.length).toBeGreaterThanOrEqual(2);
+    expect(writes.some((path) => path.includes(".styrir/analysis/raw/"))).toBe(true);
+    expect(writes.some((path) => path.includes(".styrir/analysis/reports/"))).toBe(true);
   });
 
   it("2. missing --confirm-cost fails before the first network call on paid path", () => {
@@ -732,20 +734,47 @@ describe("model-benchmark-extraction — provenance + report", () => {
     expect(report1).toContain("Required source: abc in a clean worktree");
   });
 
-  it("regenerates a report from the real legacy full-primary artifact", () => {
-    const manifest = JSON.parse(
-      readFileSync(
-        join(ROOT, "docs/analysis/raw/model-benchmark-full-primary.manifest.json"),
-        "utf8",
-      ),
-    ) as RunManifest;
-    const rows = readFileSync(
-      join(ROOT, "docs/analysis/raw/model-benchmark-full-primary.jsonl"),
-      "utf8",
-    )
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as ResultRow);
+  it("regenerates a report from a compact legacy manifest", () => {
+    const manifest = {
+      schemaVersion: BENCHMARK_SCHEMA_VERSION,
+      runId: "legacy-run",
+      createdAt: "2026-07-22T23:49:50.747Z",
+      git: { sha: "legacy-sha", dirty: true },
+      disclosure: {
+        candidateModelIds: ["vertex/gemini-3.1-flash-lite@us"],
+        candidates: [{
+          id: "flash-lite-3.1-control",
+          label: "Gemini 3.1 Flash-Lite",
+          modelId: "vertex/gemini-3.1-flash-lite@us",
+          reasoningSupport: "unsupported",
+          effectiveNotes: [],
+        }],
+        corpusSize: 1,
+        smokeMode: false,
+        repetitions: 1,
+        plannedRequestCount: 1,
+        gatewayBaseUrl: "https://example.test/v1",
+        credentialSourceLabel: "legacy",
+        maxOutputTokens: 8192,
+        timeoutMs: 60000,
+        concurrency: 1,
+        costEstimate: {
+          available: false,
+          currency: "USD",
+          conservativeTotalUsd: null,
+          note: "Legacy fixture",
+        },
+        dryRun: false,
+        confirmCost: true,
+      },
+      promptHash: "legacy-prompt-hash",
+      fixturePath: "legacy-corpus.json",
+      rowCount: 1,
+    } as unknown as RunManifest;
+    const rows = [baseRow({
+      runId: "legacy-run",
+      git: { sha: "legacy-sha", dirty: true },
+    })];
 
     expect(() => regenerateReportFromRaw(manifest, rows)).not.toThrow();
     const report = regenerateReportFromRaw(manifest, rows);

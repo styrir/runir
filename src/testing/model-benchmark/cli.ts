@@ -17,8 +17,8 @@ export function parseArgs(argv: string[]): CliOptions {
     dryRun: true,
     confirmCost: false,
     smoke: false,
-    outRaw: "docs/analysis/raw/model-benchmark-latest.jsonl",
-    outReport: "docs/analysis/model-benchmark-latest.md",
+    outRaw: ".styrir/analysis/raw/model-benchmark-latest.jsonl",
+    outReport: ".styrir/analysis/reports/model-benchmark-latest.md",
     help: false,
   };
 
