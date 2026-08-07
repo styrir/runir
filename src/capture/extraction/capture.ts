@@ -518,18 +518,32 @@ export async function batchDedupFacts(
   return facts.filter((_, idx) => !removed.has(idx));
 }
 
-/** Default OpenRouter extractor model = openai/gpt-5.4-mini (standardized off
- *  Gemini on 2026-05-31 — cheaper + better-calibrated than gemini-3.5-flash per
- *  a direct A/B). Override via RUNIR_EXTRACTOR_MODEL; benchmarks compare e.g.
- *  openai/gpt-5.5 (seed-supported, ~higher cost) or anthropic/claude-sonnet-4.6
- *  (no seed support, requires RUNIR_EXTRACTOR_SEED=""). */
-const DEFAULT_EXTRACTOR_MODEL = "openai/gpt-5.4-mini";
+/** Default capture-extraction model, promoted from the 15-case reference
+ *  benchmark on 2026-08-07. Gemini 3.1 runs without a reasoning parameter and
+ *  without response_format, matching the accepted benchmark request shape.
+ *  Route-level deployments should prefer EXTRACT_MODEL for a capture-only
+ *  override; RUNIR_EXTRACTOR_MODEL remains a shared legacy fallback used by
+ *  other model-backed lanes. */
+const DEFAULT_EXTRACTOR_MODEL = "vertex/gemini-3.1-flash-lite@us";
+
+/** Session topic segmentation was not covered by the capture-extraction
+ *  benchmark. Keep its prior production default unless an operator deliberately
+ *  sets RUNIR_SEGMENT_MODEL or the shared RUNIR_EXTRACTOR_MODEL fallback. */
+const DEFAULT_SEGMENT_MODEL = "openai/gpt-5.4-mini";
 
 function resolveExtractorModel(override?: string): string {
   if (override && override.length > 0) return override;
   const fromEnv = process.env.RUNIR_EXTRACTOR_MODEL;
   if (typeof fromEnv === "string" && fromEnv.length > 0) return fromEnv;
   return DEFAULT_EXTRACTOR_MODEL;
+}
+
+function resolveSegmentModel(): string {
+  const own = process.env.RUNIR_SEGMENT_MODEL;
+  if (typeof own === "string" && own.length > 0) return own;
+  const shared = process.env.RUNIR_EXTRACTOR_MODEL;
+  if (typeof shared === "string" && shared.length > 0) return shared;
+  return DEFAULT_SEGMENT_MODEL;
 }
 
 /** Resolve seed for the extractor. Returns undefined when seed should be
@@ -1202,7 +1216,7 @@ export async function segmentAndSummarize(
   }
 
   // Resolve once: reused by the request body AND every drop-counter label.
-  const model = resolveExtractorModel();
+  const model = resolveSegmentModel();
 
   // Fix 6: AbortController with a configurable timeout on fetch (default 30s).
   const effectiveTimeout = opts?.timeoutMs ?? resolveLlmTimeoutMs();

@@ -1,6 +1,6 @@
 # Rúnir Reference Benchmark v2
 
-**Status:** GEMINI REASONING ACCEPTANCE PROBE READY — awaiting clean commit and exact paid approval
+**Status:** GEMINI REASONING ACCEPTANCE COMPLETE — High passes exact-identifier probe; follow-up commit pending
 **Date:** 2026-08-07
 **Product boundary:** capture/extraction model quality and Review Studio evidence flow
 **Not a claim about:** complete Rúnir retrieval, correction, decay, or competitor superiority
@@ -111,9 +111,9 @@ The exact-byte canonical bundle is:
 - `docs/analysis/raw/model-benchmark-v2/reference-a-2026-08-07-requesty.manifest.json`
 - `docs/analysis/model-benchmark-v2-reference-a-2026-08-07-requesty.md`
 
-The original low-effort Reference Run B is paused. Running it now would spend
-another 90 requests measuring a configuration that is no longer the intended
-Luna challenger.
+The original low-effort Reference Run B was canceled by the 2026-08-07 owner
+decision. Running it would spend another 90 requests on a candidate that is no
+longer under consideration for this selection cycle.
 
 ### Native Luna Max amendment — implementation complete, paid run blocked
 
@@ -242,11 +242,46 @@ proposed paid cap: $0.15
 All three synthetic rows serialized the exact intended `reasoning_effort`,
 mapped budget, candidate identity, endpoint, and credential-source label.
 Focused benchmark and adapter tests, TypeScript, scoped lint, diff validation,
-and a value-aware secret audit pass. No paid Gemini reasoning call was made.
+and a value-aware secret audit pass. No paid Gemini reasoning call was made
+during that preflight.
 
-The next gate requires one clean checkpoint commit and explicit approval for
-exactly three Requesty calls—Low, Medium, and High—on
-`identifiers-path-url`, with a `$0.15` cap.
+### Gemini 3.5 reasoning acceptance — complete
+
+The approved probe executed from clean SHA
+`1e70ba809d05fa1d0063c2eb6877f175a21922ec` through Infisical Universal
+Auth and Requesty. All three effort values were accepted:
+
+| Effort | HTTP/schema | Reported reasoning tokens | Frozen score | Latency | Billed cost |
+|---|---|---:|---|---:|---:|
+| Low | 200 / valid | not reported | fail | 2,145 ms | `$0.0026324` |
+| Medium | 200 / valid | 1,067 | fail | 7,364 ms | `$0.0053124` |
+| High | 200 / valid | 1,597 | pass | 11,081 ms | `$0.0066424` |
+
+- 3/3 planned requests completed with zero retries, errors, or timeouts;
+- cumulative gateway-billed cost was `$0.0145872` against the `$0.15` cap;
+- High preserved both exact required strings:
+  `https://github.com/styrir/runir` and
+  `src/domain/memory/prompts.ts`;
+- Low and Medium preserved the correct repository identity and exact path, but
+  shortened the URL to `styrir/runir`;
+- under the frozen exact-substring scorer, that shortened URL makes the
+  extracted fact unmatched, producing 0% precision/recall and 100%
+  omission/hallucination for those rows;
+- this is an exact-identifier fidelity failure, not fabricated project content;
+- a value-aware audit found no Requesty credential in the artifacts;
+- Review Studio cataloged the complete clean-Git bundle with verified
+  provenance and zero diagnostics.
+
+High is the only effort that passed this acceptance case, but one request is
+not a production decision. The next useful experiment is a three-repetition
+High-only pilot across `identifiers-path-url`, `alias-ambiguous`, and
+`quantity-port`, after this bundle is committed and separately costed.
+
+The immutable acceptance bundle is:
+
+- `docs/analysis/raw/model-benchmark-v2/gemini-3.5-reasoning-acceptance-2026-08-07-requesty.jsonl`
+- `docs/analysis/raw/model-benchmark-v2/gemini-3.5-reasoning-acceptance-2026-08-07-requesty.manifest.json`
+- `docs/analysis/model-benchmark-v2-gemini-3.5-reasoning-acceptance-2026-08-07-requesty.md`
 
 ## Decision
 
@@ -255,26 +290,33 @@ The original Run A tested this two-candidate matrix:
 - `flash-lite-3.1-control`
 - `luna-low`
 
-Each run uses all 15 gold cases with three repetitions per candidate:
+The original plan shaped each run as all 15 gold cases with three repetitions
+per candidate:
 
 ```text
 15 cases × 3 repetitions × 2 candidates = 90 requests/run
-2 runs = 180 requests and 180 result rows
+2 planned runs = 180 requests and 180 result rows
 ```
 
-The first run is the reference baseline. The second is an immediate replication
-used to measure stochastic and gateway variance. Future prompt, model, or code
-changes compare against these immutable bundles; they do not overwrite them.
+Run A is the completed reference baseline. Run B was not executed after the
+owner selected Gemini 3.1 and stopped additional candidate testing. Future
+prompt, model, or code changes compare against the immutable completed bundle;
+they do not overwrite it.
 
 This is deliberately narrower than the existing four-candidate tournament.
 Gemini 3.5 Flash-Lite and Grok 4.5 already showed material quality regressions
 in the July artifact. Reopening them requires a separate model-selection
 question and cost approval.
 
-`luna-low` remains correctly labeled historical evidence. If the bounded
-native-Max pilot passes, the publishable reference pair restarts with
-`flash-lite-3.1-control` and `luna-max`; the low-effort Run A is not silently
-relabelled or paired with a Max run.
+`luna-low` remains correctly labeled historical evidence. The later Luna High
+and Gemini 3.5 reasoning probes remain targeted diagnostic evidence; neither
+replaced the full-corpus result.
+
+Owner decision, 2026-08-07: retain `flash-lite-3.1-control` as the benchmark
+reference and stop additional candidate testing for this selection cycle.
+Promote `vertex/gemini-3.1-flash-lite@us`, with no reasoning parameter, to the
+production capture-extraction default. This promotion does not apply to
+unbenchmarked model-backed stages.
 
 ## Question
 
@@ -446,12 +488,9 @@ Run A stop conditions:
 
 ### Run B: `reference-b`
 
-Paused by the native Luna Max amendment. Do not run the old low-effort
-replication. After the effort pilot, either:
-
-- restart a clean two-run reference pair with Luna Max if it passes; or
-- retain Luna Low as historical evidence and address the atomicity failure
-  before defining a new reference pair.
+Canceled by the 2026-08-07 owner decision. Do not run the old low-effort
+replication under this selection cycle. Luna Low, Luna High, and Gemini 3.5
+reasoning remain historical or targeted diagnostic evidence.
 
 ## Cost and duration envelope
 

@@ -8,7 +8,12 @@ import { setCounterEmitter, resetCounterEmitter } from "../obs/counters.js";
 // so a fenced/malformed topics reply silently yielded no session summary.
 
 const MSGS = [{ role: "user" as const, content: "Let's talk about Runir and then about SurrealDB indexing." }];
-const ENV_KEYS = ["RUNIR_EXTRACTOR_MODEL", "RUNIR_EXTRACTOR_SEED", "RUNIR_EXTRACTOR_JSON_MODE"];
+const ENV_KEYS = [
+  "RUNIR_EXTRACTOR_MODEL",
+  "RUNIR_SEGMENT_MODEL",
+  "RUNIR_EXTRACTOR_SEED",
+  "RUNIR_EXTRACTOR_JSON_MODE",
+];
 const SAVED: Record<string, string | undefined> = {};
 
 let captured: string[] = [];
@@ -69,6 +74,14 @@ describe("segmentAndSummarize — JSON-mode gating", () => {
     const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(segResponse(JSON.stringify({ topics: [] })));
     await segmentAndSummarize(MSGS, "key");
     expect(bodyOf(spy).response_format).toBeUndefined();
+  });
+
+  it("RUNIR_SEGMENT_MODEL overrides the shared extractor fallback", async () => {
+    process.env.RUNIR_EXTRACTOR_MODEL = "vertex/gemini-3.1-flash-lite@us";
+    process.env.RUNIR_SEGMENT_MODEL = "openai/gpt-5.4-mini";
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(segResponse(JSON.stringify({ topics: [] })));
+    await segmentAndSummarize(MSGS, "key");
+    expect(bodyOf(spy).model).toBe("openai/gpt-5.4-mini");
   });
 });
 

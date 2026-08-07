@@ -99,7 +99,8 @@ Beyond the real-time turn lifecycle, Rúnir runs asynchronous maintenance:
 | HTTP framework | Hono | Lightweight, fast, framework-independent |
 | Database | SurrealDB | Single DB for vector + graph + document + FTS — no separate stores |
 | Embeddings | Nomic `nomic-embed-text:v1.5` (768-dim) via Ollama | Local, no API cost; same vector space as cloud Nomic API |
-| LLM (extraction / think) | OpenAI-compatible gateway (`RUNIR_LLM_BASE_URL`; code default OpenRouter) | `openai/gpt-5.4-mini` default for capture extraction; Gemini Flash Lite defaults for the LLM reranker and `/memory/think` |
+| LLM (capture extraction) | OpenAI-compatible gateway (`RUNIR_LLM_BASE_URL`; code default OpenRouter) | `vertex/gemini-3.1-flash-lite@us`, no reasoning parameter; selected by the frozen 15-case benchmark |
+| LLM (other stages) | Stage-specific gateway profiles | Entity extraction, topic segmentation, continuity, reranking, and `/memory/think` are configured separately and were not promoted by the capture benchmark |
 | Runtime | Node.js ≥ 22.12 + tsx | Direct TypeScript execution, no build step |
 
 ## Setup
@@ -130,6 +131,7 @@ That is the whole flow: `npm run dev` and `npm start` load `.env` themselves via
 |---|---|
 | `SURREAL_URL` / `SURREAL_USER` / `SURREAL_PASS` / `SURREAL_NS` / `SURREAL_DB` | Required. SurrealDB connection. |
 | `OPENROUTER_API_KEY` | Extraction-gateway bearer (**legacy variable name** — it authenticates to whichever OpenAI-compatible gateway `RUNIR_LLM_BASE_URL` points at; code default OpenRouter, operator deployments may point it elsewhere, e.g. Requesty). Required for `/hooks/capture`, `/memory/think`, and maintenance; recall works without it. |
+| `EXTRACT_MODEL` | Capture-only model override. Defaults to `vertex/gemini-3.1-flash-lite@us`. Prefer this over `RUNIR_EXTRACTOR_MODEL`, whose legacy shared fallback can also affect topic segmentation, entity extraction, continuity, and `/memory/think`. |
 | `RUNIR_API_KEY` | Service auth bearer for all non-public routes. Without it the service is **fail-open outside production** and logs a loud startup WARNING (see auth posture below). |
 | `RUNIR_USER_ID` | Default tenant when requests omit `userId`. Set it. |
 | `RUNIR_RECALL_RELEVANCE_FLOOR` | Set `0.55` (the calibrated value, shipped in `.env.example`). Code default `0` = gate off. |
@@ -184,6 +186,19 @@ npm run check
 - `npm run test:ci:slow` — sets `RUNIR_TEST_SLOW_LANE=1` for the containerized integration lane (`test:ci:slow:up` / `test:ci:slow:down` manage the Docker stack in `docker-compose.test.yml`)
 - `npm run test:schema:events` — validates the event fixtures under `fixtures/events/` against `schemas/event.schema.json`
 - `npm run test:runir-mcp:installed` — smoke-tests the installed `runir_store` MCP server, launching it from the staged `.mcp.json`
+
+### Extraction model benchmark and Review Studio
+
+The extraction benchmark runs the frozen 15-case human-gold corpus against
+selected OpenAI-compatible model profiles and writes JSONL, manifest, and
+Markdown evidence. Review Studio is the local visual companion for Runs,
+Compare, and Case Detail; it reads those artifacts and never initiates a paid
+model call.
+
+See [the extraction model benchmark and Review Studio guide](docs/model-benchmark-guide.md)
+for zero-network preflight, approved paid execution, custom-model and corpus
+setup, Studio launch, result interpretation, and the evidence behind the Gemini
+3.1 Flash-Lite selection.
 
 ### Contract routines
 

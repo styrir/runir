@@ -1,0 +1,110 @@
+{
+  "schemaVersion": "runir-model-benchmark/v1",
+  "runId": "paid-2026-08-07T08-37-27-896Z-b92a0bdf",
+  "createdAt": "2026-08-07T08:37:27.896Z",
+  "git": {
+    "sha": "1e70ba809d05fa1d0063c2eb6877f175a21922ec",
+    "dirty": false
+  },
+  "conditionId": "gemini-3.5-reasoning-acceptance-2026-08-07",
+  "completion": {
+    "status": "complete",
+    "plannedRequestCount": 3,
+    "completedRequestCount": 3,
+    "cumulativeCostUsd": 0.0145872
+  },
+  "artifactTargets": {
+    "rawPath": "/Users/brooks/Code/runir/docs/analysis/raw/model-benchmark-v2/gemini-3.5-reasoning-acceptance-2026-08-07-requesty.jsonl",
+    "manifestPath": "/Users/brooks/Code/runir/docs/analysis/raw/model-benchmark-v2/gemini-3.5-reasoning-acceptance-2026-08-07-requesty.manifest.json",
+    "reportPath": "/Users/brooks/Code/runir/docs/analysis/model-benchmark-v2-gemini-3.5-reasoning-acceptance-2026-08-07-requesty.md"
+  },
+  "disclosure": {
+    "candidateModelIds": [
+      "vertex/gemini-3.5-flash-lite",
+      "vertex/gemini-3.5-flash-lite",
+      "vertex/gemini-3.5-flash-lite"
+    ],
+    "candidates": [
+      {
+        "id": "flash-lite-3.5-reasoning-high",
+        "label": "Gemini 3.5 Flash-Lite (Requesty mapped reasoning=high / 24,576 tokens)",
+        "modelId": "vertex/gemini-3.5-flash-lite",
+        "reasoning": "high",
+        "reasoningSupport": "gateway-mapped",
+        "reasoningBudgetTokens": 24576,
+        "apiStyle": "chat_completions",
+        "endpoint": "configured",
+        "endpointBaseUrl": "https://router.requesty.ai/v1",
+        "credentialSourceLabel": "env:REQUESTY_API_KEY",
+        "effectiveNotes": [
+          "Requesty Vertex mapping: reasoning_effort=high -> reasoning budget 24576 tokens",
+          "jsonMode=off: response_format omitted (matches production non-openai extract path)"
+        ]
+      },
+      {
+        "id": "flash-lite-3.5-reasoning-low",
+        "label": "Gemini 3.5 Flash-Lite (Requesty mapped reasoning=low / 1,024 tokens)",
+        "modelId": "vertex/gemini-3.5-flash-lite",
+        "reasoning": "low",
+        "reasoningSupport": "gateway-mapped",
+        "reasoningBudgetTokens": 1024,
+        "apiStyle": "chat_completions",
+        "endpoint": "configured",
+        "endpointBaseUrl": "https://router.requesty.ai/v1",
+        "credentialSourceLabel": "env:REQUESTY_API_KEY",
+        "effectiveNotes": [
+          "Requesty Vertex mapping: reasoning_effort=low -> reasoning budget 1024 tokens",
+          "jsonMode=off: response_format omitted (matches production non-openai extract path)"
+        ]
+      },
+      {
+        "id": "flash-lite-3.5-reasoning-medium",
+        "label": "Gemini 3.5 Flash-Lite (Requesty mapped reasoning=medium / 8,192 tokens)",
+        "modelId": "vertex/gemini-3.5-flash-lite",
+        "reasoning": "medium",
+        "reasoningSupport": "gateway-mapped",
+        "reasoningBudgetTokens": 8192,
+        "apiStyle": "chat_completions",
+        "endpoint": "configured",
+        "endpointBaseUrl": "https://router.requesty.ai/v1",
+        "credentialSourceLabel": "env:REQUESTY_API_KEY",
+        "effectiveNotes": [
+          "Requesty Vertex mapping: reasoning_effort=medium -> reasoning budget 8192 tokens",
+          "jsonMode=off: response_format omitted (matches production non-openai extract path)"
+        ]
+      }
+    ],
+    "corpusSize": 1,
+    "caseIds": [
+      "identifiers-path-url"
+    ],
+    "smokeMode": false,
+    "repetitions": 1,
+    "plannedRequestCount": 3,
+    "gatewayBaseUrl": "https://router.requesty.ai/v1",
+    "credentialSourceLabel": "env:REQUESTY_API_KEY",
+    "maxOutputTokens": 2048,
+    "timeoutMs": 180000,
+    "concurrency": 1,
+    "conditionId": "gemini-3.5-reasoning-acceptance-2026-08-07",
+    "requireCleanGit": true,
+    "allowArtifactOverwrite": false,
+    "costEstimate": {
+      "available": true,
+      "currency": "USD",
+      "estimatedTotalUsd": 0.1078434,
+      "assumedPromptTokensPerRequest": 7500,
+      "assumedCompletionTokensPerRequest": 800,
+      "maxTotalCostUsd": 0.15,
+      "note": "Calibrated planning estimate assumes 7500 input + 800 output tokens/request at each candidate's dated list-price table. The input assumption is rounded above the 6,958-token live-smoke mean. This is not a guaranteed ceiling; runtime enforcement prefers gateway-billed cost, then token-estimated cost. For gateway-mapped reasoning candidates, the full declared reasoning budget is added to planning cost and to the per-request runtime reserve as output tokens."
+    },
+    "dryRun": false,
+    "confirmCost": true
+  },
+  "fixtureContentHash": "8c37c2d13119086dfe437d80816728a55574ad7ce7372b5e47ede324770d5f5e",
+  "promptTemplateHash": "ef76dcb4865eaf962d553bf5a2fcc6b1e11ba00a235544ee3219cc313a8beccc",
+  "scoringContractVersion": "runir-model-benchmark-scoring/v1",
+  "promptHash": "97c198956a41a82479c015cff3939aaad80a5bcb0ee1859e27d1b823165dd6e4",
+  "fixturePath": "/Users/brooks/Code/runir/fixtures/model-benchmark/corpus.json",
+  "rowCount": 3
+}
