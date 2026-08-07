@@ -23,6 +23,7 @@ __pycache__/
 .dolt/
 .fallow/
 .gitnexus/
+graphify-out/
 .omc/
 .omo/
 .omx/

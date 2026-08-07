@@ -1,0 +1,303 @@
+{
+  "version": "runir-model-benchmark-corpus/v1",
+  "description": "Sanitized synthetic gold corpus for Rúnir extraction model benchmarking. No confidential production conversations.",
+  "cases": [
+    {
+      "id": "atomic-simple",
+      "description": "Single atomic preference fact.",
+      "family": "atomic",
+      "messages": [
+        { "role": "user", "content": "I prefer Helix as my editor for all coding work." }
+      ],
+      "gold": {
+        "abstain": false,
+        "independentClaimCount": 1,
+        "facts": [
+          {
+            "id": "prefers-helix",
+            "mustContain": ["Helix", "editor"],
+            "category": "preferences",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "multi-claim-split",
+      "description": "Three independent preferences must split into separate facts.",
+      "family": "multi-claim",
+      "messages": [
+        {
+          "role": "user",
+          "content": "I prefer terse answers, I like dark mode, and I hate auto-expanding menus."
+        }
+      ],
+      "gold": {
+        "abstain": false,
+        "independentClaimCount": 3,
+        "facts": [
+          { "id": "terse", "mustContain": ["terse"], "required": true },
+          { "id": "dark-mode", "mustContain": ["dark mode"], "required": true },
+          { "id": "auto-expand", "mustContain": ["auto-expanding"], "required": true }
+        ]
+      }
+    },
+    {
+      "id": "fabrication-trap",
+      "description": "Insufficient evidence — model must abstain rather than invent project facts.",
+      "family": "fabrication-trap",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What database does the unnamed internal service use in production?"
+        },
+        {
+          "role": "assistant",
+          "content": "I don't have that information in this conversation."
+        }
+      ],
+      "gold": {
+        "abstain": true,
+        "independentClaimCount": 0,
+        "facts": []
+      }
+    },
+    {
+      "id": "correction-dragonfly",
+      "description": "Later correction supersedes Redis with Dragonfly.",
+      "family": "correction",
+      "messages": [
+        { "role": "user", "content": "We are using Redis for this prototype." },
+        {
+          "role": "user",
+          "content": "Update: we are no longer using Redis. Dragonfly is the replacement because the latency profile is better."
+        }
+      ],
+      "gold": {
+        "abstain": false,
+        "independentClaimCount": 1,
+        "facts": [
+          {
+            "id": "dragonfly-now",
+            "mustContain": ["Dragonfly", "Redis"],
+            "category": "entities",
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "identifiers-path-url",
+      "description": "Exact URL and path preservation.",
+      "family": "identifiers",
+      "messages": [
+        {
+          "role": "user",
+          "content": "This is related to https://github.com/styrir/runir and the extractor prompt lives in src/domain/memory/prompts.ts."
+        }
+      ],
+      "gold": {
+        "abstain": false,
+        "facts": [
+          {
+            "id": "url-path",
+            "mustContain": ["https://github.com/styrir/runir", "src/domain/memory/prompts.ts"],
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "negative-preference",
+      "description": "Negative constraint / avoidance.",
+      "family": "negative",
+      "messages": [
+        {
+          "role": "user",
+          "content": "No counseling. When I ask what DBT means, just explain the term."
+        }
+      ],
+      "gold": {
+        "abstain": false,
+        "facts": [
+          {
+            "id": "no-counseling",
+            "mustContain": ["counseling", "DBT"],
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "code-diff",
+      "description": "User-pasted diff with exact path and identifier.",
+      "family": "code",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Here is the diff:\n\n```diff\n--- a/src/billing/invoice-generator.ts\n+++ b/src/billing/invoice-generator.ts\n@@ -88,7 +88,10 @@ export async function generateInvoice(\n-  const subtotal = lineItems.reduce((sum, li) => sum + li.amount, 0);\n+  const subtotal = lineItems.reduce(\n+    (sum, li) => sum + li.amount * (li.quantity ?? 1),\n+    0,\n+  );\n```"
+        },
+        {
+          "role": "assistant",
+          "content": "This fixes multi-unit line items by multiplying amount by quantity."
+        }
+      ],
+      "gold": {
+        "abstain": false,
+        "facts": [
+          {
+            "id": "invoice-qty",
+            "mustContain": ["invoice-generator.ts", "quantity"],
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "noisy-smalltalk",
+      "description": "Small talk should abstain.",
+      "family": "noisy",
+      "messages": [
+        { "role": "user", "content": "Good morning." },
+        { "role": "assistant", "content": "Good morning. How can I help?" }
+      ],
+      "gold": {
+        "abstain": true,
+        "facts": []
+      }
+    },
+    {
+      "id": "generic-explanation-abstain",
+      "description": "Generic world knowledge without user/project binding abstains.",
+      "family": "abstention",
+      "messages": [
+        { "role": "user", "content": "What is the difference between semantic and episodic memory?" },
+        {
+          "role": "assistant",
+          "content": "Semantic memory stores facts; episodic memory stores experiences."
+        }
+      ],
+      "gold": {
+        "abstain": true,
+        "facts": []
+      }
+    },
+    {
+      "id": "project-bound-mapping",
+      "description": "Same concept becomes memory when tied to Runir.",
+      "family": "atomic",
+      "messages": [
+        {
+          "role": "user",
+          "content": "For Runir, map semantic memory to Noema, episodic memory to Semiotes/events, and procedural memory to patterns/directives."
+        }
+      ],
+      "gold": {
+        "abstain": false,
+        "facts": [
+          {
+            "id": "runir-mapping",
+            "mustContain": ["Noema", "Semiotes", "patterns"],
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "relative-date-event",
+      "description": "Relative date grounding.",
+      "family": "identifiers",
+      "sessionTimestamp": "2026-05-19T12:00:00-04:00",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Yesterday I sent Rokid my Tallinn address and asked them to ship the glasses ASAP."
+        }
+      ],
+      "gold": {
+        "abstain": false,
+        "facts": [
+          {
+            "id": "rokid-ship",
+            "mustContain": ["Rokid", "Tallinn"],
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "surrealql-procedure",
+      "description": "Exact technical artifacts in a procedure.",
+      "family": "code",
+      "messages": [
+        {
+          "role": "user",
+          "content": "When debugging SurrealDB BM25 in Runir, first test whether text_norm @1@ query matches rows, then separately verify search::score(1)."
+        }
+      ],
+      "gold": {
+        "abstain": false,
+        "facts": [
+          {
+            "id": "bm25-proc",
+            "mustContain": ["text_norm @1@", "search::score(1)"],
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "alias-ambiguous",
+      "description": "Ambiguous entity alias — extract carefully without inventing identity merge.",
+      "family": "alias",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Alex from the infra team prefers PagerDuty; Alex from design prefers Linear for bugs. Keep them separate."
+        }
+      ],
+      "gold": {
+        "abstain": false,
+        "independentClaimCount": 2,
+        "facts": [
+          { "id": "alex-infra", "mustContain": ["PagerDuty"], "required": true },
+          { "id": "alex-design", "mustContain": ["Linear"], "required": true }
+        ]
+      }
+    },
+    {
+      "id": "quantity-port",
+      "description": "Numeric identifiers and ports.",
+      "family": "identifiers",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Local dogfood Runir listens on port 7700 and the shared Dolt beads server is on 127.0.0.1:3308."
+        }
+      ],
+      "gold": {
+        "abstain": false,
+        "independentClaimCount": 2,
+        "facts": [
+          { "id": "port-7700", "mustContain": ["7700"], "required": true },
+          { "id": "dolt-3308", "mustContain": ["3308"], "required": true }
+        ]
+      }
+    },
+    {
+      "id": "uncertainty-hedge",
+      "description": "User uncertainty should not become hard fact about external systems.",
+      "family": "fabrication-trap",
+      "messages": [
+        {
+          "role": "user",
+          "content": "I think maybe the billing service might use Postgres, but I'm not sure — don't store that as confirmed."
+        }
+      ],
+      "gold": {
+        "abstain": true,
+        "facts": []
+      }
+    }
+  ]
+}
