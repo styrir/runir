@@ -254,9 +254,10 @@ describe("Think benchmark runner", () => {
         citations: claim.evidenceIds.map((id, index) => ({ id, index })),
       }));
       const answer = benchmarkCase.gold.answerExpected ? claims.map((claim) => claim.text).join(". ") : null;
-      const retainedIds = [...new Set(
+      const fixtureEvidenceIds = [...new Set(
         benchmarkCase.gold.supportedClaims.flatMap((claim) => claim.evidenceIds),
       )];
+      const retainedIds = fixtureEvidenceIds.map((id) => id.replace(/^semiote:/u, ""));
       return new Response(JSON.stringify({
         answer,
         claims,
@@ -264,7 +265,8 @@ describe("Think benchmark runner", () => {
         gaps: benchmarkCase.gold.requiredGapContains,
         evidence: retainedIds.map((id) => ({
           id,
-          preview: benchmarkCase.evidence.find((item) => item.id === id)?.text ?? "evidence",
+          preview: benchmarkCase.evidence.find((item) =>
+            item.id.replace(/^semiote:/u, "") === id)?.text ?? "evidence",
         })),
         evidenceCount: retainedIds.length,
         retrievalTraceId: "trace-e2e",
@@ -306,7 +308,11 @@ describe("Think benchmark runner", () => {
     expect(result.rows.every((row) => row.retrieval?.cap === 12)).toBe(true);
     expect(result.rows.every((row) =>
       row.quality.citationValidity === 1 &&
-      row.quality.unsupportedClaimRate === 0)).toBe(true);
+      row.quality.unsupportedClaimRate === 0 &&
+      row.quality.citationPrecision === 1)).toBe(true);
+    expect(result.rows.every((row) =>
+      row.gold.supportedClaims.every((claim) =>
+        claim.evidenceIds.every((id) => !id.startsWith("semiote:"))))).toBe(true);
     expect(result.rows.every((row) => row.costBasis === "token_usage_estimate")).toBe(true);
   });
 });
