@@ -138,7 +138,7 @@ describe("extractMemories timeout (MIM-41)", () => {
         { timeoutMs: 5000 },
       );
 
-      expect(capturedBody.model).toBe("openai/gpt-5.4-mini");
+      expect(capturedBody.model).toBe("vertex/gemini-3.1-flash-lite@us");
     } finally {
       globalThis.fetch = originalFetch;
     }

@@ -4,6 +4,10 @@ Review Studio is a local evidence light table for model-benchmark artifacts.
 The default launch is credential-free and file-only. Sensitive trace review is
 an explicit, server-side loopback proxy mode; it is never enabled implicitly.
 
+For the complete runner-to-review workflow, custom-model setup, and the recorded
+Gemini 3.1 selection rationale, see
+[`docs/model-benchmark-guide.md`](../../docs/model-benchmark-guide.md).
+
 ## Launch
 
 Run from the repository root and provide one or more explicit artifact roots:

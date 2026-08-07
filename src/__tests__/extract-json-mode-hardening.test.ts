@@ -55,14 +55,14 @@ afterEach(() => {
 });
 
 describe("extractMemories — JSON-mode capability gating", () => {
-  it("default model (openai/*) sends response_format json_object and NOT provider.require_parameters", async () => {
+  it("default Gemini 3.1 model omits response_format and provider.require_parameters", async () => {
     const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(okEmptyFacts());
     await extractMemories(MSGS, "prompt", "key");
     const body = bodyOf(spy);
-    expect(body.model).toBe("openai/gpt-5.4-mini");
-    expect(body.response_format).toEqual({ type: "json_object" });
-    // require_parameters 404s for gpt-5.x reasoning models (temperature/seed not
-    // in supported_parameters) — verified live; must never be sent.
+    expect(body.model).toBe("vertex/gemini-3.1-flash-lite@us");
+    expect(body.response_format).toBeUndefined();
+    expect(body.reasoning).toBeUndefined();
+    expect(body.reasoning_effort).toBeUndefined();
     expect(body.provider).toBeUndefined();
   });
 
@@ -107,7 +107,7 @@ describe("extractMemories — JSON-mode capability gating", () => {
     }
   });
 
-  it("RUNIR_EXTRACTOR_JSON_MODE=0 force-disables JSON mode even for the openai default", async () => {
+  it("RUNIR_EXTRACTOR_JSON_MODE=0 force-disables JSON mode", async () => {
     process.env.RUNIR_EXTRACTOR_JSON_MODE = "0";
     const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(okEmptyFacts());
     await extractMemories(MSGS, "prompt", "key");
@@ -116,13 +116,13 @@ describe("extractMemories — JSON-mode capability gating", () => {
     expect(body.provider).toBeUndefined();
   });
 
-  it('RUNIR_EXTRACTOR_SEED="" still omits seed while JSON mode stays on (default model)', async () => {
+  it('RUNIR_EXTRACTOR_SEED="" omits seed and leaves Gemini default JSON mode off', async () => {
     process.env.RUNIR_EXTRACTOR_SEED = "";
     const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(okEmptyFacts());
     await extractMemories(MSGS, "prompt", "key");
     const body = bodyOf(spy);
     expect(body.seed).toBeUndefined();
-    expect(body.response_format).toEqual({ type: "json_object" });
+    expect(body.response_format).toBeUndefined();
   });
 });
 
@@ -184,7 +184,7 @@ describe("extractMemories — drop observability (recordCounter)", () => {
     await extractMemories(MSGS, "prompt", "key");
     const dropLine = captured.find((l) => l.includes("metric=capture_batch_dropped") && l.includes("stage=extract"));
     expect(dropLine).toBeDefined();
-    expect(dropLine).toContain("model=openai/gpt-5.4-mini");
+    expect(dropLine).toContain("model=vertex/gemini-3.1-flash-lite@us");
   });
 
   it("AbortError (timeout) returns [] and records reason=timeout", async () => {
@@ -249,7 +249,7 @@ describe("extractMemories — drop observability (recordCounter)", () => {
 
   it("per-fact isolation: good siblings survive a malformed middle element", async () => {
     const facts1 = { l2: "The user's project Runir stores memories in SurrealDB.", confidence: 0.95 };
-    const facts2 = { l2: "Runir extraction is standardized on openai/gpt-5.4-mini.", confidence: 0.93 };
+    const facts2 = { l2: "Runir capture extraction uses vertex/gemini-3.1-flash-lite@us.", confidence: 0.93 };
     vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -259,7 +259,10 @@ describe("extractMemories — drop observability (recordCounter)", () => {
     const facts = await extractMemories(MSGS, "prompt", "key");
     expect(facts).toHaveLength(2);
     expect(facts.map((f) => f.l2)).toEqual(
-      expect.arrayContaining([expect.stringContaining("SurrealDB"), expect.stringContaining("gpt-5.4-mini")]),
+      expect.arrayContaining([
+        expect.stringContaining("SurrealDB"),
+        expect.stringContaining("gemini-3.1-flash-lite"),
+      ]),
     );
     const line = captured.find((l) => l.includes("reason=malformed_fact_element"));
     expect(line).toContain("dropped=1");
@@ -336,7 +339,7 @@ describe("extractMemories — confidence type safety (no non-number escapes)", (
     vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
       json: async () => ({
-        choices: [{ message: { content: JSON.stringify({ facts: [{ l2: "Runir extraction runs on openai/gpt-5.4-mini." }] }) } }],
+        choices: [{ message: { content: JSON.stringify({ facts: [{ l2: "Runir capture extraction runs on vertex/gemini-3.1-flash-lite@us." }] }) } }],
       }),
     } as unknown as Response);
     const facts = await extractMemories(MSGS, "prompt", "key");
