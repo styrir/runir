@@ -230,10 +230,13 @@ function normalizeGatewayIdentity(value: string): string {
 function effectiveRequestForHash(value: Record<string, unknown>): Record<string, unknown> {
   const keys = [
     "modelId",
+    "apiStyle",
+    "endpoint",
     "temperature",
     "max_tokens",
     "seed",
     "response_format",
+    "textFormat",
     "reasoning",
     "reasoningParam",
   ];
@@ -277,10 +280,9 @@ function buildConfigHash(
       };
     });
 
-  const gateway =
-    typeof disclosure.gatewayBaseUrl === "string"
-      ? disclosure.gatewayBaseUrl
-      : rows[0]?.gatewayBaseUrl ?? "";
+  const gatewayIdentities = [
+    ...new Set(rows.map((row) => normalizeGatewayIdentity(row.gatewayBaseUrl))),
+  ].sort();
   return canonicalHash({
     benchmarkSchemaVersion: BENCHMARK_SCHEMA_VERSION,
     candidates,
@@ -291,7 +293,7 @@ function buildConfigHash(
     timeoutMs: typeof disclosure.timeoutMs === "number" ? disclosure.timeoutMs : null,
     concurrency: typeof disclosure.concurrency === "number" ? disclosure.concurrency : null,
     dryRun,
-    gatewayIdentity: normalizeGatewayIdentity(gateway),
+    gatewayIdentities,
   });
 }
 

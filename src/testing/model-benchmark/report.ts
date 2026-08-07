@@ -24,8 +24,8 @@ export function formatPreflightDisclosure(d: PreflightDisclosure): string {
     `dryRun: ${d.dryRun}`,
     `confirmCost: ${d.confirmCost}`,
     `smokeMode: ${d.smokeMode}`,
-    `gatewayBaseUrl: ${d.gatewayBaseUrl}`,
-    `credentialSource: ${d.credentialSourceLabel}`,
+    `configuredGatewayBaseUrl: ${d.gatewayBaseUrl}`,
+    `credentialSources: ${d.credentialSourceLabel}`,
     `corpusSize: ${d.corpusSize}`,
     `repetitions: ${d.repetitions}`,
     `plannedRequestCount: ${d.plannedRequestCount}`,
@@ -38,7 +38,10 @@ export function formatPreflightDisclosure(d: PreflightDisclosure): string {
     "candidates:",
     ...d.candidates.map(
       (c) =>
-        `  - ${c.id}: modelId=${c.modelId} reasoning=${c.reasoning ?? "n/a"} support=${c.reasoningSupport}` +
+        `  - ${c.id}: modelId=${c.modelId} api=${c.apiStyle ?? "chat_completions"} ` +
+        `endpoint=${c.endpoint ?? "configured"} baseUrl=${c.endpointBaseUrl ?? d.gatewayBaseUrl} ` +
+        `credentialSource=${c.credentialSourceLabel ?? d.credentialSourceLabel} ` +
+        `reasoning=${c.reasoning ?? "n/a"} support=${c.reasoningSupport}` +
         (c.effectiveNotes.length ? ` notes=${JSON.stringify(c.effectiveNotes)}` : ""),
     ),
     `costEstimate.available: ${d.costEstimate.available}`,
@@ -120,11 +123,11 @@ export function renderMarkdownReport(args: {
   lines.push("");
   lines.push("## Model / configuration matrix");
   lines.push("");
-  lines.push("| ID | Label | Model ID | Reasoning | Support | Notes |");
-  lines.push("|---|---|---|---|---|---|");
+  lines.push("| ID | Label | Model ID | API | Endpoint | Reasoning | Support | Notes |");
+  lines.push("|---|---|---|---|---|---|---|---|");
   for (const c of d.candidates) {
     lines.push(
-      `| ${c.id} | ${c.label} | \`${c.modelId}\` | ${c.reasoning ?? "—"} | ${c.reasoningSupport} | ${c.effectiveNotes.join("; ") || "—"} |`,
+      `| ${c.id} | ${c.label} | \`${c.modelId}\` | ${c.apiStyle ?? "chat_completions"} | ${c.endpoint ?? "configured"} | ${c.reasoning ?? "—"} | ${c.reasoningSupport} | ${c.effectiveNotes.join("; ") || "—"} |`,
     );
   }
   lines.push("");
@@ -133,10 +136,13 @@ export function renderMarkdownReport(args: {
   lines.push(
     `- Cases: ${d.corpusSize}${d.smokeMode ? " (smoke subset)" : ""}`,
   );
+  if (d.caseIds?.length) {
+    lines.push(`- Case IDs: ${d.caseIds.map((caseId) => `\`${caseId}\``).join(", ")}`);
+  }
   lines.push(`- Repetitions: ${d.repetitions}`);
   lines.push(`- Planned requests: ${d.plannedRequestCount}`);
-  lines.push(`- Gateway: \`${d.gatewayBaseUrl}\``);
-  lines.push(`- Credential source: \`${d.credentialSourceLabel}\``);
+  lines.push(`- Configured gateway default: \`${d.gatewayBaseUrl}\``);
+  lines.push(`- Credential sources: \`${d.credentialSourceLabel}\``);
   lines.push(
     "- Scoring: human gold mustContain matching; precision/recall/hallucination/omission/abstention; no model-as-judge gold.",
   );
@@ -228,7 +234,8 @@ export function renderMarkdownReport(args: {
       ? "# Exact paid reproduction (fresh human approval required)"
       : "# Best-effort legacy paid reproduction (fresh human approval required)",
   );
-  lines.push(`REQUESTY_API_KEY=… ${reproductionCommand(args.manifest, true)}`);
+  lines.push("# Run the following only through the approved Infisical credential injection path:");
+  lines.push(reproductionCommand(args.manifest, true));
   lines.push("```");
   lines.push("");
   return lines.join("\n");
@@ -258,6 +265,9 @@ function reproductionCommand(manifest: RunManifest, paid: boolean): string {
     "--base-url",
     shellQuote(d.gatewayBaseUrl),
   ];
+  if (d.caseIds?.length) {
+    flags.push("--case-ids", shellQuote(d.caseIds.join(",")));
+  }
   if (d.smokeMode) flags.push("--smoke");
   if (manifest.conditionId) flags.push("--condition-id", shellQuote(manifest.conditionId));
   const costCap = runtimeCostCapUsd(d);

@@ -1,6 +1,6 @@
 # Rúnir Reference Benchmark v2
 
-**Status:** PILOT ATTEMPT 1 STOPPED — request-shape fix and replacement pilot approved
+**Status:** REQUESTY LUNA HIGH PILOT READY — awaiting clean commit and exact paid approval
 **Date:** 2026-08-07
 **Product boundary:** capture/extraction model quality and Review Studio evidence flow
 **Not a claim about:** complete Rúnir retrieval, correction, decay, or competitor superiority
@@ -13,6 +13,8 @@ The owner approved the clean checkpoint commit and the separately bounded
 six-request paid pilot on 2026-08-07.
 The owner approved the follow-up clean commit and replacement six-request
 pilot on 2026-08-07 after attempt 1 stopped on the provider precondition.
+The owner approved the separately bounded 90-request Reference Run A with a
+`$0.30` cap on 2026-08-07.
 
 - calibrated planning disclosure uses 7,500 prompt tokens/request;
 - runtime cap prefers valid gateway-billed cost, then token-estimated or
@@ -54,10 +56,139 @@ regression test covers the Requesty/OpenAI JSON-mode precondition. A replacement
 six-request pilot requires a new clean commit and explicit request-count/cost
 approval because attempt 1 consumed one HTTP request.
 
+### Replacement pilot — passed
+
+The approved replacement pilot ran from clean SHA
+`ee5e411931bdc5aa2db968ae6f2b00a41a5c677b` through Infisical Universal
+Auth into fresh no-clobber artifact paths.
+
+- 6/6 planned rows completed;
+- 6/6 HTTP 200;
+- 6/6 schema-valid;
+- zero request errors and timeouts;
+- both candidates achieved 100% smoke precision and recall with zero
+  hallucinations;
+- actual gateway-billed cost: `$0.01047095` against the `$0.03` cap;
+- Review Studio provenance is verified, complete, and diagnostic-free;
+- an audit using the actual Infisical-injected secret confirmed no credential
+  value appears in the JSONL, manifest, or Markdown report.
+
+The immutable replacement bundle is
+`docs/analysis/raw/model-benchmark-v2/pilot-replacement-2026-08-07-requesty.*`.
+
+### Reference Run A — complete with an atomicity regression
+
+Reference Run A executed from clean SHA
+`ee5e411931bdc5aa2db968ae6f2b00a41a5c677b` in its own detached worktree.
+Infisical Universal Auth injected the Requesty credential only into the
+benchmark child process.
+
+- 90/90 planned rows completed;
+- 90/90 HTTP 200 and schema-valid;
+- zero retries, request errors, timeouts, or hallucinations;
+- actual gateway-billed cost: `$0.08570175` against the `$0.30` cap;
+- Flash-Lite control: 100.0% precision, 100.0% recall, 0.0% omission,
+  1,343 ms p50 and 2,000 ms p95 latency;
+- Luna low: 100.0% precision, 93.3% recall, 6.7% omission, 1,815 ms p50
+  and 4,099 ms p95 latency;
+- both candidates achieved 100% abstention accuracy and correction handling;
+- Review Studio provenance is verified, complete, and diagnostic-free;
+- an audit using the actual Infisical-injected secret confirmed no credential
+  value appears in the JSONL, manifest, or Markdown report.
+
+Luna low merged the two expected atomic facts into one memory object in all
+three repetitions of `alias-ambiguous` and all three repetitions of
+`quantity-port`. The text preserved both expected values, so this is an
+atomicity/granularity failure rather than fabricated or semantically missing
+evidence. Under the frozen scorer, however, each affected row receives 0.5
+recall, 0.5 omission, and 0.5 granularity compliance. Because
+`quantity-port` belongs to the `identifiers` family, this crosses the proposed
+no-new-omission gate and is recorded explicitly for owner review.
+
+The exact-byte canonical bundle is:
+
+- `docs/analysis/raw/model-benchmark-v2/reference-a-2026-08-07-requesty.jsonl`
+- `docs/analysis/raw/model-benchmark-v2/reference-a-2026-08-07-requesty.manifest.json`
+- `docs/analysis/model-benchmark-v2-reference-a-2026-08-07-requesty.md`
+
+The original low-effort Reference Run B is paused. Running it now would spend
+another 90 requests measuring a configuration that is no longer the intended
+Luna challenger.
+
+### Native Luna Max amendment — implementation complete, paid run blocked
+
+OpenAI's GPT-5.6 documentation confirms that Luna supports native
+`reasoning.effort=max` through the Responses API. Requesty's documented generic
+OpenAI reasoning translation maps `max` to `high`, so this benchmark must not
+label a Requesty-normalized request as native Max.
+
+The benchmark now has explicit direct-OpenAI Responses candidates:
+
+- `luna-low-responses`
+- `luna-max`
+
+The new lane uses `/v1/responses`, `gpt-5.6-luna`, nested
+`reasoning: {effort}`, `max_output_tokens`, Responses output-item parsing,
+Responses usage counters, per-candidate endpoint/credential provenance, and
+exact `--case-ids` selection. Historical Chat Completions candidates and raw
+artifacts remain unchanged.
+
+The zero-network effort-pilot dry run completed 24/24 synthetic rows:
+
+```text
+4 cases × 3 repetitions × 2 efforts = 24 requests
+cases: alias-ambiguous, quantity-port, multi-claim-split, fabrication-trap
+efforts: low, max
+max output tokens: 2,048
+proposed paid cap: $0.50
+calibrated planning estimate: $0.2952
+```
+
+No paid call was made. The machine's Infisical `dev` environment currently
+injects `REQUESTY_API_KEY` but not `OPENAI_API_KEY`; the runner therefore fails
+closed before network access for this direct lane. Add `OPENAI_API_KEY` to the
+existing Infisical project before requesting paid execution. The key must never
+be placed directly on a command line or in a repository file.
+
+### Requesty Luna High amendment — selected diagnostic
+
+The owner selected a smaller Requesty-based diagnostic before provisioning the
+direct OpenAI credential. Requesty documents that OpenAI
+`reasoning_effort=high` is forwarded unchanged on its OpenAI-compatible Chat
+Completions route. This keeps the Run A model, gateway, prompt, response format,
+and transport fixed while changing only Luna's requested effort from low to
+high.
+
+The benchmark now exposes `luna-high-requesty` as an explicit candidate. It is
+not included in `default`, `extended`, or `all`, so historical matrices and
+presets remain frozen. The proposed diagnostic is:
+
+```text
+2 cases × 3 repetitions × 1 candidate = 6 requests
+cases: alias-ambiguous, quantity-port
+model: openai/gpt-5.6-luna through Requesty Chat Completions
+reasoning_effort: high
+max output tokens: 2,048
+calibrated planning estimate: $0.0738
+proposed paid cap: $0.15
+```
+
+The two selected cases are exactly the Run A rows where Luna Low merged two
+gold facts into one extracted memory object. A paid run requires a clean
+checkpoint commit and separate explicit approval naming Requesty, the two case
+IDs, six requests, and the `$0.15` cap. The direct native-Max lane remains
+implemented but deferred; this Requesty run must be labeled High, not Max.
+
+The Infisical-injected zero-network preflight completed 6/6 synthetic rows with
+the exact case, repetition, candidate, transport, endpoint, effort, output-token
+limit, estimate, and cap shown above. Its disclosure identified
+`env:REQUESTY_API_KEY` without exposing the value, and a value-aware audit
+confirmed that the injected credential was absent from the JSONL, manifest, and
+Markdown artifacts. No paid model call was made.
+
 ## Decision
 
-Create a modern, reproducible reference benchmark from two independent runs of
-the same two-candidate matrix on the same clean Git commit:
+The original Run A tested this two-candidate matrix:
 
 - `flash-lite-3.1-control`
 - `luna-low`
@@ -78,9 +209,10 @@ Gemini 3.5 Flash-Lite and Grok 4.5 already showed material quality regressions
 in the July artifact. Reopening them requires a separate model-selection
 question and cost approval.
 
-`luna-low` means reasoning `low`. It must not be labeled “Luna Max.” A Luna Max
-experiment requires explicit support for that reasoning level plus a gateway
-parameter pilot.
+`luna-low` remains correctly labeled historical evidence. If the bounded
+native-Max pilot passes, the publishable reference pair restarts with
+`flash-lite-3.1-control` and `luna-max`; the low-effort Run A is not silently
+relabelled or paired with a Max run.
 
 ## Question
 
@@ -252,10 +384,12 @@ Run A stop conditions:
 
 ### Run B: `reference-b`
 
-Run only after Run A passes. Use the same SHA, fixtures, candidate matrix,
-repetitions, concurrency, timeout, output-token limit, gateway, and scoring
-contract. The only expected differences are run identity, timestamps, model
-outputs, usage, latency, request IDs, and billed cost.
+Paused by the native Luna Max amendment. Do not run the old low-effort
+replication. After the effort pilot, either:
+
+- restart a clean two-run reference pair with Luna Max if it passes; or
+- retain Luna Low as historical evidence and address the atomicity failure
+  before defining a new reference pair.
 
 ## Cost and duration envelope
 
@@ -270,11 +404,12 @@ Expected cost:
 |---|---:|---:|---:|
 | paid pilot | 6 | about `$0.015` | `$0.03` |
 | reference A | 90 | about `$0.218` | `$0.30` |
-| reference B | 90 | about `$0.218` | `$0.30` |
-| total | 186 | about `$0.451` | `$0.63` |
+| Requesty Luna High diagnostic | 6 | `$0.0738` calibrated | `$0.15` proposed |
+| native Luna effort pilot | 24 | about `$0.295` calibrated | `$0.50` proposed |
+| old reference B | 90 | paused | not approved |
 
-The two full runs are expected to take roughly 5–10 minutes at concurrency one.
-Cost approval is separate from plan approval.
+Any replacement reference pair receives a new cost estimate after the effort
+pilot. Cost approval is separate from plan approval.
 
 ## Analysis contract
 

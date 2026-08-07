@@ -297,6 +297,83 @@ describe("model-benchmark-extraction — reasoning configs", () => {
     expect(grokBuilt.effective).toBe("low");
   });
 
+  it("serializes native Luna Max through the Responses API without collapsing it to high", () => {
+    const matrix = resolveCandidateMatrix(["luna-low-responses", "luna-max"]);
+    expect(matrix).toHaveLength(2);
+    assertLunaConfigsDistinct(matrix);
+    expect(() => resolveCandidateMatrix(["gpt-5.6-luna"])).toThrow(
+      /multiple benchmark configurations/i,
+    );
+
+    const low = buildReasoningParam(matrix[0]!);
+    const max = buildReasoningParam(matrix[1]!);
+    expect(low.param).toEqual({ reasoning: { effort: "low" } });
+    expect(max.param).toEqual({ reasoning: { effort: "max" } });
+    expect(max.effective).toBe("max");
+
+    const maxEffective = buildEffectiveRequest({
+      candidate: matrix[1]!,
+      maxOutputTokens: 4096,
+    });
+    const body = serializeRequestBody(maxEffective, "system prompt", "user content");
+    expect(maxEffective).toMatchObject({
+      apiStyle: "responses",
+      endpoint: "openai_direct",
+      reasoning: "max",
+      textFormat: { type: "json_object" },
+    });
+    expect(body).toMatchObject({
+      model: "gpt-5.6-luna",
+      instructions: "system prompt",
+      input: "user content",
+      max_output_tokens: 4096,
+      reasoning: { effort: "max" },
+      text: { format: { type: "json_object" } },
+      store: false,
+    });
+    for (const key of disallowedParamsFor(matrix[1]!)) {
+      expect(body[key]).toBeUndefined();
+    }
+  });
+
+  it("serializes Requesty Luna High through Chat Completions without changing presets", () => {
+    const matrix = resolveCandidateMatrix(["luna-low", "luna-high-requesty"]);
+    expect(matrix).toHaveLength(2);
+    assertLunaConfigsDistinct(matrix);
+    expect(resolveCandidateMatrix(["default"]).map((c) => c.id)).not.toContain(
+      "luna-high-requesty",
+    );
+    expect(resolveCandidateMatrix(["extended"]).map((c) => c.id)).not.toContain(
+      "luna-high-requesty",
+    );
+    expect(() => resolveCandidateMatrix(["openai/gpt-5.6-luna"])).toThrow(
+      /multiple benchmark configurations/i,
+    );
+
+    const high = matrix[1]!;
+    const built = buildReasoningParam(high);
+    expect(built.param).toEqual({ reasoning_effort: "high" });
+    expect(built.effective).toBe("high");
+
+    const effective = buildEffectiveRequest({
+      candidate: high,
+      maxOutputTokens: 2048,
+    });
+    const body = serializeRequestBody(effective, "system prompt with json", "user json content");
+    expect(effective).toMatchObject({
+      apiStyle: "chat_completions",
+      endpoint: "configured",
+      reasoning: "high",
+    });
+    expect(body).toMatchObject({
+      model: "openai/gpt-5.6-luna",
+      max_tokens: 2048,
+      reasoning_effort: "high",
+    });
+    expect(body.reasoning).toBeUndefined();
+    expect(body.max_output_tokens).toBeUndefined();
+  });
+
   it("8. provider-specific unsupported parameters are not sent", () => {
     const flash = DEFAULT_CANDIDATES.find((c) => c.id === "flash-lite-3.1-control")!;
     const body = serializeRequestBody(
@@ -378,6 +455,21 @@ describe("model-benchmark-extraction — response classification", () => {
 
     const empty = parseExtractionResponse("");
     expect(empty.classification).toBe("empty_content");
+  });
+});
+
+describe("model-benchmark-extraction — targeted case selection", () => {
+  it("selects an exact ordered case subset and rejects ambiguous selectors", () => {
+    const all = loadCorpus(CORPUS);
+    const ids = ["alias-ambiguous", "quantity-port", "multi-claim-split"];
+    expect(selectCases(all, false, ids).map((benchCase) => benchCase.id)).toEqual(ids);
+    expect(() => selectCases(all, false, ["missing-case"])).toThrow(/missing from corpus/i);
+    expect(() => selectCases(all, false, ["atomic-simple", "atomic-simple"])).toThrow(
+      /must not contain duplicates/i,
+    );
+    expect(() => parseArgs(["--smoke", "--case-ids", "atomic-simple"])).toThrow(
+      /mutually exclusive/i,
+    );
   });
 });
 
@@ -665,6 +757,145 @@ describe("model-benchmark-extraction — paid path with mocked fetch", () => {
     const blob = out.join("\n") + [...files.values()].join("\n");
     expect(blob).not.toContain(secret);
     expect(credentialSourceLabel({ REQUESTY_API_KEY: secret })).toBe("env:REQUESTY_API_KEY");
+  });
+
+  it("uses native OpenAI Responses request/response shapes for luna-max", async () => {
+    const secret = "sk-openaiMock000111222333";
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe("https://api.openai.com/v1/responses");
+      expect((init?.headers as Record<string, string>)?.Authorization).toBe(`Bearer ${secret}`);
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      expect(body).toMatchObject({
+        model: "gpt-5.6-luna",
+        reasoning: { effort: "max" },
+        max_output_tokens: 2048,
+        store: false,
+      });
+      expect(body.messages).toBeUndefined();
+      expect(body.reasoning_effort).toBeUndefined();
+      return new Response(
+        JSON.stringify({
+          id: "resp_test_luna_max",
+          object: "response",
+          status: "completed",
+          output: [
+            {
+              type: "message",
+              status: "completed",
+              role: "assistant",
+              content: [
+                {
+                  type: "output_text",
+                  text: JSON.stringify({
+                    facts: [
+                      {
+                        l2: "User prefers Helix as their editor for coding work.",
+                        confidence: 0.95,
+                        source_turn_index: 0,
+                        category: "preferences",
+                      },
+                    ],
+                  }),
+                },
+              ],
+            },
+          ],
+          usage: {
+            input_tokens: 1200,
+            output_tokens: 180,
+            total_tokens: 1380,
+            input_tokens_details: { cached_tokens: 1000 },
+            output_tokens_details: { reasoning_tokens: 120 },
+            cost: 0.0025,
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+
+    const files = new Map<string, string>();
+    const output: string[] = [];
+    const result = await runBenchmark(
+      [
+        "--confirm-cost",
+        "--models",
+        "luna-max",
+        "--case-ids",
+        "atomic-simple",
+        "--max-output-tokens",
+        "2048",
+        "--out-raw",
+        "luna-max-paid.jsonl",
+        "--out-report",
+        "luna-max-paid.md",
+      ],
+      {
+        cwd: ROOT,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        env: { OPENAI_API_KEY: secret },
+        writeFile: (path, data) => files.set(path, data),
+        stdout: (text) => output.push(text),
+        stderr: (text) => output.push(text),
+        gitInfo: () => ({ sha: "paidsha", dirty: false }),
+        now: () => new Date("2026-08-07T16:00:00.000Z"),
+      },
+    );
+
+    expect(result.code).toBe(0);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]).toMatchObject({
+      candidateId: "luna-max",
+      gatewayBaseUrl: "https://api.openai.com/v1",
+      requestId: "resp_test_luna_max",
+      usage: {
+        promptTokens: 1200,
+        completionTokens: 180,
+        totalTokens: 1380,
+        cachedPromptTokens: 1000,
+        reasoningTokens: 120,
+      },
+      billedCostUsd: 0.0025,
+      effectiveRequest: {
+        apiStyle: "responses",
+        endpoint: "openai_direct",
+        reasoning: "max",
+      },
+    });
+    expect(result.rows[0]!.quality.atomicRecall).toBe(1);
+    expect(result.manifest?.disclosure.caseIds).toEqual(["atomic-simple"]);
+    expect(result.manifest?.disclosure.candidates[0]).toMatchObject({
+      apiStyle: "responses",
+      endpoint: "openai_direct",
+      endpointBaseUrl: "https://api.openai.com/v1",
+      credentialSourceLabel: "env:OPENAI_API_KEY",
+    });
+    expect(output.join("\n") + [...files.values()].join("\n")).not.toContain(secret);
+  });
+
+  it("blocks luna-max before network when Infisical has not injected OPENAI_API_KEY", async () => {
+    const fetchImpl = vi.fn();
+    const result = await runBenchmark(
+      [
+        "--confirm-cost",
+        "--models",
+        "luna-max",
+        "--case-ids",
+        "atomic-simple",
+      ],
+      {
+        cwd: ROOT,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        env: { REQUESTY_API_KEY: "rqsty-only-test" },
+        writeFile: () => {},
+        stdout: () => {},
+        stderr: () => {},
+        gitInfo: () => ({ sha: "paidsha", dirty: false }),
+      },
+    );
+    expect(result.code).toBe(3);
+    expect(result.error).toContain("OPENAI_API_KEY");
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("blocks a publishable paid run on dirty Git before the first network call", async () => {

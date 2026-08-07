@@ -25,6 +25,8 @@ export function buildEffectiveRequest(args: {
   seed?: number;
 }): EffectiveRequestConfig {
   const { candidate, maxOutputTokens } = args;
+  const apiStyle = candidate.apiStyle ?? "chat_completions";
+  const endpoint = candidate.endpoint ?? "configured";
   const seed = args.seed === undefined ? 42 : args.seed;
   const notes: string[] = [];
 
@@ -33,15 +35,19 @@ export function buildEffectiveRequest(args: {
 
   let useJson = false;
   if (candidate.jsonMode === "required") {
-    useJson = true;
-    if (!extractorJsonMode(candidate.modelId) && !candidate.modelId.startsWith("openai/")) {
+    useJson =
+      apiStyle === "responses" ||
+      candidate.modelId.startsWith("openai/") ||
+      extractorJsonMode(candidate.modelId);
+    if (
+      apiStyle !== "responses" &&
+      !extractorJsonMode(candidate.modelId) &&
+      !candidate.modelId.startsWith("openai/")
+    ) {
       notes.push(
         "jsonMode=required but extractorJsonMode heuristic is false; still sending response_format for openai-compatible luna-style models only if modelId starts with openai/",
       );
     }
-    // Only send json_object when openai/* (matches production extractorJsonMode auto path)
-    // OR when candidate explicitly requires and model is openai/*.
-    useJson = candidate.modelId.startsWith("openai/") || extractorJsonMode(candidate.modelId);
     if (!useJson) {
       throw new Error(
         `Candidate ${candidate.id}: jsonMode=required but model ${candidate.modelId} cannot receive response_format safely`,
@@ -55,15 +61,24 @@ export function buildEffectiveRequest(args: {
     notes.push("jsonMode=off: response_format omitted (matches production non-openai extract path)");
   }
 
-  // Production always sends temperature=0. Seed is omitted when undefined.
   const cfg: EffectiveRequestConfig = {
     modelId: candidate.modelId,
-    temperature: 0,
+    apiStyle,
+    endpoint,
     max_tokens: maxOutputTokens,
     notes,
   };
 
-  if (seed !== undefined && Number.isFinite(seed)) {
+  if (apiStyle === "responses") {
+    cfg.notes.push(
+      "Responses API uses max_output_tokens; temperature and seed omitted for reasoning-model parity",
+    );
+  } else {
+    // Production Chat Completions always sends temperature=0.
+    cfg.temperature = 0;
+  }
+
+  if (apiStyle === "chat_completions" && seed !== undefined && Number.isFinite(seed)) {
     // Anthropic-style models may not support seed; mark and omit for anthropic/*
     if (candidate.modelId.startsWith("anthropic/")) {
       cfg.notes.push("seed omitted for anthropic/* (unsupported)");
@@ -73,7 +88,11 @@ export function buildEffectiveRequest(args: {
   }
 
   if (useJson) {
-    cfg.response_format = { type: "json_object" };
+    if (apiStyle === "responses") {
+      cfg.textFormat = { type: "json_object" };
+    } else {
+      cfg.response_format = { type: "json_object" };
+    }
   }
 
   if (reasoning.param) {
@@ -102,17 +121,28 @@ export function serializeRequestBody(
   userContent: string,
   extra?: Record<string, unknown>,
 ): Record<string, unknown> {
-  const body: Record<string, unknown> = {
-    model: cfg.modelId,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userContent },
-    ],
-    max_tokens: cfg.max_tokens,
-    temperature: cfg.temperature,
-  };
-  if (cfg.seed !== undefined) body.seed = cfg.seed;
-  if (cfg.response_format) body.response_format = cfg.response_format;
+  const apiStyle = cfg.apiStyle ?? "chat_completions";
+  const body: Record<string, unknown> =
+    apiStyle === "responses"
+      ? {
+          model: cfg.modelId,
+          instructions: systemPrompt,
+          input: userContent,
+          max_output_tokens: cfg.max_tokens,
+          ...(cfg.textFormat ? { text: { format: cfg.textFormat } } : {}),
+          store: false,
+        }
+      : {
+          model: cfg.modelId,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userContent },
+          ],
+          max_tokens: cfg.max_tokens,
+          temperature: cfg.temperature ?? 0,
+          ...(cfg.seed !== undefined ? { seed: cfg.seed } : {}),
+          ...(cfg.response_format ? { response_format: cfg.response_format } : {}),
+        };
   if (cfg.reasoningParam) Object.assign(body, cfg.reasoningParam);
   if (extra) Object.assign(body, extra);
   return body;
@@ -124,6 +154,16 @@ export function promptHashFor(systemPrompt: string): string {
 
 /** Parameters that must never appear for a given candidate family. */
 export function disallowedParamsFor(candidate: Candidate): string[] {
+  if (candidate.apiStyle === "responses") {
+    return [
+      "messages",
+      "max_tokens",
+      "response_format",
+      "reasoning_effort",
+      "seed",
+      "temperature",
+    ];
+  }
   const disallowed: string[] = [];
   if (candidate.jsonMode === "off" || !candidate.modelId.startsWith("openai/")) {
     // Gemini/xAI production path does not send response_format by default.

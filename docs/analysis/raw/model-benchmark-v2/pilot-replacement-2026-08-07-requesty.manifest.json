@@ -1,0 +1,78 @@
+{
+  "schemaVersion": "runir-model-benchmark/v1",
+  "runId": "paid-2026-08-07T04-57-01-753Z-c54a2db4",
+  "createdAt": "2026-08-07T04:57:01.753Z",
+  "git": {
+    "sha": "ee5e411931bdc5aa2db968ae6f2b00a41a5c677b",
+    "dirty": false
+  },
+  "conditionId": "pilot-replacement-2026-08-07",
+  "completion": {
+    "status": "complete",
+    "plannedRequestCount": 6,
+    "completedRequestCount": 6,
+    "cumulativeCostUsd": 0.01047095
+  },
+  "artifactTargets": {
+    "rawPath": "/Users/brooks/Code/runir/docs/analysis/raw/model-benchmark-v2/pilot-replacement-2026-08-07-requesty.jsonl",
+    "manifestPath": "/Users/brooks/Code/runir/docs/analysis/raw/model-benchmark-v2/pilot-replacement-2026-08-07-requesty.manifest.json",
+    "reportPath": "/Users/brooks/Code/runir/docs/analysis/model-benchmark-v2-pilot-replacement-2026-08-07-requesty.md"
+  },
+  "disclosure": {
+    "candidateModelIds": [
+      "vertex/gemini-3.1-flash-lite@us",
+      "openai/gpt-5.6-luna"
+    ],
+    "candidates": [
+      {
+        "id": "flash-lite-3.1-control",
+        "label": "Gemini 3.1 Flash-Lite @us (control / production)",
+        "modelId": "vertex/gemini-3.1-flash-lite@us",
+        "reasoningSupport": "unsupported",
+        "effectiveNotes": [
+          "reasoning unsupported; no reasoning parameter sent",
+          "jsonMode=off: response_format omitted (matches production non-openai extract path)"
+        ]
+      },
+      {
+        "id": "luna-low",
+        "label": "GPT-5.6 Luna (reasoning=low)",
+        "modelId": "openai/gpt-5.6-luna",
+        "reasoning": "low",
+        "reasoningSupport": "native",
+        "effectiveNotes": [
+          "native reasoning_effort=low"
+        ]
+      }
+    ],
+    "corpusSize": 3,
+    "smokeMode": true,
+    "repetitions": 1,
+    "plannedRequestCount": 6,
+    "gatewayBaseUrl": "https://router.requesty.ai/v1",
+    "credentialSourceLabel": "env:REQUESTY_API_KEY",
+    "maxOutputTokens": 2048,
+    "timeoutMs": 180000,
+    "concurrency": 1,
+    "conditionId": "pilot-replacement-2026-08-07",
+    "requireCleanGit": true,
+    "allowArtifactOverwrite": false,
+    "costEstimate": {
+      "available": true,
+      "currency": "USD",
+      "estimatedTotalUsd": 0.053505000000000004,
+      "assumedPromptTokensPerRequest": 7500,
+      "assumedCompletionTokensPerRequest": 800,
+      "maxTotalCostUsd": 0.03,
+      "note": "Calibrated planning estimate assumes 7500 input + 800 output tokens/request at each candidate's dated list-price table. The input assumption is rounded above the 6,958-token live-smoke mean. This is not a guaranteed ceiling; runtime enforcement prefers gateway-billed cost, then token-estimated cost."
+    },
+    "dryRun": false,
+    "confirmCost": true
+  },
+  "fixtureContentHash": "8c37c2d13119086dfe437d80816728a55574ad7ce7372b5e47ede324770d5f5e",
+  "promptTemplateHash": "ef76dcb4865eaf962d553bf5a2fcc6b1e11ba00a235544ee3219cc313a8beccc",
+  "scoringContractVersion": "runir-model-benchmark-scoring/v1",
+  "promptHash": "e151374223c0be6f09268a3de8b52ddd6c6901d5d9f229ed324e5ed7949660a5",
+  "fixturePath": "/Users/brooks/Code/runir/fixtures/model-benchmark/corpus.json",
+  "rowCount": 6
+}

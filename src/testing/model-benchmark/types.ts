@@ -4,9 +4,11 @@ export const RESPONSE_PARSER_VERSION = "capture-extract-json/v1";
 /** Version of the human-gold scoring contract used by new manifests. */
 export const SCORING_CONTRACT_VERSION = "runir-model-benchmark-scoring/v1";
 
-export type ReasoningLevel = "none" | "low" | "medium" | "high";
+export type ReasoningLevel = "none" | "low" | "medium" | "high" | "xhigh" | "max";
 export type JsonModePolicy = "required" | "best-effort" | "off";
 export type ReasoningSupport = "native" | "unsupported" | "default-only";
+export type ModelApiStyle = "chat_completions" | "responses";
+export type CandidateEndpoint = "configured" | "openai_direct";
 
 export type Candidate = {
   /** Stable matrix key (not necessarily the wire model id). */
@@ -23,6 +25,10 @@ export type Candidate = {
    */
   reasoningSupport: ReasoningSupport;
   jsonMode: JsonModePolicy;
+  /** Wire protocol used by this candidate. Defaults to Chat Completions. */
+  apiStyle?: ModelApiStyle;
+  /** Credential/base-URL route. Defaults to the configured gateway. */
+  endpoint?: CandidateEndpoint;
   /** Optional extra OpenAI-compatible body fields (never secrets). */
   extraRequestFields?: Record<string, unknown>;
   /** Price table reference (USD per 1M tokens), orientation only. */
@@ -68,6 +74,7 @@ export type BenchmarkCase = {
 export type CliOptions = {
   models: string[];
   fixturesPath: string;
+  caseIds?: string[];
   repetitions: number;
   concurrency: number;
   timeoutMs: number;
@@ -87,10 +94,13 @@ export type CliOptions = {
 
 export type EffectiveRequestConfig = {
   modelId: string;
-  temperature: number;
+  apiStyle?: ModelApiStyle;
+  endpoint?: CandidateEndpoint;
+  temperature?: number;
   max_tokens: number;
   seed?: number;
   response_format?: { type: "json_object" };
+  textFormat?: { type: "json_object" };
   reasoning?: ReasoningLevel;
   reasoningParam?: Record<string, unknown>;
   notes: string[];
@@ -179,9 +189,14 @@ export type PreflightDisclosure = {
     modelId: string;
     reasoning?: ReasoningLevel;
     reasoningSupport: ReasoningSupport;
+    apiStyle?: ModelApiStyle;
+    endpoint?: CandidateEndpoint;
+    endpointBaseUrl?: string;
+    credentialSourceLabel?: string;
     effectiveNotes: string[];
   }>;
   corpusSize: number;
+  caseIds?: string[];
   smokeMode: boolean;
   repetitions: number;
   plannedRequestCount: number;

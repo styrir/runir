@@ -119,9 +119,70 @@ export const EXTENDED_CANDIDATES: Candidate[] = [
   },
 ];
 
+/** Requesty Chat Completions effort candidates are explicit opt-ins, not part of `extended`. */
+export const LUNA_REQUESTY_EFFORT_CANDIDATES: Candidate[] = [
+  {
+    id: "luna-high-requesty",
+    label: "GPT-5.6 Luna (Requesty Chat Completions, reasoning=high)",
+    modelId: "openai/gpt-5.6-luna",
+    reasoning: "high",
+    reasoningSupport: "native",
+    jsonMode: "required",
+    pricePer1M: {
+      input: 1.0,
+      output: 6.0,
+      asOf: PRICE_AS_OF,
+      source: "OpenAI list pricing; reasoning tokens count as output",
+    },
+  },
+];
+
+/** Direct OpenAI Responses candidates are explicit opt-ins, not part of `extended`. */
+export const LUNA_RESPONSES_CANDIDATES: Candidate[] = [
+  {
+    id: "luna-low-responses",
+    label: "GPT-5.6 Luna (OpenAI Responses API, reasoning=low)",
+    modelId: "gpt-5.6-luna",
+    reasoning: "low",
+    reasoningSupport: "native",
+    jsonMode: "required",
+    apiStyle: "responses",
+    endpoint: "openai_direct",
+    pricePer1M: {
+      input: 1.0,
+      output: 6.0,
+      asOf: PRICE_AS_OF,
+      source: "OpenAI list pricing; reasoning tokens count as output",
+    },
+  },
+  {
+    id: "luna-max",
+    label: "GPT-5.6 Luna (OpenAI Responses API, reasoning=max)",
+    modelId: "gpt-5.6-luna",
+    reasoning: "max",
+    reasoningSupport: "native",
+    jsonMode: "required",
+    apiStyle: "responses",
+    endpoint: "openai_direct",
+    pricePer1M: {
+      input: 1.0,
+      output: 6.0,
+      asOf: PRICE_AS_OF,
+      source: "OpenAI list pricing; reasoning tokens count as output",
+    },
+  },
+];
+
 const ALL_KNOWN: Candidate[] = (() => {
   const m = new Map<string, Candidate>();
-  for (const c of [...DEFAULT_CANDIDATES, ...EXTENDED_CANDIDATES]) m.set(c.id, c);
+  for (const c of [
+    ...DEFAULT_CANDIDATES,
+    ...EXTENDED_CANDIDATES,
+    ...LUNA_REQUESTY_EFFORT_CANDIDATES,
+    ...LUNA_RESPONSES_CANDIDATES,
+  ]) {
+    m.set(c.id, c);
+  }
   m.set("flash-lite-control", DEFAULT_CANDIDATES[0]!);
   return [...m.values()];
 })();
@@ -153,9 +214,23 @@ export function resolveCandidateMatrix(selector: string[] | undefined): Candidat
   }
 
   const byId = new Map(ALL_KNOWN.map((c) => [c.id, c]));
-  const byModel = new Map(ALL_KNOWN.map((c) => [c.modelId, c]));
+  const byModel = new Map<string, Candidate>();
+  const ambiguousModelIds = new Set<string>();
+  for (const candidate of ALL_KNOWN) {
+    if (byModel.has(candidate.modelId)) {
+      byModel.delete(candidate.modelId);
+      ambiguousModelIds.add(candidate.modelId);
+    } else if (!ambiguousModelIds.has(candidate.modelId)) {
+      byModel.set(candidate.modelId, candidate);
+    }
+  }
   const out: Candidate[] = [];
   for (const token of selector) {
+    if (ambiguousModelIds.has(token)) {
+      throw new Error(
+        `Model id ${token} has multiple benchmark configurations; select an explicit candidate id`,
+      );
+    }
     const known = byId.get(token) ?? byModel.get(token);
     if (known) {
       out.push({ ...known });
@@ -227,10 +302,24 @@ export function buildReasoningParam(
   }
 
   if (level === "none") {
+    if (candidate.apiStyle === "responses") {
+      return {
+        param: { reasoning: { effort: "none" } },
+        notes: ["native Responses API reasoning.effort=none"],
+        effective: "none",
+      };
+    }
     return {
       param: { reasoning_effort: "none" },
       notes: ["native reasoning_effort=none"],
       effective: "none",
+    };
+  }
+  if (candidate.apiStyle === "responses") {
+    return {
+      param: { reasoning: { effort: level } },
+      notes: [`native Responses API reasoning.effort=${level}`],
+      effective: level,
     };
   }
   return {
@@ -247,8 +336,9 @@ export function assertLunaConfigsDistinct(candidates: Candidate[]): void {
   const fingerprints = luna.map((c) => {
     const built = buildReasoningParam(c);
     return JSON.stringify({
-      id: c.id,
       modelId: c.modelId,
+      apiStyle: c.apiStyle ?? "chat_completions",
+      endpoint: c.endpoint ?? "configured",
       reasoning: c.reasoning,
       param: built.param ?? null,
       effective: built.effective ?? null,
@@ -256,6 +346,6 @@ export function assertLunaConfigsDistinct(candidates: Candidate[]): void {
   });
   const unique = new Set(fingerprints);
   if (unique.size !== fingerprints.length) {
-    throw new Error("Luna low and Luna none must serialize as distinct effective configurations");
+    throw new Error("Selected Luna candidates must serialize as distinct effective configurations");
   }
 }
