@@ -28,3 +28,26 @@ describe("repository-generated artifact boundary", () => {
     expect(denylist).toContain("prefix:docs/analysis");
   });
 });
+
+describe("agent-guidance progressive disclosure", () => {
+  it("keeps Beads details in the conditional in-repo guidance file", () => {
+    const agents = readFileSync(join(ROOT, "AGENTS.md"), "utf8");
+    const claude = readFileSync(join(ROOT, "CLAUDE.md"), "utf8");
+    const planning = readFileSync(
+      join(ROOT, "docs/agent-guidance/planning-beads-and-handoffs.md"),
+      "utf8",
+    );
+
+    expect(agents).toContain("docs/agent-guidance/planning-beads-and-handoffs.md");
+    expect(agents).not.toContain("BEGIN BEADS");
+    expect(agents).not.toContain("Beads Issue Tracker");
+    expect(claude).not.toContain("Beads");
+    expect(claude).not.toContain("Use `bd`");
+    expect(planning).toContain("database: `runir_product`");
+    expect(planning).toContain("issue prefix: `Rúnir-`");
+
+    for (const text of [agents, claude, planning]) {
+      expect(text).not.toMatch(/~\/|\/Users\/|agent-ops|runir-archive/u);
+    }
+  });
+});
