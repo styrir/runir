@@ -60,8 +60,6 @@ multi-session continuity, or a shared handoff should read
 Read-only and isolated subagents that do not need those capabilities should
 skip it.
 
-<!-- bd-doctor-divergence: ok -->
-
 ## Non-Interactive Shell Commands
 
 **ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.

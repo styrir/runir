@@ -49,5 +49,3 @@ Rules:
 See [`docs/styrir-workspace-layout.md`](docs/styrir-workspace-layout.md) for
 the complete repository, platform-storage, promotion, safety, and retention
 contract.
-
-<!-- bd-doctor-divergence: ok -->
