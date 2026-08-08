@@ -1,6 +1,7 @@
 # CLAUDE.md
 
-**Read [AGENTS.md](AGENTS.md) first.** Product beads tracker, plugins, and session rules live there.
+**Read [AGENTS.md](AGENTS.md) first.** Product boundaries, plugins, generated
+workspace rules, and conditional guidance links live there.
 
 Anthropic Claude Code looks for `CLAUDE.md`; this project uses `AGENTS.md` as the operational source of truth.
 
@@ -39,9 +40,9 @@ Rules:
   ADR, maintained guide, or release record must be a deliberate human-reviewed
   copy or rewrite of the smallest durable artifact.
 - Never store credentials or secret values in `/.styrir/`.
-- `/.styrir/` is not durable task tracking or tracked configuration. Use Beads
-  for project work and do not add `.styrir.toml` until a validating consumer
-  exists.
+- `/.styrir/` is not durable task tracking or tracked configuration. Use the
+  durable planning guidance linked from `AGENTS.md` for project work, and do
+  not add `.styrir.toml` until a validating consumer exists.
 - Put reusable machine-wide state and large shared caches in the
   platform-appropriate user directories, not in a checkout cache.
 
@@ -50,7 +51,3 @@ the complete repository, platform-storage, promotion, safety, and retention
 contract.
 
 <!-- bd-doctor-divergence: ok -->
-
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal -->
-Use `bd` for task tracking in this repo. Run `bd prime` for workflow commands.
-<!-- END BEADS INTEGRATION -->
