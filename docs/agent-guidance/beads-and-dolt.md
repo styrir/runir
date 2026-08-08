@@ -1,8 +1,8 @@
-# Planning, Beads, and handoffs
+# Beads and Dolt
 
-This document is progressive guidance. Load it only when work needs durable
-task tracking, dependencies, blockers, multi-session continuity, shared project
-memory, or a handoff another agent must resume.
+Load this document only when work needs durable task tracking, dependencies,
+blockers, shared project memory, ownership, completion state, or tracker
+synchronization.
 
 Do not load it for a read-only investigation, a self-contained explanation, or
 an isolated subtask whose result returns immediately to a coordinating agent.
@@ -87,47 +87,30 @@ When implementation reveals unrelated work, create a separate Bead with enough
 context to resume it. Do not silently expand the current task, bury the
 discovery in prose, or close follow-up work that was not completed.
 
-## Handoff record
+For the content and evidence required when another agent must resume work, use
+[`handoffs.md`](handoffs.md).
 
-Before handing work to another agent or ending an incomplete session, update
-the active Bead with:
+## Close and synchronize
 
-- what was completed;
-- changed files or relevant symbols;
-- validation commands and results;
-- preserved evidence paths under `/.styrir/`;
-- unresolved findings, blockers, and dependencies;
-- the safest next action.
-
-Use non-interactive updates:
+Close only work that is actually complete:
 
 ```bash
-bd update <id> --notes "Concise resumable handoff"
+bd update <id> --notes "Outcome, validation, and remaining context"
+bd close <id> --reason "Completed outcome and validation"
+bd dolt push
 ```
 
-The handoff should distinguish implemented state from proposals and from
-external state that still needs verification.
-
-## Closeout
-
-For completed implementation work:
+Before closing:
 
 1. run proportionate tests, lint, type checks, or builds;
 2. create separate Beads for unfinished discoveries;
-3. update the task with validation and evidence;
-4. close only work that is actually complete;
-5. push Beads/Dolt state unless the user forbids remote tracker mutation;
-6. inspect Git status and follow the current Git authority.
+3. record validation and evidence;
+4. confirm the acceptance criteria are satisfied.
 
-```bash
-bd close <id> --reason "Completed outcome and validation"
-bd dolt push
-git status
-```
+Push Beads/Dolt state unless the user forbids remote tracker mutation. If
+tracker sync fails, report the exact command and error. Do not claim remote
+tracker state is current when only local Beads state changed.
 
-Beads sync and Git publication are separate. A Beads closeout does not grant
-permission to commit, rewrite, or push Git history. Git commits and pushes
+Beads sync and Git publication are separate. Closing or synchronizing a Bead
+does not grant permission to commit, rewrite, or push Git history. Git actions
 follow the current user, repository, and orchestrator instructions.
-
-If tracker sync fails, report the exact command and error. Do not claim a
-remote handoff is complete when only local Beads state changed.

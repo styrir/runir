@@ -201,7 +201,7 @@ See [the extraction model benchmark and Review Studio guide](docs/model-benchmar
 for zero-network preflight, approved paid execution, custom-model and corpus
 setup, Studio launch, result interpretation, and the evidence behind the Gemini
 3.1 Flash-Lite selection. Generated runs use the ignored
-[`/.styrir/` workspace](docs/styrir-workspace-layout.md), not the documentation
+[`/.styrir/` workspace](docs/agent-guidance/styrir-workspace.md), not the documentation
 tree.
 
 ### Contract routines

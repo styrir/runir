@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -30,23 +30,45 @@ describe("repository-generated artifact boundary", () => {
 });
 
 describe("agent-guidance progressive disclosure", () => {
-  it("keeps Beads details in the conditional in-repo guidance file", () => {
+  it("keeps Beads/Dolt and handoff details in separate conditional guides", () => {
     const agents = readFileSync(join(ROOT, "AGENTS.md"), "utf8");
     const claude = readFileSync(join(ROOT, "CLAUDE.md"), "utf8");
-    const planning = readFileSync(
-      join(ROOT, "docs/agent-guidance/planning-beads-and-handoffs.md"),
+    const beads = readFileSync(
+      join(ROOT, "docs/agent-guidance/beads-and-dolt.md"),
+      "utf8",
+    );
+    const handoffs = readFileSync(
+      join(ROOT, "docs/agent-guidance/handoffs.md"),
+      "utf8",
+    );
+    const shell = readFileSync(
+      join(ROOT, "docs/agent-guidance/non-interactive-shell.md"),
       "utf8",
     );
 
-    expect(agents).toContain("docs/agent-guidance/planning-beads-and-handoffs.md");
+    expect(agents).toContain("Do not add large procedural, reference, or");
+    expect(agents).toContain("docs/agent-guidance/styrir-workspace.md");
+    expect(agents).toContain("docs/agent-guidance/beads-and-dolt.md");
+    expect(agents).toContain("docs/agent-guidance/handoffs.md");
+    expect(agents).toContain("docs/agent-guidance/non-interactive-shell.md");
+    expect(agents).not.toContain("```");
+    expect(agents).not.toContain("planning-beads-and-handoffs.md");
+    expect(existsSync(
+      join(ROOT, "docs/agent-guidance/planning-beads-and-handoffs.md"),
+    )).toBe(false);
+    expect(existsSync(join(ROOT, "docs/styrir-workspace-layout.md"))).toBe(false);
     expect(agents).not.toContain("BEGIN BEADS");
     expect(agents).not.toContain("Beads Issue Tracker");
     expect(claude).not.toContain("Beads");
     expect(claude).not.toContain("Use `bd`");
-    expect(planning).toContain("database: `runir_product`");
-    expect(planning).toContain("issue prefix: `Rúnir-`");
+    expect(claude).not.toContain("## Generated workspace");
+    expect(beads).toContain("database: `runir_product`");
+    expect(beads).toContain("issue prefix: `Rúnir-`");
+    expect(handoffs).not.toMatch(/\bbd\s/u);
+    expect(handoffs).toContain("what is implemented, what is only proposed");
+    expect(shell).toContain("BatchMode=yes");
 
-    for (const text of [agents, claude, planning]) {
+    for (const text of [agents, claude, beads, handoffs, shell]) {
       expect(text).not.toMatch(/~\/|\/Users\/|agent-ops|runir-archive/u);
     }
   });
