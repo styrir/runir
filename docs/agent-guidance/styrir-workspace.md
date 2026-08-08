@@ -161,5 +161,5 @@ converting checkout preserves a local ignored copy under
 historical bytes from Git history when necessary.
 
 Curated benchmark decisions and operating instructions remain in
-[`model-benchmark-guide.md`](model-benchmark-guide.md). Tests use constructed,
+[`model-benchmark-guide.md`](../model-benchmark-guide.md). Tests use constructed,
 purpose-specific compatibility inputs instead of loading a paid-run artifact.

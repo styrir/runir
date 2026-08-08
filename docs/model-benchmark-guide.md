@@ -75,7 +75,7 @@ default to the ignored `.styrir/analysis` workspace:
 └── reports/   # derived Markdown reports
 ```
 
-See [the Styrir workspace layout](styrir-workspace-layout.md) for the
+See [the Styrir workspace layout](agent-guidance/styrir-workspace.md) for the
 repository boundary, user-scoped storage, promotion rules, and retention
 model. The former tracked `docs/analysis` bundles were removed during that
 migration. The curated results and model-selection rationale remain in this
