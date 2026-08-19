@@ -1,6 +1,8 @@
 import type {
   ThinkBenchmarkCase,
   ThinkQualityScores,
+  ThinkRetrievalGold,
+  ThinkRetrievalScores,
 } from "./types.js";
 import type { ThinkSynthesis } from "../../recall/orchestrator/think-synthesis.js";
 
@@ -10,6 +12,56 @@ function includesTerm(value: string, term: string): boolean {
 
 function fraction(numerator: number, denominator: number, emptyValue = 1): number {
   return denominator === 0 ? emptyValue : numerator / denominator;
+}
+
+function canonicalRetrievalId(value: string): string {
+  return value.replace(/^semiote:/u, "");
+}
+
+function orderedUnique(ids: readonly string[]): string[] {
+  return [...new Set(ids.map(canonicalRetrievalId))];
+}
+
+export function scoreThinkRetrieval(
+  gold: ThinkRetrievalGold,
+  selectedIds: readonly string[],
+  retainedIds: readonly string[],
+): ThinkRetrievalScores {
+  const relevantIds = orderedUnique(gold.relevantIds);
+  const relevant = new Set(relevantIds);
+  const distractors = new Set(orderedUnique(gold.distractorIds));
+  const partition = new Set([...relevant, ...distractors]);
+  const selected = orderedUnique(selectedIds);
+  const retainedIdsUnique = orderedUnique(retainedIds);
+  const unknownId = [...selected, ...retainedIdsUnique].find((id) => !partition.has(id));
+  if (unknownId) {
+    throw new Error(`retrieval id ${unknownId} is outside the frozen retrieval partition`);
+  }
+  const retained = new Set(retainedIdsUnique);
+  const retrievedRelevantIds = selected.filter((id) => relevant.has(id));
+  const retrievedDistractorIds = selected.filter((id) => distractors.has(id));
+  const relevantRanks = selected.flatMap((id, index) =>
+    relevant.has(id) ? [index + 1] : []);
+  const missingRelevantIds = relevantIds.filter((id) => !retrievedRelevantIds.includes(id));
+
+  return {
+    recall: relevantIds.length
+      ? retrievedRelevantIds.length / relevantIds.length
+      : null,
+    precision: selected.length
+      ? retrievedRelevantIds.length / selected.length
+      : relevantIds.length === 0 ? 1 : 0,
+    firstRelevantRank: relevantRanks[0] ?? null,
+    meanRelevantRank: relevantRanks.length
+      ? relevantRanks.reduce((sum, rank) => sum + rank, 0) / relevantRanks.length
+      : null,
+    retainedRecall: relevantIds.length
+      ? relevantIds.filter((id) => retained.has(id)).length / relevantIds.length
+      : null,
+    retrievedRelevantIds,
+    retrievedDistractorIds,
+    missingRelevantIds,
+  };
 }
 
 /**

@@ -294,7 +294,7 @@ describe("Think benchmark runner", () => {
       "--out-report", "out/e2e.md",
     ], {
       cwd: "/tmp/runir-think-e2e-test",
-      readFile: () => FIXTURE_TEXT,
+      readFile: (path) => path.endsWith("retrieval-corpus.json") ? readFileSync(join(process.cwd(), "fixtures/think-benchmark/retrieval-corpus.json"), "utf8") : FIXTURE_TEXT,
       fetchFn,
       env: {},
       git: () => ({ sha: "c".repeat(40), dirty: false }),

@@ -3,6 +3,7 @@ import type { ThinkEvidenceItem, ThinkSynthesis } from "../../recall/orchestrato
 export const THINK_BENCHMARK_SCHEMA_VERSION = "runir-think-benchmark/v1";
 export const THINK_SCORING_CONTRACT_VERSION = "runir-think-scoring/v2";
 export const THINK_RESPONSE_PARSER_VERSION = "think-claim-cited-json/v2";
+export const THINK_RETRIEVAL_METRIC_CONTRACT_VERSION = "runir-think-retrieval-metrics/v1";
 
 export type ThinkSuiteId = "runir-think-synthesis" | "runir-think-e2e";
 
@@ -39,6 +40,22 @@ export type ThinkQualityScores = {
   citedEvidenceIds: string[];
   missingEvidenceIds: string[];
   forbiddenMatches: string[];
+};
+
+export type ThinkRetrievalGold = {
+  readonly relevantIds: readonly string[];
+  readonly distractorIds: readonly string[];
+};
+
+export type ThinkRetrievalScores = {
+  readonly recall: number | null;
+  readonly precision: number;
+  readonly firstRelevantRank: number | null;
+  readonly meanRelevantRank: number | null;
+  readonly retainedRecall: number | null;
+  readonly retrievedRelevantIds: readonly string[];
+  readonly retrievedDistractorIds: readonly string[];
+  readonly missingRelevantIds: readonly string[];
 };
 
 export type ThinkUsageCounters = {
@@ -81,6 +98,8 @@ export type ThinkBenchmarkRow = {
   costBasis: "gateway_billed" | "token_usage_estimate" | "reserved_worst_case";
   retrieval?: {
     status: "pass" | "fail" | "error";
+    gold: ThinkRetrievalGold;
+    scores: ThinkRetrievalScores;
     selectedBeforeCap: number;
     selectedIds: string[];
     retainedIds: string[];
@@ -100,8 +119,10 @@ export type ThinkRunManifest = {
   createdAt: string;
   git: { sha: string; dirty: boolean };
   fixtureContentHash: string;
+  retrievalFixtureContentHash?: string;
   promptTemplateHash: string;
   scoringContractVersion: typeof THINK_SCORING_CONTRACT_VERSION;
+  retrievalMetricContractVersion?: typeof THINK_RETRIEVAL_METRIC_CONTRACT_VERSION;
   rowCount: number;
   disclosure: {
     candidateId: string;
