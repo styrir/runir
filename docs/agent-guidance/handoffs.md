@@ -69,6 +69,11 @@ A completed handoff should state:
 Completed repository work must not be handed off with an in-scope commit or
 push still pending. If publication is incomplete, treat the handoff as
 incomplete and record the exact blocker and next safe action instead.
+For Bead-backed work, the user's request to execute or continue the work
+already authorizes the ordinary in-scope commit and branch push required by
+closeout. Do not manufacture an incomplete handoff by pausing for a second
+commit-permission request; only an actual publication failure or an operation
+outside that standing scope is a blocker.
 
 The final summary must stand on its own without requiring access to collapsed
 commentary or hidden agent context.

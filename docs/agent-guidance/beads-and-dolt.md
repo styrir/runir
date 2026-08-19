@@ -94,6 +94,13 @@ For the content and evidence required when another agent must resume work, use
 
 Close only work that is actually complete:
 
+When a user asks an agent to execute or continue Bead-backed repository work,
+that request includes authorization for the ordinary Git commits and branch
+push needed to close out the verified in-scope result. Do not interrupt
+closeout to ask for separate commit or push permission. This authorization is
+strictly scoped: it does not cover unrelated working-tree changes, rebases,
+amends, force-pushes, or any other history rewrite.
+
 ```bash
 git status --short
 git diff --check
