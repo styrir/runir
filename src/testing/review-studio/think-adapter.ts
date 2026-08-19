@@ -1,6 +1,7 @@
 import { canonicalHash } from "../model-benchmark/provenance.js";
 import {
   THINK_BENCHMARK_SCHEMA_VERSION,
+  THINK_RETRIEVAL_METRIC_CONTRACT_VERSION,
   THINK_RESPONSE_PARSER_VERSION,
   THINK_SCORING_CONTRACT_VERSION,
   type ThinkBenchmarkRow,
@@ -33,6 +34,11 @@ export const THINK_METRIC_DEFINITIONS: readonly ReviewMetricDefinition[] = [
   { id: "gapAccuracy", label: "Gap accuracy", direction: "higher_is_better" },
   { id: "abstentionCorrect", label: "Abstention correct", direction: "higher_is_better" },
   { id: "retrievalPass", label: "Retrieval pass", direction: "higher_is_better" },
+  { id: "retrievalRecall", label: "Retrieval recall", direction: "higher_is_better" },
+  { id: "retrievalPrecision", label: "Retrieval precision", direction: "higher_is_better" },
+  { id: "retrievalRetainedRecall", label: "Retained recall", direction: "higher_is_better" },
+  { id: "retrievalFirstRelevantRank", label: "First relevant rank", direction: "lower_is_better" },
+  { id: "retrievalMeanRelevantRank", label: "Mean relevant rank", direction: "lower_is_better" },
   { id: "latencyMs", label: "Latency", direction: "lower_is_better" },
   { id: "promptTokens", label: "Prompt tokens", direction: "lower_is_better" },
   { id: "completionTokens", label: "Completion tokens", direction: "lower_is_better" },
@@ -48,6 +54,11 @@ export const THINK_METRIC_DEFINITIONS: readonly ReviewMetricDefinition[] = [
   { id: "meanGapAccuracy", label: "Gap accuracy", direction: "higher_is_better" },
   { id: "abstentionAccuracy", label: "Abstention accuracy", direction: "higher_is_better" },
   { id: "retrievalSuccessRate", label: "Retrieval success", direction: "higher_is_better" },
+  { id: "meanRetrievalRecall", label: "Mean retrieval recall", direction: "higher_is_better" },
+  { id: "meanRetrievalPrecision", label: "Mean retrieval precision", direction: "higher_is_better" },
+  { id: "meanRetrievalRetainedRecall", label: "Mean retained recall", direction: "higher_is_better" },
+  { id: "meanRetrievalFirstRelevantRank", label: "Mean first relevant rank", direction: "lower_is_better" },
+  { id: "meanRetrievalMeanRelevantRank", label: "Mean relevant rank", direction: "lower_is_better" },
   { id: "p50LatencyMs", label: "p50 latency", direction: "lower_is_better" },
   { id: "p95LatencyMs", label: "p95 latency", direction: "lower_is_better" },
   { id: "meanLatencyMs", label: "Mean latency", direction: "lower_is_better" },
@@ -61,7 +72,8 @@ const SECRET_KEY_PATTERN =
 const PATH_KEY_PATTERN = /(?:path|file|filename|directory|cwd|root)$/i;
 const KNOWN_MANIFEST_FIELDS = new Set([
   "schemaVersion", "runId", "suiteId", "createdAt", "git", "fixtureContentHash",
-  "promptTemplateHash", "scoringContractVersion", "rowCount", "disclosure", "completion",
+  "retrievalFixtureContentHash", "promptTemplateHash", "scoringContractVersion",
+  "retrievalMetricContractVersion", "rowCount", "disclosure", "completion",
 ]);
 const KNOWN_ROW_FIELDS = new Set([
   "schemaVersion", "runId", "timestamp", "caseId", "repetition", "candidateId",
@@ -150,6 +162,9 @@ function rowMetrics(row: ThinkBenchmarkRow): Record<string, number | null> {
   const usage = asRecord(row.usage, `row ${row.caseId}.usage`);
   const synthesisScored = row.synthesisVerdict !== "not-scored" &&
     (row.retrieval === undefined || row.retrieval.status === "pass");
+  const retrievalScores: Record<string, unknown> = isRecord(row.retrieval?.scores)
+    ? row.retrieval.scores
+    : {};
   const qualityMetric = (key: string) => synthesisScored ? metric(quality, key) : null;
   return {
     schemaValid: qualityMetric("schemaValid"),
@@ -161,6 +176,11 @@ function rowMetrics(row: ThinkBenchmarkRow): Record<string, number | null> {
     gapAccuracy: qualityMetric("gapAccuracy"),
     abstentionCorrect: qualityMetric("abstentionCorrect"),
     retrievalPass: row.retrieval === undefined ? null : row.retrieval.status === "pass" ? 1 : 0,
+    retrievalRecall: numberOrNull(retrievalScores["recall"]),
+    retrievalPrecision: numberOrNull(retrievalScores["precision"]),
+    retrievalRetainedRecall: numberOrNull(retrievalScores["retainedRecall"]),
+    retrievalFirstRelevantRank: numberOrNull(retrievalScores["firstRelevantRank"]),
+    retrievalMeanRelevantRank: numberOrNull(retrievalScores["meanRelevantRank"]),
     latencyMs: numberOrNull(row.latencyMs),
     promptTokens: numberOrNull(usage.promptTokens),
     completionTokens: numberOrNull(usage.completionTokens),
@@ -285,6 +305,19 @@ function parseBundle(bundle: BenchmarkRunBundle): {
       if (retrieval.cap !== 12) {
         throw new ReviewAdapterError("invalid_provenance", `rows[${index}].retrieval.cap must be 12`);
       }
+      if (retrieval.scores !== undefined) {
+        const scores = asRecord(retrieval.scores, `rows[${index}].retrieval.scores`);
+        for (const key of ["recall", "precision", "retainedRecall"]) {
+          const value = scores[key];
+          if (value !== null) requiredRate(scores, key, `rows[${index}].retrieval.scores`);
+        }
+        for (const key of ["firstRelevantRank", "meanRelevantRank"]) {
+          const value = scores[key];
+          if (value !== null && (requiredNumber(value, `rows[${index}].retrieval.scores.${key}`) < 1)) {
+            throw new ReviewAdapterError("invalid_bundle", `rows[${index}].retrieval.scores.${key} must be positive`);
+          }
+        }
+      }
     }
     return row;
   });
@@ -315,6 +348,11 @@ function aggregate(rows: ReviewCaseResult[], candidates: ReviewCandidate[]): Rev
         meanGapAccuracy: mean(values("gapAccuracy")),
         abstentionAccuracy: mean(values("abstentionCorrect")),
         retrievalSuccessRate: mean(values("retrievalPass")),
+        meanRetrievalRecall: mean(values("retrievalRecall")),
+        meanRetrievalPrecision: mean(values("retrievalPrecision")),
+        meanRetrievalRetainedRecall: mean(values("retrievalRetainedRecall")),
+        meanRetrievalFirstRelevantRank: mean(values("retrievalFirstRelevantRank")),
+        meanRetrievalMeanRelevantRank: mean(values("retrievalMeanRelevantRank")),
         p50LatencyMs: percentile(values("latencyMs").filter((value): value is number => value !== null), 50),
         p95LatencyMs: percentile(values("latencyMs").filter((value): value is number => value !== null), 95),
         meanLatencyMs: mean(values("latencyMs")),
@@ -337,6 +375,13 @@ export function adaptThinkBenchmarkRun(bundle: BenchmarkRunBundle): ReviewRun {
   const fixtureContentHash = hashString(manifestRecord, "fixtureContentHash");
   const promptTemplateHash = hashString(manifestRecord, "promptTemplateHash");
   const scoringContractVersion = requiredString(manifestRecord, "scoringContractVersion", "manifest");
+  const retrievalFixtureContentHash = typeof manifestRecord.retrievalFixtureContentHash === "string"
+    ? hashString(manifestRecord, "retrievalFixtureContentHash")
+    : null;
+  const retrievalMetricContractVersion =
+    manifestRecord.retrievalMetricContractVersion === THINK_RETRIEVAL_METRIC_CONTRACT_VERSION
+      ? THINK_RETRIEVAL_METRIC_CONTRACT_VERSION
+      : null;
   const candidatesById = new Map<string, ReviewCandidate>();
   rows.forEach((row) => candidatesById.set(row.candidateId, {
     id: row.candidateId,
@@ -442,6 +487,8 @@ export function adaptThinkBenchmarkRun(bundle: BenchmarkRunBundle): ReviewRun {
     promptTemplateHash,
     scoringContractVersion,
     parserVersion: THINK_RESPONSE_PARSER_VERSION,
+    retrievalFixtureContentHash,
+    retrievalMetricContractVersion,
   })}`;
   const cumulativeCostUsd = numberOrNull(completion.cumulativeCostUsd);
   return {

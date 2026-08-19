@@ -332,8 +332,18 @@ gateway did not return billed cost through the production route.
 Because the tenant had seven memories and Think's retrieval window is 24,
 every query selected all seven. This proves assembled-route retention and
 grounded synthesis under distractors, not retrieval selectivity at scale.
-`Rúnir-atg` tracks a larger zero-network distractor lane with retrieval
-precision and rank metrics.
+The distractor-scale lane now freezes 32 attributed memories in
+`fixtures/think-benchmark/retrieval-corpus.json`: the original seven evidence
+items plus 25 stable lexical, semantic, and unrelated distractors. Each case
+partitions all 32 IDs into explicit relevant and distractor sets.
+
+The e2e runner reports retrieval recall and precision over the ordered
+24-candidate selection, retained recall over the 12-item synthesis window, and
+the first and mean relevant ranks. These dimensions remain separate from
+synthesis quality and from the existing retrieval-retention pass. Old Stage 1
+and Stage 2 artifacts remain immutable and readable; new e2e manifests add the
+retrieval-fixture hash and retrieval-metric contract so the distractor-scale
+condition cannot be compared as if it were the seven-memory condition.
 
 The isolation, preflight, retrieval, synthesis, latency, cost, and limitations
 are retained above as the curated review record.
@@ -357,6 +367,23 @@ npm run benchmark:think -- \
 
 Dry preflight does not write model-quality rows. It proves only that the
 bounded run shape, corpus, request contract, and source provenance are valid.
+
+For the e2e suite, the default preflight also validates the 32-memory retrieval
+fixture, exact relevant/distractor attribution, the 24-to-12 production
+windows, and a frozen metric-attribution probe:
+
+```bash
+npm run benchmark:think -- \
+  --suite e2e \
+  --fixtures fixtures/think-benchmark/corpus.json \
+  --retrieval-fixtures fixtures/think-benchmark/retrieval-corpus.json \
+  --user-id runir-think-benchmark
+```
+
+This command performs no fetch, database, embedding, or model call and writes
+no quality artifacts. It proves fixture integrity and metric attribution, not
+live retrieval quality. A subsequent loopback e2e run proves retrieval only
+when its isolated tenant contains the exact frozen IDs and texts.
 
 ### Approved fixed-evidence Think run
 
