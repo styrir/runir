@@ -90,27 +90,45 @@ discovery in prose, or close follow-up work that was not completed.
 For the content and evidence required when another agent must resume work, use
 [`handoffs.md`](handoffs.md).
 
-## Close and synchronize
+## Close, commit, and synchronize
 
 Close only work that is actually complete:
 
 ```bash
+git status --short
+git diff --check
+git add <in-scope-paths>
+git diff --cached --check
+git commit -m "<repository-style outcome>"
 bd update <id> --notes "Outcome, validation, and remaining context"
 bd close <id> --reason "Completed outcome and validation"
 bd dolt push
+git push
+git status --short
+git rev-list --left-right --count '@{upstream}'...HEAD
+bd show <id>
 ```
 
 Before closing:
 
 1. run proportionate tests, lint, type checks, or builds;
 2. create separate Beads for unfinished discoveries;
-3. record validation and evidence;
-4. confirm the acceptance criteria are satisfied.
+3. confirm the acceptance criteria are satisfied;
+4. inspect the complete diff and exclude unrelated work;
+5. commit all in-scope changes in one or more atomic, independently valid
+   commits grouped by behavior;
+6. record validation, evidence, and commit hashes in the Bead.
 
-Push Beads/Dolt state unless the user forbids remote tracker mutation. If
-tracker sync fails, report the exact command and error. Do not claim remote
-tracker state is current when only local Beads state changed.
+A repository closeout is incomplete until all in-scope Git changes are
+committed and the current branch is pushed. When the work has an associated
+Bead, its updated or closed state must also be pushed to Dolt before closeout.
+Do not report completed work while a required commit or push is pending.
 
-Beads sync and Git publication are separate. Closing or synchronizing a Bead
-does not grant permission to commit, rewrite, or push Git history. Git actions
-follow the current user, repository, and orchestrator instructions.
+After pushing, require concrete evidence: `git status --short` must show no
+in-scope changes, `git rev-list --left-right --count '@{upstream}'...HEAD` must
+report `0 0`, `bd dolt push` must succeed for associated Beads, and `bd show
+<id>` must show the intended local tracker state.
+
+If either push fails, report the exact command and error and leave the work
+explicitly incomplete. Never claim remote state is current based only on local
+Git or Beads state.

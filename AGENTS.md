@@ -7,6 +7,15 @@ Standalone HTTP memory service. Clients call it; it does not orchestrate agents.
 **Service:** default local dogfood `:7700`; see
 [`docs/ops/local-launchd-service.md`](docs/ops/local-launchd-service.md).
 
+## Repository closeout
+
+Completed repository work is not closed out until its in-scope changes are
+committed, the current branch is pushed, and any associated Bead is updated,
+closed, and synchronized. Do not report completed work with in-scope changes
+left uncommitted or unpushed. Follow
+[`docs/agent-guidance/beads-and-dolt.md`](docs/agent-guidance/beads-and-dolt.md)
+for the required sequence and verification.
+
 ## Generated workspace (`/.styrir/`)
 
 Agents and local automation that create generated reports, benchmark bundles,

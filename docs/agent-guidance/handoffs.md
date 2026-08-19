@@ -62,8 +62,13 @@ A completed handoff should state:
 1. the delivered behavior or decision;
 2. validation and review results;
 3. remaining limitations or separately tracked follow-up;
-4. repository and external synchronization state;
-5. whether any publication or deployment action remains.
+4. the in-scope commit hashes;
+5. the exact Git publication verification command and result;
+6. verified Beads/Dolt publication state when the work has an associated Bead.
+
+Completed repository work must not be handed off with an in-scope commit or
+push still pending. If publication is incomplete, treat the handoff as
+incomplete and record the exact blocker and next safe action instead.
 
 The final summary must stand on its own without requiring access to collapsed
 commentary or hidden agent context.
