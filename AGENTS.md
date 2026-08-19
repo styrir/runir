@@ -12,7 +12,12 @@ Standalone HTTP memory service. Clients call it; it does not orchestrate agents.
 Completed repository work is not closed out until its in-scope changes are
 committed, the current branch is pushed, and any associated Bead is updated,
 closed, and synchronized. Do not report completed work with in-scope changes
-left uncommitted or unpushed. Follow
+left uncommitted or unpushed. A user request to execute or continue
+Bead-backed repository work authorizes the ordinary commits and branch push
+required for that work's verified closeout; do not stop to request separate
+commit or push permission. This standing closeout authorization covers only
+verified in-scope changes and never authorizes history rewriting, force-pushes,
+or unrelated work. Follow
 [`docs/agent-guidance/beads-and-dolt.md`](docs/agent-guidance/beads-and-dolt.md)
 for the required sequence and verification.
 
