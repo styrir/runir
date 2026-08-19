@@ -87,4 +87,22 @@ describe("Noema retrieval policy", () => {
     expect(mergeNoemaRetrievalLeg([semiote("fresh", 0.7)], [rejected, inactive], policy, 5))
       .toEqual([semiote("fresh", 0.7)]);
   });
+
+  it("does not surface a conflicted exclusive claim as an active answer", () => {
+    const policy = resolveNoemaRetrievalPolicy(intent("preference"));
+    const conflicted = {
+      ...noema("atlas-on-call", 1, ["priya", "marcus"], "claim:atlas:on-call"),
+      noemaStatus: "conflicted",
+    };
+
+    expect(mergeNoemaRetrievalLeg(
+      [
+        semiote("priya", 0.8, "claim:atlas:on-call"),
+        semiote("marcus", 0.8, "claim:atlas:on-call"),
+      ],
+      [conflicted],
+      policy,
+      5,
+    ).map((hit) => hit.id)).toEqual(["semiote:priya", "semiote:marcus"]);
+  });
 });

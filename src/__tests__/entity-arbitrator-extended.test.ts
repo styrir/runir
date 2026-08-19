@@ -133,6 +133,71 @@ describe("arbitrateEntity extended coverage", () => {
     expect(upsertArg.aliasesNorm).toContain("allie");
   });
 
+  it("keeps similar unaliased people separate and merges only on an exact alias", async () => {
+    mockFindByName
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    mockFindByAlias.mockResolvedValueOnce([]);
+
+    const aliceSmith = await arbitrateEntity(
+      mockDb,
+      { name: "Alice Smith", kind: "person", context: "mentioned", confidence: 0.9 },
+      "user-1", "session", "sess-1", "test",
+    );
+    expect(aliceSmith.outcome).toBe("create");
+    expect(mockUpsertEntity.mock.calls[0][1]).toMatchObject({
+      canonicalName: "Alice Smith",
+      nameNorm: "alice smith",
+    });
+
+    vi.clearAllMocks();
+    mockFindByName
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    mockFindByAlias.mockResolvedValueOnce([]);
+    const alice = await arbitrateEntity(
+      mockDb,
+      { name: "Alice", kind: "person", context: "mentioned", confidence: 0.9 },
+      "user-1", "session", "sess-1", "test",
+    );
+
+    expect(alice).toMatchObject({
+      outcome: "create",
+      reason: "new session stub created",
+    });
+    expect(mockUpsertEntity.mock.calls[0][1]).toMatchObject({
+      canonicalName: "Alice",
+      nameNorm: "alice",
+    });
+
+    vi.clearAllMocks();
+    mockFindByName.mockResolvedValueOnce([]);
+    mockFindByAlias.mockResolvedValueOnce([
+      makeEntity({
+        id: "entities:al_person_user-1",
+        canonicalName: "Al",
+        nameNorm: "al",
+        aliases: ["Alice"],
+        aliasesNorm: ["alice"],
+        confidence: 0.7,
+      }),
+    ]);
+
+    const exactAlias = await arbitrateEntity(
+      mockDb,
+      { name: "Alice", kind: "person", context: "mentioned", confidence: 0.9 },
+      "user-1", "session", "sess-1", "test",
+    );
+
+    expect(exactAlias).toMatchObject({
+      outcome: "merge",
+      entityId: "al_person_user-1",
+      reason: "user canonical alias match",
+    });
+    expect(await mockUpsertEntity.mock.results[0]?.value).toBe("new-slug");
+    expect(exactAlias.entityId).not.toBe("new-slug");
+  });
+
   // Session stub: different session → not matched, falls to create
   it("does not match session stub from different session", async () => {
     mockFindByName

@@ -16,7 +16,7 @@
 // project is skipped only when the rendered content is byte-identical.
 
 import { mkdir, writeFile } from "node:fs/promises";
-import { basename, dirname } from "node:path";
+import { dirname } from "node:path";
 import { fingerprint } from "../../identity/canonical-context.js";
 import type {
   ContinuityGapRecord,
@@ -42,23 +42,71 @@ const NOT_YET_EVALUATED_KINDS = ["orphaned_change", "bead_stale", "doc_drift", "
 
 // ── Redaction / sanitization (§9.2 / Codex F5) ───────────────────────────────
 
-// Consume the WHOLE absolute user/home path INCLUDING spaces (macOS paths have
-// them) so the parent directory can never leak — the space-excluding class left
-// `/Users/x/Private Project/secret.txt` → `Private Project/secret.txt` (Codex F4).
-const PATH_RE = /\/(Users|home)\/[\w .+/-]+/g;
+// Consume private absolute paths, including Unicode/spaces, before publication.
+// Keep only a basename so the report remains readable without exposing parents.
+const USER_HOME_PATH_RE = /\/(?:Users|home)\/[\p{L}\p{N} .+_@%/-]+/gu;
+const UNIX_PRIVATE_PATH_RE = /(^|[\s("'`=:[{,;])(\/(?!\/)[^\r\n)"'`<>]+)/gu;
+const WINDOWS_PRIVATE_PATH_RE = /\b[A-Za-z]:\\[\p{L}\p{N} .+_@%\\/-]+/gu;
+const WINDOWS_UNC_PATH_RE = /(^|[\s("'`=:[{,;])(\\\\[^\r\n)"'`<>]+)/gu;
+const RELATIVE_PRIVATE_PATH_RE = /(^|[\s("'`=:[{,;])((?:~\/|\.{1,2}\/|\.styrir\/|\.beads\/|\.dolt\/|\.git\/|\.ssh\/)[^\r\n)"'`<>]*|\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?)/gu;
+const BARE_RELATIVE_PATH_RE =
+  /(^|[\s("'`=:[{,;])((?:[\p{L}\p{N}._+-]+\/)+[\p{L}\p{N}._+ -]+)/gu;
+const SECRET_ASSIGNMENT_RE =
+  /(?:\\*["'`]|&quot;|&#39;)?\b(?:[A-Za-z0-9_-]*(?:api[_-]?key|token|secret|password|passwd|credential)|database_url|redis_url|mongo(?:db)?_uri|accountkey|sharedaccesssignature|sig)\b(?:\\*["'`]|&quot;|&#39;)?\s*[:=]\s*(?:&quot;[^&\r\n]*(?:&[^q\r\n][^&\r\n]*)*&quot;|&#39;[^&\r\n]*(?:&[^#\r\n][^&\r\n]*)*&#39;|\\*"(?:\\.|[^"\\])*\\*"|\\*'(?:\\.|[^'\\])*\\*'|\\*`(?:\\.|[^`\\])*\\*`|[^\s"'`<]+)/giu;
+const PROVIDER_SECRET_RE =
+  /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|xapp-[A-Za-z0-9-]{20,}|AIza[A-Za-z0-9_-]{20,}|GOCSPX-[A-Za-z0-9_-]{20,}|(?:sk-ant-|sk_live_|sk_test_|rk_live_|rk_test_|whsec_)[A-Za-z0-9_-]{20,})\b/gu;
+const AZURE_CONNECTION_STRING_RE = /\bDefaultEndpointsProtocol=[^\s]+/giu;
+const DATABASE_URL_RE =
+  /\b(?:postgres(?:ql)?|mysql|redis|mongodb(?:\+srv)?|mssql):\/\/[^\s)"'`<>]+/giu;
+const PRIVATE_KEY_BLOCK_RE =
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/gu;
+const SECRET_SIGNAL_RE =
+  /(?:-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|(?:[A-Za-z0-9_-]*(?:api[_-]?key|token|secret|password|passwd|credential)|database_url|redis_url|mongo(?:db)?_uri|accountkey|sharedaccesssignature|sig)\s*[:=]|(?:postgres(?:ql)?|mysql|redis|mongodb(?:\+srv)?|mssql):\/\/|DefaultEndpointsProtocol=|(?:gh[pousr]_|github_pat_|glpat-|npm_|xox[baprs]-|xapp-|AIza|GOCSPX-|sk-ant-|sk_live_|sk_test_|rk_live_|rk_test_|whsec_|hf_)[A-Za-z0-9_-]{12,})/iu;
+
+function pathTail(value: string): string {
+  const normalized = value.replace(/\\/gu, "/").replace(/\/+$/u, "");
+  const tail = normalized.slice(normalized.lastIndexOf("/") + 1);
+  if (
+    !tail ||
+    tail.startsWith(".") ||
+    /^(?:id_rsa|id_ed25519|credentials|known_hosts|authorized_keys)$/iu.test(tail)
+  ) {
+    return "path";
+  }
+  return tail;
+}
 
 /** Elides absolute user/home paths to their basename (human-readable, §9.2
  *  private-path elision — not the [PATH_n] redaction marker). The full match is
  *  consumed (parent path never leaks); a trailing prose word after a
  *  no-punctuation path is a cosmetic artifact, not a privacy leak. */
 export function elidePaths(text: string): string {
-  return text.replace(PATH_RE, (m) => basename(m.replace(/\/+$/, "")) || "path");
+  return text
+    .replace(USER_HOME_PATH_RE, (path) => pathTail(path))
+    .replace(UNIX_PRIVATE_PATH_RE, (_match, prefix: string, path: string) => `${prefix}${pathTail(path)}`)
+    .replace(WINDOWS_PRIVATE_PATH_RE, (match) => pathTail(match))
+    .replace(WINDOWS_UNC_PATH_RE, (_match, prefix: string, path: string) => `${prefix}${pathTail(path)}`)
+    .replace(RELATIVE_PRIVATE_PATH_RE, (_match, prefix: string, path: string) => `${prefix}${pathTail(path)}`)
+    .replace(BARE_RELATIVE_PATH_RE, (_match, prefix: string, path: string) => `${prefix}${pathTail(path)}`);
 }
 
 /** The disk choke: elide private paths, then scrub secret markers. Applied to
  *  EVERY rendered string (not just excerpts) before it reaches a file. */
 export function sanitizeForDisk(text: string): string {
-  return redactExportText(elidePaths(text));
+  const probe = text
+    .replace(/&quot;/giu, "\"")
+    .replace(/&#39;/giu, "'")
+    .replace(/&amp;/giu, "&")
+    .replace(/\\+(?=["'` ])/gu, "");
+  if (SECRET_SIGNAL_RE.test(probe)) return "[redacted: sensitive]";
+
+  const sanitized = elidePaths(text)
+    .replace(PRIVATE_KEY_BLOCK_RE, "[redacted: private-key]")
+    .replace(AZURE_CONNECTION_STRING_RE, "[redacted: connection-string]")
+    .replace(DATABASE_URL_RE, "[redacted: database-url]")
+    .replace(SECRET_ASSIGNMENT_RE, "[redacted: credential]")
+    .replace(PROVIDER_SECRET_RE, "[redacted: provider-key]");
+  return redactExportText(sanitized);
 }
 
 /** Per-EvidenceRef sensitivity policy. verbatim_session / secret_redacted / an
@@ -106,6 +154,29 @@ interface GapView {
   evidence: EvidenceView[];
 }
 
+type ReportItemClass = "focus" | "progress" | "next_steps" | "open_loops" | "blockers" | "gaps";
+type ReportSourceState = "resolved" | "unavailable";
+
+interface ReportItemEvidenceView {
+  itemClass: ReportItemClass;
+  /** Position in the filtered rendered array. */
+  itemIndex: number;
+  /** Position in the producer's original unfiltered array. */
+  sourceItemIndex: number;
+  text: string;
+  sourceState: ReportSourceState;
+  sources: Array<{ sourceType: string; sourceId: string }>;
+  safeScope: {
+    userId: string;
+    workspaceId: string;
+    projectKey: string;
+  };
+  knownTime: string | null;
+  conflictOrStaleness: string | null;
+  derivationVersion: string | null;
+  generationDigest: string;
+}
+
 interface ProjectView {
   projectKey: string;
   workspaceId: string;
@@ -116,6 +187,7 @@ interface ProjectView {
   openLoops: string[];
   blockers: string[];
   gaps: GapView[];
+  itemEvidence: ReportItemEvidenceView[];
   weakSignalCount: number;
   contentHash: string;
   gapIds: string[];
@@ -131,15 +203,213 @@ interface ReportModel {
   pendingProjects: string[];
 }
 
+const REPORT_SOURCE_TYPES = new Set<EvidenceRef["sourceType"]>([
+  "session_turn",
+  "session_summary",
+  "semiote",
+  "noema",
+  "runir_session",
+  "agent_run_event",
+  "workspace_execution",
+  "bead",
+  "git_commit",
+  "git_diff",
+  "doc_artifact",
+  "handoff",
+]);
+
+const EVIDENCE_SENSITIVITIES = new Set<NonNullable<EvidenceRef["sensitivity"]>>([
+  "normal",
+  "verbatim_session",
+  "private_path",
+  "secret_redacted",
+]);
+
 function sanitizeList(items: string[]): string[] {
   return items.map((s) => sanitizeForDisk(s));
 }
 
+function rawNonEmptyString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  if (typeof value !== "string" || value.trim().length === 0) return undefined;
+  return value.trim();
+}
+
+function nonEmptyString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = rawNonEmptyString(record, key);
+  return value === undefined ? undefined : sanitizeForDisk(value);
+}
+
+function publicationSourceId(rawSourceId: string): string {
+  return `src-${fingerprint(rawSourceId)}`;
+}
+
+function nonNegativeInteger(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function reportSourceType(record: Record<string, unknown>, key: string): EvidenceRef["sourceType"] | undefined {
+  const value = rawNonEmptyString(record, key);
+  return value && REPORT_SOURCE_TYPES.has(value as EvidenceRef["sourceType"])
+    ? value as EvidenceRef["sourceType"]
+    : undefined;
+}
+
+function normalizedSourceId(sourceType: EvidenceRef["sourceType"], sourceId: string): string {
+  const prefix = `${sourceType}:`;
+  return sourceId.startsWith(prefix) ? sourceId.slice(prefix.length) : sourceId;
+}
+
+function sourceIdsEqual(
+  sourceType: EvidenceRef["sourceType"],
+  left: string,
+  right: string,
+): boolean {
+  return normalizedSourceId(sourceType, left) === normalizedSourceId(sourceType, right);
+}
+
+function stateSourceIsBacked(
+  state: ProjectContinuityStateRecord,
+  mapping: Record<string, unknown>,
+  sourceType: EvidenceRef["sourceType"],
+  sourceId: string,
+): boolean {
+  if (
+    sourceType === "semiote" &&
+    state.supportingSemioteIds.some((id) => sourceIdsEqual(sourceType, id, sourceId))
+  ) {
+    return true;
+  }
+
+  return state.sourceEvidenceRefs.some((candidate) => {
+    if (candidate === mapping) return false;
+    if (
+      candidate.itemClass !== undefined ||
+      candidate.itemIndex !== undefined ||
+      candidate.sourceState !== undefined
+    ) {
+      return false;
+    }
+    const candidateHasSourceType = "sourceType" in candidate;
+    const candidateType = candidateHasSourceType
+      ? reportSourceType(candidate, "sourceType")
+      : reportSourceType(candidate, "kind");
+    if (candidateHasSourceType && candidateType === undefined) return false;
+    const candidateHasSourceId = "sourceId" in candidate;
+    const candidateId = candidateHasSourceId
+      ? rawNonEmptyString(candidate, "sourceId")
+      : rawNonEmptyString(candidate, "id");
+    if (candidateHasSourceId && candidateId === undefined) return false;
+    return candidateType === sourceType &&
+      candidateId !== undefined &&
+      sourceIdsEqual(sourceType, candidateId, sourceId);
+  });
+}
+
+function anchoredStateItems(
+  state: ProjectContinuityStateRecord,
+  itemClass: Exclude<ReportItemClass, "gaps">,
+  rawItems: string[],
+): { items: string[]; evidence: ReportItemEvidenceView[] } {
+  const items: string[] = [];
+  const evidence: ReportItemEvidenceView[] = [];
+
+  for (const [itemIndex, rawText] of rawItems.entries()) {
+    const matching = state.sourceEvidenceRefs.filter((ref) =>
+      ref.itemClass === itemClass && nonNegativeInteger(ref, "itemIndex") === itemIndex
+    );
+    if (matching.length !== 1) continue;
+
+    const ref = matching[0];
+    const rawState = nonEmptyString(ref, "sourceState");
+    const resolved = rawState === "resolved";
+    const unavailable = itemClass === "progress" && rawState === "unavailable";
+    if (!resolved && !unavailable) continue;
+
+    const sourceType = reportSourceType(ref, "sourceType");
+    const sourceId = rawNonEmptyString(ref, "sourceId");
+    if (
+      unavailable &&
+      (
+        "sourceType" in ref ||
+        "sourceId" in ref ||
+        "kind" in ref ||
+        "id" in ref
+      )
+    ) {
+      continue;
+    }
+    if (
+      resolved &&
+      (!sourceType || !sourceId || !stateSourceIsBacked(state, ref, sourceType, sourceId))
+    ) {
+      continue;
+    }
+
+    const text = sanitizeForDisk(rawText);
+    const renderedItemIndex = items.length;
+    items.push(text);
+    evidence.push({
+      itemClass,
+      itemIndex: renderedItemIndex,
+      sourceItemIndex: itemIndex,
+      text,
+      sourceState: unavailable ? "unavailable" : "resolved",
+      sources: sourceType && sourceId
+        ? [{ sourceType, sourceId: publicationSourceId(sourceId) }]
+        : [],
+      safeScope: {
+        userId: sanitizeForDisk(state.userId),
+        workspaceId: sanitizeForDisk(state.workspaceId),
+        projectKey: sanitizeForDisk(state.projectKey),
+      },
+      knownTime: nonEmptyString(ref, "knownAt") ?? null,
+      conflictOrStaleness: nonEmptyString(ref, "conflictOrStaleness") ?? null,
+      derivationVersion: nonEmptyString(ref, "derivationVersion") ?? null,
+      generationDigest: "",
+    });
+  }
+
+  return { items, evidence };
+}
+
+function isUsableEvidenceRef(value: unknown): value is EvidenceRef {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const ref = value as Record<string, unknown>;
+  if (
+    typeof ref.sourceType !== "string" ||
+    !REPORT_SOURCE_TYPES.has(ref.sourceType as EvidenceRef["sourceType"]) ||
+    typeof ref.sourceId !== "string" ||
+    ref.sourceId.trim().length === 0 ||
+    typeof ref.label !== "string" ||
+    ref.label.trim().length === 0
+  ) {
+    return false;
+  }
+  for (const key of ["uri", "excerpt", "timestamp"] as const) {
+    if (ref[key] !== undefined && typeof ref[key] !== "string") return false;
+  }
+  if (ref.confidence !== undefined && typeof ref.confidence !== "number") return false;
+  if (
+    ref.sensitivity !== undefined &&
+    (
+      typeof ref.sensitivity !== "string" ||
+      !EVIDENCE_SENSITIVITIES.has(ref.sensitivity as NonNullable<EvidenceRef["sensitivity"]>)
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function toEvidenceView(ref: EvidenceRef): EvidenceView {
   return {
-    sourceType: ref.sourceType,
-    sourceId: sanitizeForDisk(ref.sourceId),
-    label: sanitizeForDisk(ref.label),
+    sourceType: sanitizeForDisk(ref.sourceType),
+    sourceId: publicationSourceId(ref.sourceId.trim()),
+    label: sanitizeForDisk(ref.label.trim()),
     excerpt: safeExcerpt(ref),
     date: toDate(ref.timestamp),
   };
@@ -161,7 +431,7 @@ function toGapView(gap: ContinuityGapRecord): GapView {
     candidateTaskPreview: gap.candidateTaskPreview
       ? { title: sanitizeForDisk(gap.candidateTaskPreview.title), description: sanitizeForDisk(gap.candidateTaskPreview.description) }
       : undefined,
-    evidence: gap.evidence.map(toEvidenceView),
+    evidence: gap.evidence.filter(isUsableEvidenceRef).map(toEvidenceView),
   };
 }
 
@@ -173,40 +443,148 @@ function buildProjectView(
   gapEvaluatedThrough: string | null,
 ): ProjectView {
   const gapsPending = gapEvaluatedThrough === null || gapEvaluatedThrough < state.updatedAt;
+  const focus = anchoredStateItems(state, "focus", state.currentFocus);
+  const progress = anchoredStateItems(state, "progress", state.latestProgress);
+  const nextSteps = anchoredStateItems(state, "next_steps", state.nextSteps);
+  const openLoops = anchoredStateItems(state, "open_loops", state.openLoops);
+  const blockers = anchoredStateItems(state, "blockers", state.blockers);
+  const acceptedGaps = gaps
+    .map((gap, itemIndex) => ({ gap, itemIndex, view: toGapView(gap) }))
+    .filter(({ view }) => !gapsPending && view.evidence.length > 0);
+  const safeScope = {
+    userId: sanitizeForDisk(state.userId),
+    workspaceId: sanitizeForDisk(state.workspaceId),
+    projectKey: sanitizeForDisk(state.projectKey),
+  };
+  const gapEvidence: ReportItemEvidenceView[] = acceptedGaps.map(({ itemIndex: sourceItemIndex, view }, itemIndex) => ({
+    itemClass: "gaps",
+    itemIndex,
+    sourceItemIndex,
+    text: view.title,
+    sourceState: "resolved",
+    sources: view.evidence.map((source) => ({
+      sourceType: source.sourceType,
+      sourceId: source.sourceId,
+    })),
+    safeScope,
+    knownTime: view.lastSeenDate || null,
+    conflictOrStaleness: view.status || null,
+    derivationVersion: null,
+    generationDigest: "",
+  }));
+  const itemEvidence = [
+    ...focus.evidence,
+    ...progress.evidence,
+    ...nextSteps.evidence,
+    ...openLoops.evidence,
+    ...blockers.evidence,
+    ...gapEvidence,
+  ];
   const view: ProjectView = {
-    projectKey: state.projectKey,
-    workspaceId: state.workspaceId,
+    projectKey: safeScope.projectKey,
+    workspaceId: safeScope.workspaceId,
     gapsPending,
-    currentFocus: sanitizeList(state.currentFocus),
-    latestProgress: sanitizeList(state.latestProgress),
-    nextSteps: sanitizeList(state.nextSteps),
-    openLoops: sanitizeList(state.openLoops),
-    blockers: sanitizeList(state.blockers),
-    gaps: gaps.map(toGapView),
-    weakSignalCount: gaps.filter((g) => g.confidence === "weak").length,
+    currentFocus: focus.items,
+    latestProgress: progress.items,
+    nextSteps: nextSteps.items,
+    openLoops: openLoops.items,
+    blockers: blockers.items,
+    gaps: acceptedGaps.map(({ view: gap }) => gap),
+    itemEvidence,
+    weakSignalCount: acceptedGaps.filter(({ gap }) => gap.confidence === "weak").length,
     contentHash: "",
-    gapIds: gaps.map((g) => g.id),
+    gapIds: acceptedGaps.map(({ gap }) => gap.id),
   };
   // Hash the sanitized, date-normalized content (NOT the volatile ms
   // timestamps or the gapIds/contentHash themselves).
   const { contentHash: _c, gapIds: _g, ...hashable } = view;
   view.contentHash = fingerprint(JSON.stringify(hashable));
+  for (const item of view.itemEvidence) item.generationDigest = view.contentHash;
   return view;
 }
 
 // ── Renderers ─────────────────────────────────────────────────────────────────
 
-function mdList(items: string[]): string {
-  return items.length > 0 ? items.map((i) => `- ${i}`).join("\n") : "_(none)_";
+function sourceReferenceLabel(sourceType: string, sourceId: string): string {
+  return sourceId.startsWith(`${sourceType}:`)
+    ? sourceId
+    : `${sourceType}:${sourceId}`;
+}
+
+const MARKDOWN_SPECIAL_CHARACTERS = new Set([
+  "\\",
+  "`",
+  "*",
+  "_",
+  "{",
+  "}",
+  "[",
+  "]",
+  "(",
+  ")",
+  "#",
+  "+",
+  "-",
+  ".",
+  "!",
+  "|",
+]);
+
+function escapeMarkdown(value: string): string {
+  let escaped = "";
+  for (const character of value) {
+    if (character === "<") {
+      escaped += "&lt;";
+    } else if (character === ">") {
+      escaped += "&gt;";
+    } else if (character === "&") {
+      escaped += "&amp;";
+    } else if (MARKDOWN_SPECIAL_CHARACTERS.has(character)) {
+      escaped += `\\${character}`;
+    } else {
+      escaped += character;
+    }
+  }
+  return escaped;
+}
+
+function safeMarkdown(value: string): string {
+  return escapeMarkdown(sanitizeForDisk(value));
+}
+
+function itemEvidenceLabel(item: ReportItemEvidenceView): string {
+  const source = item.sourceState === "unavailable"
+    ? "source unavailable"
+    : item.sources.map((ref) => sourceReferenceLabel(ref.sourceType, ref.sourceId)).join(", ");
+  return [
+    `item-class: ${item.itemClass}`,
+    `item-index: ${item.itemIndex}`,
+    `source-item-index: ${item.sourceItemIndex}`,
+    `source-state: ${item.sourceState}`,
+    source,
+    `scope: user=${item.safeScope.userId}, workspace=${item.safeScope.workspaceId}, project=${item.safeScope.projectKey}`,
+    `known-time: ${item.knownTime ?? "unknown"}`,
+    `conflict-or-staleness: ${item.conflictOrStaleness ?? "unknown"}`,
+    `derivation-version: ${item.derivationVersion ?? "unknown"}`,
+    `generation-digest: ${item.generationDigest}`,
+  ].join("; ");
+}
+
+function mdItemList(p: ProjectView, itemClass: Exclude<ReportItemClass, "gaps">): string {
+  const items = p.itemEvidence.filter((item) => item.itemClass === itemClass);
+  return items.length > 0
+    ? items.map((item) => `- ${safeMarkdown(item.text)} _(${safeMarkdown(itemEvidenceLabel(item))})_`).join("\n")
+    : "_(none)_";
 }
 
 function renderProjectMarkdown(p: ProjectView): string {
-  const lines: string[] = [`## Project: ${p.projectKey}`, ""];
+  const lines: string[] = [`## Project: ${safeMarkdown(p.projectKey)}`, ""];
   if (p.gapsPending) {
     lines.push("> ⏳ **Gaps pending evaluation** — the continuity state changed since gaps were last evaluated; the gap list below may be stale.", "");
   }
-  lines.push("### Current focus", mdList(p.currentFocus), "", "### Latest progress", mdList(p.latestProgress), "");
-  lines.push("### Next steps", mdList(p.nextSteps), "", "### Open loops", mdList(p.openLoops), "");
+  lines.push("### Current focus", mdItemList(p, "focus"), "", "### Latest progress", mdItemList(p, "progress"), "");
+  lines.push("### Next steps", mdItemList(p, "next_steps"), "", "### Open loops", mdItemList(p, "open_loops"), "");
+  lines.push("### Blockers", mdItemList(p, "blockers"), "");
   lines.push(`### Gaps (${p.gaps.length}${p.gapsPending ? ", evaluation pending" : ""})`, "");
   if (p.gapsPending) {
     // Never present stale evaluation as a clean bill of health (Codex F2).
@@ -215,14 +593,16 @@ function renderProjectMarkdown(p: ProjectView): string {
     lines.push("_No open gaps detected on Rúnir-resident evidence._", "");
   }
   if (p.gaps.length > 0) {
-    for (const g of p.gaps) {
-      lines.push(`#### [${g.kind}] ${g.title}`);
-      lines.push(`_confidence: ${g.confidence} · status: ${g.status} · first seen: ${g.firstSeenDate} · last seen: ${g.lastSeenDate}_`, "");
-      lines.push(g.summary, "", `**Recommendation:** ${g.recommendation}`, "");
+    for (const [gapIndex, g] of p.gaps.entries()) {
+      const itemEvidence = p.itemEvidence.filter((item) => item.itemClass === "gaps")[gapIndex];
+      lines.push(`#### [${safeMarkdown(g.kind)}] ${safeMarkdown(g.title)}`);
+      lines.push(`_confidence: ${safeMarkdown(g.confidence)} · status: ${safeMarkdown(g.status)} · first seen: ${safeMarkdown(g.firstSeenDate)} · last seen: ${safeMarkdown(g.lastSeenDate)}_`, "");
+      if (itemEvidence) lines.push(`_${safeMarkdown(itemEvidenceLabel(itemEvidence))}_`, "");
+      lines.push(safeMarkdown(g.summary), "", `**Recommendation:** ${safeMarkdown(g.recommendation)}`, "");
       if (g.evidence.length > 0) {
         lines.push("<details><summary>Evidence</summary>", "");
         for (const e of g.evidence) {
-          lines.push(`- **${e.sourceType}** ${e.label}${e.date ? ` (${e.date})` : ""}${e.excerpt ? `: ${e.excerpt}` : ""}`);
+          lines.push(`- **${safeMarkdown(sourceReferenceLabel(e.sourceType, e.sourceId))}** ${safeMarkdown(e.label)}${e.date ? ` (${safeMarkdown(e.date)})` : ""}${e.excerpt ? `: ${safeMarkdown(e.excerpt)}` : ""}`);
         }
         lines.push("", "</details>", "");
       }
@@ -242,9 +622,9 @@ export function renderMarkdown(model: ReportModel): string {
     0,
   );
   const lines: string[] = [
-    `# Daily Continuity Report — ${model.date}`,
+    `# Daily Continuity Report — ${safeMarkdown(model.date)}`,
     "",
-    `_user: ${model.userId} · lookback: ${model.lookbackDays}d_`,
+    `_user: ${safeMarkdown(model.userId)} · lookback: ${model.lookbackDays}d_`,
     "",
     "## Summary",
     `- Projects changed: ${changed}`,
@@ -256,9 +636,9 @@ export function renderMarkdown(model: ReportModel): string {
   ];
   for (const p of model.projects) lines.push(renderProjectMarkdown(p), "");
   lines.push("## Appendix", "");
-  lines.push(`**Not yet evaluated** (awaiting Leit S-2 evidence): ${model.notYetEvaluated.join(", ")}.`, "");
-  if (model.skippedProjects.length > 0) lines.push(`**Skipped (inactive):** ${model.skippedProjects.join(", ")}.`, "");
-  if (model.pendingProjects.length > 0) lines.push(`**Gaps pending evaluation:** ${model.pendingProjects.join(", ")}.`, "");
+  lines.push(`**Not yet evaluated** (awaiting Leit S-2 evidence): ${model.notYetEvaluated.map(safeMarkdown).join(", ")}.`, "");
+  if (model.skippedProjects.length > 0) lines.push(`**Skipped (inactive):** ${model.skippedProjects.map(safeMarkdown).join(", ")}.`, "");
+  if (model.pendingProjects.length > 0) lines.push(`**Gaps pending evaluation:** ${model.pendingProjects.map(safeMarkdown).join(", ")}.`, "");
   lines.push(
     "",
     "_Export manifest: generated from project_continuity_state + continuity_gap (output-only projection). Low-confidence (weak) signals are ordered by score and are advisory, not committed work._",
@@ -267,11 +647,22 @@ export function renderMarkdown(model: ReportModel): string {
 }
 
 export function renderJson(model: ReportModel): string {
-  return JSON.stringify(model, null, 2) + "\n";
+  return JSON.stringify(sanitizeJsonValue(model), null, 2) + "\n";
+}
+
+function sanitizeJsonValue(value: unknown): unknown {
+  if (typeof value === "string") return sanitizeForDisk(value);
+  if (Array.isArray(value)) return value.map(sanitizeJsonValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [key, sanitizeJsonValue(nested)]),
+    );
+  }
+  return value;
 }
 
 function esc(value: unknown): string {
-  return String(value ?? "")
+  return sanitizeForDisk(String(value ?? ""))
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
@@ -279,9 +670,12 @@ function esc(value: unknown): string {
     .replace(/'/g, "&#39;");
 }
 
-function htmlList(items: string[]): string {
+function htmlItemList(p: ProjectView, itemClass: Exclude<ReportItemClass, "gaps">): string {
+  const items = p.itemEvidence.filter((item) => item.itemClass === itemClass);
   if (items.length === 0) return "<p class='muted'>(none)</p>";
-  return `<ul>${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`;
+  return `<ul>${items.map((item) =>
+    `<li data-source-state="${esc(item.sourceState)}">${esc(item.text)}<br><small class="meta">${esc(itemEvidenceLabel(item))}</small></li>`
+  ).join("")}</ul>`;
 }
 
 function renderProjectHtml(p: ProjectView): string {
@@ -290,16 +684,22 @@ function renderProjectHtml(p: ProjectView): string {
       ? "<p class='pending'>Gap evaluation is pending for this project — the list below is NOT a complete evaluation against the latest state.</p>" +
         p.gaps
           .map(
-            (g) => `<article class="gap ${esc(g.kind)}"><h4>[${esc(g.kind)}] ${esc(g.title)}</h4><p>${esc(g.summary)}</p></article>`,
+            (g, gapIndex) => {
+              const itemEvidence = p.itemEvidence.filter((item) => item.itemClass === "gaps")[gapIndex];
+              return `<article class="gap ${esc(g.kind)}"><h4>[${esc(g.kind)}] ${esc(g.title)}</h4>${itemEvidence ? `<p class="meta">${esc(itemEvidenceLabel(itemEvidence))}</p>` : ""}<p>${esc(g.summary)}</p></article>`;
+            },
           )
           .join("")
       : p.gaps.length === 0
       ? "<p class='muted'>No open gaps detected on Rúnir-resident evidence.</p>"
       : p.gaps
           .map(
-            (g) => `<article class="gap ${esc(g.kind)}">
+            (g, gapIndex) => {
+              const itemEvidence = p.itemEvidence.filter((item) => item.itemClass === "gaps")[gapIndex];
+              return `<article class="gap ${esc(g.kind)}">
       <h4>[${esc(g.kind)}] ${esc(g.title)}</h4>
       <p class="meta">confidence: ${esc(g.confidence)} · status: ${esc(g.status)} · first seen: ${esc(g.firstSeenDate)} · last seen: ${esc(g.lastSeenDate)}</p>
+      ${itemEvidence ? `<p class="meta">${esc(itemEvidenceLabel(itemEvidence))}</p>` : ""}
       <p>${esc(g.summary)}</p>
       <p class="rec"><b>Recommendation:</b> ${esc(g.recommendation)}</p>
       ${
@@ -307,20 +707,23 @@ function renderProjectHtml(p: ProjectView): string {
           ? `<details><summary>Evidence</summary><ul>${g.evidence
               .map(
                 (e) =>
-                  `<li><b>${esc(e.sourceType)}</b> ${esc(e.label)}${e.date ? ` (${esc(e.date)})` : ""}${e.excerpt ? `: ${esc(e.excerpt)}` : ""}</li>`,
+                  `<li><b>${esc(sourceReferenceLabel(e.sourceType, e.sourceId))}</b> ${esc(e.label)}${e.date ? ` (${esc(e.date)})` : ""}${e.excerpt ? `: ${esc(e.excerpt)}` : ""}</li>`,
               )
               .join("")}</ul></details>`
           : ""
       }
-    </article>`,
+    </article>`;
+            },
           )
           .join("");
   return `<section class="project">
     <h3>${esc(p.projectKey)}</h3>
     ${p.gapsPending ? `<p class="pending">⏳ Gaps pending evaluation — the gap list may be stale.</p>` : ""}
-    <h5>Current focus</h5>${htmlList(p.currentFocus)}
-    <h5>Next steps</h5>${htmlList(p.nextSteps)}
-    <h5>Open loops</h5>${htmlList(p.openLoops)}
+    <h5>Current focus</h5>${htmlItemList(p, "focus")}
+    <h5>Latest progress</h5>${htmlItemList(p, "progress")}
+    <h5>Next steps</h5>${htmlItemList(p, "next_steps")}
+    <h5>Open loops</h5>${htmlItemList(p, "open_loops")}
+    <h5>Blockers</h5>${htmlItemList(p, "blockers")}
     <h5>Gaps (${p.gaps.length})</h5>${gapHtml}
   </section>`;
 }
@@ -366,9 +769,9 @@ export class ContinuityReportWriter {
   async write(relName: string, content: string): Promise<string> {
     const fullPath = assertWithinRoot(this.reportDir, relName);
     await mkdir(dirname(fullPath), { recursive: true });
-    // Belt-and-suspenders: the model is already sanitized, but the final choke
-    // sanitizes ALL content so no bypass is possible.
-    await writeFile(fullPath, sanitizeForDisk(content), "utf-8");
+    // Every renderer sanitizes field values before syntax is introduced. A
+    // post-serialization text scrub can corrupt JSON or lose assignment context.
+    await writeFile(fullPath, content, "utf-8");
     return fullPath;
   }
 }
@@ -435,7 +838,7 @@ export async function runContinuityReport(
     const projectKey = enrollment.projectKey;
     const state = await getProjectContinuityState(db, userId, workspaceId, projectKey);
     if (!state) {
-      skippedProjects.push(projectKey);
+      skippedProjects.push(sanitizeForDisk(projectKey));
       continue;
     }
     const [gaps, evaluatedThrough, priorReport] = await Promise.all([
@@ -450,14 +853,14 @@ export async function runContinuityReport(
     // keep re-rendering it (and never let a "pending" hash suppress future runs)
     // until evaluation is current (Codex F1).
     if (!view.gapsPending && priorReport && priorReport.reportedContentHash === view.contentHash) {
-      skippedProjects.push(projectKey); // no-op: content unchanged since last report
+      skippedProjects.push(sanitizeForDisk(projectKey)); // no-op: content unchanged since last report
       continue;
     }
 
     projects.push(view);
     await Promise.all(view.gapIds.map((gapId) => markGapReported(db, gapId, `${date}T00:00:00.000Z`)));
     if (view.gapsPending) {
-      pendingProjects.push(projectKey);
+      pendingProjects.push(sanitizeForDisk(projectKey));
     } else {
       // Advance the cursor only for a fully-evaluated project; reportedThrough is
       // the evaluated-through watermark, not the raw state timestamp.
@@ -467,7 +870,7 @@ export async function runContinuityReport(
 
   const model: ReportModel = {
     date,
-    userId,
+    userId: sanitizeForDisk(userId),
     lookbackDays,
     notYetEvaluated: NOT_YET_EVALUATED_KINDS,
     projects,
