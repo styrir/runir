@@ -1,6 +1,6 @@
 
 import { describe, expect, it, vi } from "vitest";
-import { compareAndSwapProjectState, getProjectState, getProjectStateForCaptureContext, listNearbyExistingForCaptureContext, listRecentFactsForCaptureContext, updateMemoryText, upsertMemory, upsertProjectState } from "../storage/surreal/surreal-store.js";
+import { compareAndSwapProjectState, getProjectState, getProjectStateForCaptureContext, listNearbyExistingForCaptureContext, listRecentFactsForCaptureContext, supersedeMemory, updateMemoryText, upsertMemory, upsertProjectState } from "../storage/surreal/surreal-store.js";
 
 describe("upsertMemory continuity datetime casting", () => {
   it("casts valid_at and invalid_at to datetime when metadata uses ISO strings", async () => {
@@ -29,6 +29,117 @@ describe("upsertMemory continuity datetime casting", () => {
     expect(sql).toContain("invalid_at: IF $invalidAt != NONE THEN <datetime>$invalidAt ELSE NONE END");
     expect(vars.validAt).toBe("2026-04-01T20:00:00.000Z");
     expect(vars.invalidAt).toBe("2026-04-01T21:00:00.000Z");
+  });
+
+  it("keeps a known historical event time separate and leaves unknown event time absent", async () => {
+    const knownDb = {
+      query: vi.fn().mockResolvedValue([[]]),
+    } as any;
+    const happenedAt = "2024-01-02T00:00:00.000Z";
+    const validAt = "2026-08-19T15:00:00.000Z";
+
+    await upsertMemory(
+      knownDb,
+      "event-known",
+      "The Atlas migration completed.",
+      "user-1",
+      [0, 1, 2],
+      {
+        event: {
+          actor: "Atlas team",
+          action: "completed",
+          object: "migration",
+          happenedAt,
+        },
+        validAt,
+      },
+    );
+
+    const knownVars = knownDb.query.mock.calls[0][1];
+    expect(knownVars.payload.event.happenedAt).toBe(happenedAt);
+    expect(knownVars.payload.createdAt).not.toBe(happenedAt);
+    expect(knownVars.validAt).toBe(validAt);
+
+    const unknownDb = {
+      query: vi.fn().mockResolvedValue([[]]),
+    } as any;
+    await upsertMemory(
+      unknownDb,
+      "event-unknown",
+      "The Atlas migration completed at an unknown time.",
+      "user-1",
+      [0, 1, 2],
+      {
+        event: {
+          actor: "Atlas team",
+          action: "completed",
+          object: "migration",
+        },
+      },
+    );
+
+    const unknownVars = unknownDb.query.mock.calls[0][1];
+    expect(unknownVars.payload.event).not.toHaveProperty("happenedAt");
+    expect(unknownVars.validAt).toBeUndefined();
+
+    knownDb.query.mockClear();
+    await updateMemoryText(
+      knownDb,
+      "event-known",
+      "The Atlas migration completed with a follow-up note.",
+      [0, 1, 2],
+      "memory_store",
+      "retain",
+      { validAt },
+    );
+    const [mergeSql, mergeVars] = knownDb.query.mock.calls[0];
+    expect(mergeSql).not.toContain("payload.event");
+    expect(mergeVars.validAt).toBe(validAt);
+  });
+});
+
+describe("supersedeMemory corrected preference lineage", () => {
+  it("persists both values and reciprocal lifecycle pointers without inventing revision order", async () => {
+    const db = {
+      query: vi.fn().mockResolvedValue([[]]),
+      queryTransaction: vi.fn().mockResolvedValue(undefined),
+    } as any;
+    const editorFact = { subject: "user", predicate: "prefers_editor" };
+
+    await supersedeMemory(
+      db,
+      {
+        id: "preference-vim",
+        l2: "The user's preferred editor is Vim.",
+        similarity: 0.9,
+        createdAt: "2026-08-18T10:00:00.000Z",
+        atomicFact: { ...editorFact, value: "Vim" },
+      },
+      {
+        id: "preference-helix",
+        l2: "The user's preferred editor is Helix.",
+        userId: "user-1",
+        embedding: [0, 1, 2],
+        metadata: {
+          atomicFact: { ...editorFact, value: "Helix" },
+          validAt: "2026-08-19T10:00:00.000Z",
+        },
+        scope: "user",
+        writeSource: "memory_store",
+      },
+      "deterministic",
+    );
+
+    expect(db.queryTransaction).toHaveBeenCalledTimes(1);
+    const [sql, vars] = db.queryTransaction.mock.calls[0];
+    expect(vars.sup_payload).toMatchObject({
+      atomicFact: { ...editorFact, value: "Helix" },
+      supersedesId: "preference-vim",
+      lineageRootId: "preference-vim",
+    });
+    expect(vars.supersededById).toBe("preference-helix");
+    expect(sql).toContain("payload.supersededById = $supersededById");
+    expect(sql).not.toContain("noemaRevision");
   });
 });
 

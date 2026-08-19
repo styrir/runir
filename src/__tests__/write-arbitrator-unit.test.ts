@@ -232,6 +232,225 @@ describe("write-arbitrator unit tests (MIM-57)", () => {
     expect(supersedeMemory).toHaveBeenCalled();
   });
 
+  it("preserves both sides of a corrected editor preference through supersession", async () => {
+    const db = makeDb();
+    const recentWrites = new Map<string, RecentWrite[]>();
+    const embedding = makeVec(0);
+    const editorFact = { subject: "user", predicate: "prefers_editor" };
+    const oldPreference = makeCandidate({
+      id: "preference-vim",
+      similarity: 0.9,
+      l2: "The user's preferred editor is Vim.",
+      atomicFact: { ...editorFact, value: "Vim" },
+      validAt: "2026-08-18T10:00:00.000Z",
+    });
+    (findSimilarMemories as Mock).mockResolvedValue([oldPreference]);
+
+    const result = await arbitrateWrite({
+      db,
+      text: "The user's preferred editor is Helix.",
+      userId: "user1",
+      embedding,
+      scope: "user",
+      source: "memory_store",
+      recentWrites,
+      embedText: vi.fn().mockResolvedValue(embedding),
+      metadata: {
+        atomicFact: { ...editorFact, value: "Helix" },
+        validAt: "2026-08-19T10:00:00.000Z",
+      },
+    });
+
+    expect(result).toMatchObject({
+      outcome: "supersede",
+      matchedMemoryId: "preference-vim",
+    });
+    const supersedeCall = (supersedeMemory as Mock).mock.calls[0];
+    expect(supersedeCall[1]).toMatchObject({
+      id: "preference-vim",
+      atomicFact: { ...editorFact, value: "Vim" },
+    });
+    expect(supersedeCall[2]).toMatchObject({
+      metadata: {
+        atomicFact: { ...editorFact, value: "Helix" },
+        validAt: "2026-08-19T10:00:00.000Z",
+      },
+    });
+  });
+
+  it("keeps an exclusive-fact disagreement as two rows when no winner is known", async () => {
+    const priorGuard = process.env.RUNIR_MERGE_KEEPBOTH_GUARD;
+    process.env.RUNIR_MERGE_KEEPBOTH_GUARD = "1";
+    try {
+      const db = makeDb();
+      const recentWrites = new Map<string, RecentWrite[]>();
+      const embedding = makeVec(0);
+      (findSimilarMemories as Mock).mockResolvedValue([
+        makeCandidate({
+          id: "atlas-on-call-priya",
+          similarity: 0.9,
+          l2: "Priya Nair is the on-call lead for Atlas.",
+          tags: ["project:atlas", "role:on-call-lead", "person:priya-nair"],
+        }),
+      ]);
+
+      const result = await arbitrateWrite({
+        db,
+        text: "Marcus Webb is the on-call lead for Atlas.",
+        userId: "user1",
+        embedding,
+        scope: "user",
+        source: "memory_store",
+        recentWrites,
+        embedText: vi.fn().mockResolvedValue(embedding),
+        metadata: {
+          tags: ["project:atlas", "role:on-call-lead", "person:marcus-webb"],
+        },
+      });
+
+      expect(result).toMatchObject({
+        outcome: "create",
+        reason: expect.stringContaining("ambiguous-slot-change-no-cue"),
+      });
+      expect(updateMemoryText).not.toHaveBeenCalled();
+      expect(supersedeMemory).not.toHaveBeenCalled();
+
+      vi.clearAllMocks();
+      (findSimilarMemories as Mock).mockResolvedValue([
+        makeCandidate({
+          id: "atlas-on-call-marcus",
+          similarity: 0.9,
+          l2: "Marcus Webb is the on-call lead for Atlas.",
+          tags: ["project:atlas", "role:on-call-lead", "person:marcus-webb"],
+        }),
+      ]);
+      const reversed = await arbitrateWrite({
+        db,
+        text: "Priya Nair is the on-call lead for Atlas.",
+        userId: "user1",
+        embedding,
+        scope: "user",
+        source: "memory_store",
+        recentWrites: new Map<string, RecentWrite[]>(),
+        embedText: vi.fn().mockResolvedValue(embedding),
+        metadata: {
+          tags: ["project:atlas", "role:on-call-lead", "person:priya-nair"],
+        },
+      });
+
+      expect(reversed).toMatchObject({
+        outcome: "create",
+        reason: expect.stringContaining("ambiguous-slot-change-no-cue"),
+      });
+      expect(updateMemoryText).not.toHaveBeenCalled();
+      expect(supersedeMemory).not.toHaveBeenCalled();
+    } finally {
+      if (priorGuard === undefined) {
+        delete process.env.RUNIR_MERGE_KEEPBOTH_GUARD;
+      } else {
+        process.env.RUNIR_MERGE_KEEPBOTH_GUARD = priorGuard;
+      }
+    }
+  });
+
+  it("deduplicates a repeated source turn only inside the arbitration window", async () => {
+    const db = makeDb();
+    const embedding = makeVec(0);
+    const importedText = "Atlas deployment completed with release 42.";
+    const fixedNow = Date.parse("2026-08-19T12:00:00.000Z");
+    const knownSource = {
+      factKey: "event:atlas-release-42",
+      sourceEventId: "turn-event-4",
+      sourceTurnIndex: 4,
+      rawSpan: {
+        text: importedText,
+        sourceTurnIndex: 4,
+        cursorStart: 10,
+        cursorEnd: 53,
+        kind: "source_turn",
+      },
+    };
+
+    const first = await arbitrateWrite({
+      db,
+      text: importedText,
+      userId: "user1",
+      embedding,
+      scope: "user",
+      source: "memory_store",
+      recentWrites: new Map<string, RecentWrite[]>(),
+      embedText: vi.fn().mockResolvedValue(embedding),
+      metadata: knownSource,
+      nowMs: fixedNow,
+    });
+
+    expect(first.outcome).toBe("create");
+    expect((upsertMemory as Mock).mock.calls[0][5]).toMatchObject(knownSource);
+
+    vi.clearAllMocks();
+    (findSimilarMemories as Mock).mockResolvedValue([
+      makeCandidate({
+        id: "source-turn-first-import",
+        similarity: 0.99,
+        l2: importedText,
+        createdAt: "2026-08-19T11:59:00.000Z",
+        updatedAt: "2026-08-19T11:59:00.000Z",
+      }),
+    ]);
+    const duplicate = await arbitrateWrite({
+      db,
+      text: importedText,
+      userId: "user1",
+      embedding,
+      scope: "user",
+      source: "memory_store",
+      recentWrites: new Map<string, RecentWrite[]>(),
+      embedText: vi.fn().mockResolvedValue(embedding),
+      metadata: {
+        ...knownSource,
+        sourceTurnIndex: 99,
+        rawSpan: { text: importedText, sourceTurnIndex: 99 },
+      },
+      nowMs: fixedNow,
+    });
+
+    expect(duplicate).toMatchObject({
+      outcome: "skip",
+      matchedMemoryId: "source-turn-first-import",
+    });
+    expect(upsertMemory).not.toHaveBeenCalled();
+    expect(updateMemoryText).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    (findSimilarMemories as Mock).mockResolvedValue([
+      makeCandidate({
+        id: "source-turn-expired-import",
+        similarity: 0.99,
+        l2: importedText,
+        createdAt: "2026-08-16T10:59:59.000Z",
+        updatedAt: "2026-08-16T10:59:59.000Z",
+      }),
+    ]);
+    const outsideWindow = await arbitrateWrite({
+      db,
+      text: importedText,
+      userId: "user1",
+      embedding,
+      scope: "user",
+      source: "memory_store",
+      recentWrites: new Map<string, RecentWrite[]>(),
+      embedText: vi.fn().mockResolvedValue(embedding),
+      metadata: {
+        factKey: "event:atlas-release-42",
+        rawSpan: { text: importedText },
+      },
+      nowMs: fixedNow,
+    });
+
+    expect(outsideWindow.outcome).toBe("create");
+    expect((upsertMemory as Mock).mock.calls[0][5].rawSpan).not.toHaveProperty("sourceTurnIndex");
+  });
+
   it("create: no match", async () => {
     const db = makeDb();
     const recentWrites = new Map<string, RecentWrite[]>();
