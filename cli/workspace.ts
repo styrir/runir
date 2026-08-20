@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import {
   applyWorkspaceRetention,
+  checkStyrirAdoption,
   planWorkspaceRetention,
   resolveRetentionPolicy,
   resolveStyrirPaths,
@@ -26,10 +27,12 @@ export function workspaceUsage(): string {
 Usage:
   runir workspace resolve [root options] [--json] [--pretty]
   runir workspace cleanup [root options] [retention options] [--apply] [--json]
+  runir workspace check [--repo <path>] [--json] [--pretty]
 
 Commands:
   resolve   Resolve repository, .styrir, and user-scoped paths
   cleanup   Plan retention cleanup; mutation requires --apply
+  check     Verify ignore, export, tracking, and config adoption boundaries
 
 Override precedence:
   CLI flag > matching STYRIR_* environment > XDG variable > platform default
@@ -151,6 +154,23 @@ async function runCleanup(
   return result.errors.length === 0 ? 0 : 2;
 }
 
+async function runCheck(
+  values: Readonly<Record<string, string | boolean | undefined>>,
+  io: WorkspaceIo,
+): Promise<number> {
+  const repo = typeof values.repo === "string" ? values.repo : process.cwd();
+  const report = await checkStyrirAdoption(repo);
+  const failures = report.checks
+    .filter((entry) => entry.status === "fail")
+    .map((entry) => entry.id);
+  io.stdout(JSON.stringify(
+    { ...report, failures },
+    null,
+    values.pretty ? 2 : undefined,
+  ));
+  return report.ok ? 0 : 1;
+}
+
 export async function runWorkspaceCommand(
   argv: readonly string[],
   io: WorkspaceIo = defaultIo,
@@ -188,6 +208,9 @@ export async function runWorkspaceCommand(
   }
   if (command === "cleanup") {
     return runCleanup(values, io);
+  }
+  if (command === "check") {
+    return runCheck(values, io);
   }
   if (command !== "resolve") {
     io.stderr(`workspace command is not implemented: ${command}`);

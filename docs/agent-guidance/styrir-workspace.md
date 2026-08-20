@@ -115,6 +115,77 @@ Large shared stores should key repository-specific state by a stable repository
 identity, such as a hash of canonical repository root plus remote identity, to
 avoid collisions between checkouts.
 
+## Executable workspace contract
+
+Rúnir exposes the reusable contract through `runir workspace`:
+
+```bash
+runir workspace resolve --repo /absolute/repository --json
+runir workspace cleanup --repo /absolute/repository --json
+runir workspace cleanup --repo /absolute/repository --apply --json
+runir workspace check --repo /absolute/repository --json
+```
+
+`resolve` discovers the canonical Git root and a sanitized origin identity,
+then returns the ignored `.styrir` roots plus platform user roots. Repository
+IDs are full SHA-256 hashes over a versioned canonical-root and normalized
+origin payload. Raw origins, URL credentials, query strings, and fragments are
+never emitted.
+
+Root precedence is:
+
+1. explicit CLI or API override;
+2. matching `STYRIR_*` environment override;
+3. matching XDG variable;
+4. platform-native default.
+
+Every explicit root must be absolute and contain no NUL or literal `.`/`..`
+segment. Configuration is user-global. Durable data, state, cache, and runtime
+paths append `repositories/<repository-id>` to prevent checkout collisions.
+
+`cleanup` manages only `.styrir/{runs,logs,cache,tmp}`. The defaults are:
+
+| Class | Retention |
+|---|---:|
+| runs | 30 days |
+| logs | 14 days |
+| cache | 7 days |
+| tmp | 1 day |
+
+Cleanup is a dry-run unless `--apply` is present. Entries exactly at a cutoff
+are retained. Planning never follows symlinks; apply revalidates root, parent,
+type, device, inode, and timestamps before bottom-up `unlink`/`rmdir`
+operations. `.styrir/{analysis,pipelines,build}` and unknown roots are never
+cleanup targets.
+
+### Repository adoption template
+
+Copy the shared ignore rules from [Repository contract](#repository-contract),
+add these lines to the repository's release/export denylist, and run the check
+in CI:
+
+```text
+prefix:.styrir
+prefix:docs/analysis
+```
+
+```json
+{
+  "scripts": {
+    "workspace:check": "node --import tsx/esm cli/index.ts workspace check --repo . --json"
+  }
+}
+```
+
+```yaml
+- name: Check generated-artifact boundary
+  run: npm run workspace:check
+```
+
+The check fails if either shared ignore or export rule is absent, if Git tracks
+anything below `.styrir` or `docs/analysis`, or if `.styrir.toml` exists before
+a validated consumer is shipped.
+
 ## Promotion boundary
 
 Generated output stays ignored until a human deliberately promotes it:

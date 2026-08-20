@@ -124,3 +124,12 @@ export {
   type RetentionApplyResult,
   type RetentionDeleteDeps,
 } from "./styrir-workspace-delete.js";
+
+export {
+  checkStyrirAdoption,
+  STYRIR_REQUIRED_EXPORT_DENY_RULES,
+  STYRIR_REQUIRED_IGNORE_RULES,
+  type AdoptionCheck,
+  type AdoptionCheckId,
+  type AdoptionReport,
+} from "./styrir-workspace-adoption.js";
