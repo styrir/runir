@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   computeRepositoryId,
@@ -186,6 +186,15 @@ describe("Styrir repository identity", () => {
 });
 
 describe("Styrir workspace composition", () => {
+  it("discovers a repository from a relative start path", async () => {
+    const repo = gitRepository();
+    const paths = await resolveStyrirPaths({
+      env: {},
+      repoStart: relative(process.cwd(), repo),
+    });
+    expect(paths.repository.root).toBe(realpathSync(repo));
+  });
+
   it("resolves repository and user paths without creating them", async () => {
     const repo = gitRepository("git@github.com:Org/Runir.git");
     const paths = record(await resolveStyrirPaths({

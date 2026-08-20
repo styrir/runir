@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   resolveUserRoots,
   validateAbsoluteOverride,
@@ -42,7 +42,10 @@ function repositoryStart(
   const value = input.repoStart ??
     env["STYRIR_REPO_ROOT"] ??
     process.cwd();
-  return validateAbsoluteOverride("repository root", value);
+  if (!value.trim() || value.includes("\0")) {
+    throw new Error("repository root must be a non-empty path without NUL");
+  }
+  return resolve(value);
 }
 
 function workspaceRoot(
