@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
-import { mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -17,6 +17,27 @@ function parseRecord(text: string): JsonRecord {
   const value: unknown = JSON.parse(text);
   if (!isRecord(value)) throw new Error("Expected JSON object");
   return value;
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) throw new Error("Expected string array");
+  return value;
+}
+
+function cleanupFixture(repo: string): { readonly workspace: string; readonly oldIds: readonly string[] } {
+  const workspace = path.join(repo, ".styrir");
+  const oldIds = ["runs/old-run", "logs/old-log", "cache/old-cache", "tmp/old-tmp"];
+  for (const id of oldIds) {
+    const file = path.join(workspace, id);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, "credential-canary-fixture");
+    utimesSync(file, new Date("2026-07-01T00:00:00.000Z"), new Date("2026-07-01T00:00:00.000Z"));
+  }
+  const fresh = path.join(workspace, "runs/fresh-run");
+  mkdirSync(path.dirname(fresh), { recursive: true });
+  writeFileSync(fresh, "fresh");
+  utimesSync(fresh, new Date("2026-08-19T00:00:00.000Z"), new Date("2026-08-19T00:00:00.000Z"));
+  return { workspace, oldIds };
 }
 
 async function run(command: string, args: readonly string[], env: NodeJS.ProcessEnv = {}) {
@@ -123,5 +144,70 @@ describe("workspace CLI", () => {
     for (const token of ["resolve", "--workspace-root", "STYRIR_WORKSPACE_ROOT", "XDG"]) {
       expect(`${result.stdout}\n${result.stderr}`).toContain(token);
     }
+  });
+
+  it("plans cleanup by default without mutating candidates", async () => {
+    const repo = await gitRepo();
+    const fixture = cleanupFixture(repo);
+    const result = await run(process.execPath, [
+      "--import", "tsx/esm", "cli/index.ts", "workspace", "cleanup",
+      "--repo", repo, "--now", "2026-08-20T00:00:00.000Z", "--json",
+    ]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain("credential-canary");
+    const output = parseRecord(result.stdout);
+    expect(output.mode).toBe("dry-run");
+    expect(isRecord(output.policies)).toBe(true);
+    expect(stringArray(output.candidates).sort()).toEqual([...fixture.oldIds].sort());
+    expect(existsSync(path.join(fixture.workspace, "runs/old-run"))).toBe(true);
+  });
+
+  it("applies the planned candidate IDs", async () => {
+    const repo = await gitRepo();
+    const fixture = cleanupFixture(repo);
+    const result = await run(process.execPath, [
+      "--import", "tsx/esm", "cli/index.ts", "workspace", "cleanup",
+      "--repo", repo, "--now", "2026-08-20T00:00:00.000Z", "--apply", "--json",
+    ]);
+
+    expect(result.status).toBe(0);
+    const output = parseRecord(result.stdout);
+    expect(output.mode).toBe("apply");
+    expect(stringArray(output.candidates).sort()).toEqual([...fixture.oldIds].sort());
+    for (const id of fixture.oldIds) expect(existsSync(path.join(fixture.workspace, id))).toBe(false);
+    expect(existsSync(path.join(fixture.workspace, "runs/fresh-run"))).toBe(true);
+  });
+
+  it("honors the exact cleanup clock and retention policies", async () => {
+    const repo = await gitRepo();
+    const result = await run(process.execPath, ["--import", "tsx/esm", "cli/index.ts", "workspace", "cleanup", "--repo", repo, "--json", "--now", "2026-08-20T00:00:00.000Z", "--runs-days", "30", "--logs-days", "14", "--cache-days", "7", "--tmp-days", "1"]);
+
+    expect(result.status).toBe(0);
+    const output = parseRecord(result.stdout);
+    expect(output.now).toBe("2026-08-20T00:00:00.000Z");
+    expect(output.policies).toEqual({ runs: 30, logs: 14, cache: 7, tmp: 1 });
+  });
+
+  it("rejects invalid cleanup retention and timestamps", async () => {
+    const repo = await gitRepo();
+    for (const option of [
+      ["--runs-days", ""],
+      ["--runs-days", "-1"],
+      ["--logs-days", "1.5"],
+      ["--cache-days", "nope"],
+      ["--now", "not-a-timestamp"],
+    ]) {
+      const result = await run(process.execPath, ["--import", "tsx/esm", "cli/index.ts", "workspace", "cleanup", "--repo", repo, ...option]);
+      expect(result.status).not.toBe(0);
+    }
+  });
+
+  it("documents cleanup controls and never prints credential canaries", async () => {
+    const result = await run(process.execPath, ["--import", "tsx/esm", "cli/index.ts", "workspace", "cleanup", "--help"]);
+    expect(result.status).toBe(0);
+    const text = `${result.stdout}\n${result.stderr}`;
+    for (const token of ["cleanup", "--apply", "runs-days", "logs-days", "cache-days", "tmp-days"]) expect(text).toContain(token);
+    expect(text).not.toContain("credential-canary");
   });
 });
