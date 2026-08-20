@@ -101,3 +101,26 @@ export {
   type RepositoryIdentity,
   type RepositoryIdentityDeps,
 } from "./styrir-workspace-repository.js";
+
+export {
+  DEFAULT_STYRIR_RETENTION_DAYS,
+  MANAGED_STYRIR_CLASSES,
+  planWorkspaceRetention,
+  resolveRetentionPolicy,
+  type ManagedStyrirClass,
+  type RetentionCandidate,
+  type RetentionNode,
+  type RetentionOverrides,
+  type RetentionPlan,
+  type RetentionPolicy,
+  type RetentionReason,
+  type RetentionRecord,
+  type RootSnapshot,
+} from "./styrir-workspace-retention.js";
+
+export {
+  applyWorkspaceRetention,
+  type ApplyRetentionRecord,
+  type RetentionApplyResult,
+  type RetentionDeleteDeps,
+} from "./styrir-workspace-delete.js";

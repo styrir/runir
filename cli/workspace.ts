@@ -1,6 +1,10 @@
 import { parseArgs } from "node:util";
 import {
+  applyWorkspaceRetention,
+  planWorkspaceRetention,
+  resolveRetentionPolicy,
   resolveStyrirPaths,
+  type RetentionOverrides,
   type StyrirRootOverrides,
 } from "../src/shared/styrir-workspace.js";
 
@@ -21,9 +25,11 @@ export function workspaceUsage(): string {
 
 Usage:
   runir workspace resolve [root options] [--json] [--pretty]
+  runir workspace cleanup [root options] [retention options] [--apply] [--json]
 
 Commands:
   resolve   Resolve repository, .styrir, and user-scoped paths
+  cleanup   Plan retention cleanup; mutation requires --apply
 
 Override precedence:
   CLI flag > matching STYRIR_* environment > XDG variable > platform default
@@ -36,6 +42,14 @@ Root options:
   --state-root <path>           STYRIR_STATE_ROOT
   --cache-root <path>           STYRIR_CACHE_ROOT
   --runtime-root <path>         STYRIR_RUNTIME_ROOT
+
+Retention options:
+  --runs-days <n>               Default: 30
+  --logs-days <n>               Default: 14
+  --cache-days <n>              Default: 7
+  --tmp-days <n>                Default: 1
+  --now <ISO-8601>              Evaluation time; default is current time
+  --apply                       Apply the exact validated plan
 
 Output:
   --json       Emit machine-readable JSON
@@ -76,6 +90,67 @@ function printResolved(
   io.stdout(JSON.stringify(value, null, pretty ? 2 : undefined));
 }
 
+function retentionOverrides(
+  values: Readonly<Record<string, string | boolean | undefined>>,
+): RetentionOverrides {
+  const string = (name: string): string | undefined => {
+    const value = values[name];
+    return typeof value === "string" ? value : undefined;
+  };
+  return {
+    runs: string("runs-days"),
+    logs: string("logs-days"),
+    cache: string("cache-days"),
+    tmp: string("tmp-days"),
+  };
+}
+
+function cleanupNow(value: string | boolean | undefined): Date {
+  const now = typeof value === "string" ? new Date(value) : new Date();
+  if (!Number.isFinite(now.getTime())) {
+    throw new Error("--now must be a valid ISO-8601 timestamp");
+  }
+  return now;
+}
+
+async function runCleanup(
+  values: Readonly<Record<string, string | boolean | undefined>>,
+  io: WorkspaceIo,
+): Promise<number> {
+  const resolved = await resolveStyrirPaths({
+    repoStart: typeof values.repo === "string" ? values.repo : undefined,
+    env: io.env,
+    overrides: overrides(values),
+  });
+  const policies = resolveRetentionPolicy(retentionOverrides(values), io.env);
+  const plan = await planWorkspaceRetention(
+    resolved.workspaceRoot,
+    policies,
+    cleanupNow(values.now),
+  );
+  if (values.apply !== true) {
+    io.stdout(JSON.stringify({
+      mode: "dry-run",
+      now: plan.evaluatedAt,
+      policies: plan.policies,
+      candidates: plan.candidates.map((candidate) => candidate.id),
+      retained: plan.retained,
+    }, null, values.pretty ? 2 : undefined));
+    return 0;
+  }
+  const result = await applyWorkspaceRetention(plan);
+  io.stdout(JSON.stringify({
+    mode: "apply",
+    now: plan.evaluatedAt,
+    policies: plan.policies,
+    candidates: result.plannedCandidateIds,
+    deletedCandidateIds: result.deletedCandidateIds,
+    retained: result.retained,
+    errors: result.errors,
+  }, null, values.pretty ? 2 : undefined));
+  return result.errors.length === 0 ? 0 : 2;
+}
+
 export async function runWorkspaceCommand(
   argv: readonly string[],
   io: WorkspaceIo = defaultIo,
@@ -110,6 +185,9 @@ export async function runWorkspaceCommand(
   if (values.help) {
     io.stdout(workspaceUsage());
     return 0;
+  }
+  if (command === "cleanup") {
+    return runCleanup(values, io);
   }
   if (command !== "resolve") {
     io.stderr(`workspace command is not implemented: ${command}`);
