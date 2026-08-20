@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { fetchRecall } from "../src/recall/recall-client.js";
 import { formatTraceList, formatTraceReceipt, type TraceView } from "../src/recall/trace-receipt-format.js";
+import { runWorkspaceCommand } from "./workspace.js";
 
 const BASE_URL = process.env.RUNIR_URL ?? "http://localhost:7700";
 const DEFAULT_USER_ID = process.env.RUNIR_USER_ID ?? "default";
@@ -61,6 +62,7 @@ Commands:
   traces                       Memory Impact Viewer: list recent recall receipts
   traces   --id <id>           Full receipt: prompt → recalled memories → injected text → answer
   traces rate --id <id> --rating <r>  Rate a recall: helped|hurt|unused|missing|stale (+--note)
+  workspace                    Resolve and maintain Styrir workspace paths
 
 Global options:
   --session-id <id>            Session ID for scoped operations
@@ -294,6 +296,10 @@ async function main(): Promise<void> {
   if (tracesRate) rest = rest.slice(1);
 
   try {
+    if (command === "workspace") {
+      process.exitCode = await runWorkspaceCommand(rest);
+      return;
+    }
     const { values } = parseArgs({
       args: rest,
       options: {
