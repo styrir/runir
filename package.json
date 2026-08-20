@@ -25,6 +25,7 @@
     "review-studio:stub": "node --import tsx/esm tools/review-studio/stub-server.ts",
     "benchmark:think": "tsx scripts/model-benchmark-think.ts",
     "styrir:workspace": "node --import tsx/esm cli/index.ts workspace",
+    "workspace:check": "node --import tsx/esm cli/index.ts workspace check --repo . --json",
     "build:plugin-archives": "python3 scripts/build-plugin-marketplace-archives.py",
     "build:runir-mcp": "node scripts/build-runir-mcp.mjs",
     "test:runir-mcp:installed": "tsx scripts/runir-mcp-installed-smoke.ts",

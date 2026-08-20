@@ -210,4 +210,67 @@ describe("workspace CLI", () => {
     for (const token of ["cleanup", "--apply", "runs-days", "logs-days", "cache-days", "tmp-days"]) expect(text).toContain(token);
     expect(text).not.toContain("credential-canary");
   });
+
+  it("checks a compliant repository", async () => {
+    const repo = await gitRepo();
+    mkdirSync(path.join(repo, ".styrir"));
+    mkdirSync(path.join(repo, "docs/analysis"), { recursive: true });
+    mkdirSync(path.join(repo, "docs/release"), { recursive: true });
+    writeFileSync(path.join(repo, ".gitignore"), "/.styrir/\n/docs/analysis/\n");
+    writeFileSync(
+      path.join(repo, "docs/release/styrir-export-denylist.txt"),
+      "prefix:.styrir\nprefix:docs/analysis\n",
+    );
+    const result = await run(process.execPath, ["--import", "tsx/esm", "cli/index.ts", "workspace", "check", "--repo", repo, "--json"], { RUNIR_API_KEY: "credential-canary-environment" });
+    expect(result.status).toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("credential-canary");
+    const output = parseRecord(result.stdout);
+    expect(output.ok).toBe(true);
+    expect(output.failures).toEqual([]);
+  });
+
+  it("reports every repository check failure together", async () => {
+    const repo = await gitRepo();
+    writeFileSync(path.join(repo, ".styrir.toml"), "[workspace]\n");
+    writeFileSync(path.join(repo, ".styrir"), "artifact");
+    const result = await run(process.execPath, ["--import", "tsx/esm", "cli/index.ts", "workspace", "check", "--repo", repo, "--json"]);
+    expect(result.status).toBe(1);
+    const text = `${result.stdout}\n${result.stderr}`;
+    for (const token of [
+      "ignore_styrir",
+      "ignore_docs_analysis",
+      "export_deny_styrir",
+      "export_deny_docs_analysis",
+      "styrir_toml_absent",
+    ]) expect(text).toContain(token);
+  });
+
+  it("detects forced tracked workspace artifacts despite ignores", async () => {
+    const repo = await gitRepo();
+    writeFileSync(path.join(repo, ".gitignore"), "/.styrir/\n/docs/analysis/\n");
+    mkdirSync(path.join(repo, ".styrir"));
+    mkdirSync(path.join(repo, "docs/analysis"), { recursive: true });
+    writeFileSync(path.join(repo, ".styrir/forced"), "artifact");
+    writeFileSync(path.join(repo, "docs/analysis/forced"), "artifact");
+    await run("git", ["-C", repo, "add", "-f", ".styrir/forced", "docs/analysis/forced"]);
+    const result = await run(process.execPath, ["--import", "tsx/esm", "cli/index.ts", "workspace", "check", "--repo", repo]);
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("tracked_artifacts");
+  });
+
+  it("rejects an unconsumed workspace configuration", async () => {
+    const repo = await gitRepo();
+    writeFileSync(path.join(repo, ".styrir.toml"), "[workspace]\n");
+    const result = await run(process.execPath, ["--import", "tsx/esm", "cli/index.ts", "workspace", "check", "--repo", repo]);
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("styrir_toml_absent");
+  });
+
+  it("documents check and workspace policy in general help", async () => {
+    const result = await run(process.execPath, ["--import", "tsx/esm", "cli/index.ts", "workspace", "--help"]);
+    expect(result.status).toBe(0);
+    const text = `${result.stdout}\n${result.stderr}`;
+    for (const token of ["resolve", "cleanup", "check", "Override precedence", "Default: 30", "Default: 14", "Default: 7", "Default: 1"]) expect(text).toContain(token);
+    expect(text).not.toContain("credential-canary");
+  });
 });
