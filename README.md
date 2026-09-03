@@ -2,6 +2,8 @@
 
 Standalone HTTP memory service for AI agents. Rúnir provides persistent, just-in-time, just-enough memory for model turns: relevant recall before each turn, durable capture after turns, and watermarked session-close bookkeeping at boundaries — all without depending on any specific agent framework. It represents knowledge as Semiotes, continuously interprets them through Semiosis, conditions that interpretation through Hexis, and consolidates stable meaning into Noema. Syndesis enables cross-session recall. SurrealDB is the operational source of truth. Rúnir helps AI practitioners preserve continuity, retrieve relevant knowledge, and maintain long-term context over time.
 
+![Rúnir memory infographic: the vocabulary (semiote, semiosis, hexis, noema, syndesis, archeion), the four-leg recall pipeline, and write arbitration with lineage](docs/assets/runir-memory-infographic.png)
+
 This README is the front door. The frozen zed-01 beta surface (endpoints, ratified decisions, degraded modes, known limitations) is [docs/zed-01-beta-scope.md](docs/zed-01-beta-scope.md). This repository is the filtered product tree and the active development home; the deeper architecture narrative and lab tooling remained in the pre-1.0 forge archive (provenance in [STYRIR_EXPORT.md](STYRIR_EXPORT.md)).
 
 ## What it does
