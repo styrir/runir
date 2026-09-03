@@ -35,6 +35,9 @@ graphify-out/
 .idea/
 .beads-credential-key
 
+# SurrealDB CLI query history
+history.txt
+
 # Keep tracked (product surface — do NOT add these to ignore):
 #   .github/          CI
 #   .claude-plugin/   Claude marketplace packaging for this product
