@@ -12,6 +12,7 @@ const PUBLIC_PATHS = new Set([
   "/hooks/entity-repair",
   "/hooks/entity-candidates",
   "/hooks/evidence",
+  "/hooks/enroll",
 ]);
 
 function readBearerToken(header: string | undefined): string | null {

@@ -37,7 +37,7 @@ import {
   upsertProjectState,
 } from "../../../storage/surreal/surreal-store.js";
 import { linkEntityToMemory } from "../../../entities/entity-store.js";
-import { getProjectEnrollment } from "../../../storage/surreal/continuity-state-store.js";
+import { getProjectEnrollment, upsertProjectEnrollment } from "../../../storage/surreal/continuity-state-store.js";
 import { ingestEvidenceBatch } from "../../../lifecycle/evidence/evidence-ingest.js";
 import { canonicalizeWorkspaceId } from "../../../identity/canonical-context.js";
 import { runConsolidationForScope } from "../../../lifecycle/semion/consolidation.js";
@@ -87,6 +87,26 @@ import {
   resolveActiveHexis,
   writeWithArbitration,
 } from "../../runtime.js";
+
+function optionalTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+/** A-1: accept only a credential-stripped remote identity, never a raw URL or path. */
+function isSeamSafeRepoRemote(value: string): boolean {
+  if (/^[a-z]+:\/\//i.test(value)) return false;
+  if (value.includes("@")) return false;
+  if (value.startsWith("/") || value.startsWith(".") || value.startsWith("file:")) return false;
+  if (/^[a-z]:[\\/]/i.test(value)) return false;
+  if (/\.git$/i.test(value)) return false;
+  return value.length > 0 && !value.includes("://");
+}
+
+function isFp24(value: string): boolean {
+  return /^[0-9a-f]{24}$/.test(value);
+}
 
 function entityMentionOverlapsWithFact(mention: EntityMention, factText: string): boolean {
   const nameLower = mention.name.toLowerCase();
@@ -642,6 +662,73 @@ export function registerHookRoutes(app: Hono) {
       }
     }
     return c.json({ accepted: outcomes.length, outcomes });
+  });
+
+  // S-2 enrollment HTTP upsert — the store-only upsertProjectEnrollment face
+  // Leit can call (leit-31p.1.1). Same RUNIR_EVIDENCE_SECRET bearer as
+  // /hooks/evidence; same PUBLIC_PATHS exemption. Body is the ratified A-1
+  // write; no raw paths/URLs; workspaceId canonicalizes to "-".
+  app.post("/hooks/enroll", async (c) => {
+    const secret = process.env.RUNIR_EVIDENCE_SECRET;
+    const auth = c.req.header("Authorization");
+    if (!secret || auth !== `Bearer ${secret}`) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
+    const parsed = await c.req.json().catch(() => ({}));
+    const body = parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+    if (typeof body.userId !== "string" || !body.userId.trim()) {
+      return c.json({ error: "userId is required" }, 400);
+    }
+    let uid: string;
+    try {
+      uid = resolveUserId(body.userId, cfg);
+    } catch {
+      return c.json({ error: "unauthorized" }, 400);
+    }
+    const projectKey = typeof body.projectKey === "string" && body.projectKey.trim() ? body.projectKey.trim() : undefined;
+    if (!projectKey) return c.json({ error: "projectKey required" }, 400);
+    const source = body.source;
+    if (source !== "leit" && source !== "manual") {
+      return c.json({ error: "source must be leit or manual" }, 400);
+    }
+    const repoRemote = optionalTrimmedString(body.repoRemote);
+    if (repoRemote !== undefined && !isSeamSafeRepoRemote(repoRemote)) {
+      return c.json({ error: "repoRemote must be a credential-stripped remote identity" }, 400);
+    }
+    const repoRootFingerprint = optionalTrimmedString(body.repoRootFingerprint);
+    if (repoRootFingerprint !== undefined && !isFp24(repoRootFingerprint)) {
+      return c.json({ error: "repoRootFingerprint must be sha256-hex-24" }, 400);
+    }
+    const workspaceId = canonicalizeWorkspaceId(typeof body.workspaceId === "string" ? body.workspaceId : undefined);
+    const projectId = optionalTrimmedString(body.projectId);
+    const defaultNamespaceId = optionalTrimmedString(body.defaultNamespaceId);
+    const existing = await getProjectEnrollment(runtime.db, uid, workspaceId, projectKey);
+    const mergedProjectId = projectId ?? existing?.projectId;
+    const mergedNamespaceId = defaultNamespaceId ?? existing?.defaultNamespaceId;
+    const mergedRemote = repoRemote ?? existing?.repoRemote;
+    const mergedFingerprint = repoRootFingerprint ?? existing?.repoRootFingerprint;
+    const enrollment = await upsertProjectEnrollment(runtime.db, {
+      userId: uid,
+      workspaceId,
+      projectKey,
+      source,
+      ...(mergedProjectId ? { projectId: mergedProjectId } : {}),
+      ...(mergedNamespaceId ? { defaultNamespaceId: mergedNamespaceId } : {}),
+      ...(mergedRemote ? { repoRemote: mergedRemote } : {}),
+      ...(mergedFingerprint ? { repoRootFingerprint: mergedFingerprint } : {}),
+      ...(existing?.enrolledAt ? { enrolledAt: existing.enrolledAt } : {}),
+    });
+    return c.json({
+      userId: enrollment.userId,
+      workspaceId: enrollment.workspaceId,
+      projectKey: enrollment.projectKey,
+      ...(enrollment.projectId ? { projectId: enrollment.projectId } : {}),
+      ...(enrollment.defaultNamespaceId ? { defaultNamespaceId: enrollment.defaultNamespaceId } : {}),
+      ...(enrollment.repoRemote ? { repoRemote: enrollment.repoRemote } : {}),
+      ...(enrollment.repoRootFingerprint ? { repoRootFingerprint: enrollment.repoRootFingerprint } : {}),
+      source: enrollment.source,
+      enrolledAt: enrollment.enrolledAt,
+    });
   });
 
   // S-2 evidence ingestion (Rúnir-78sy.9, Archeion v2 Phase 0/3b). Leit's

@@ -2794,3 +2794,238 @@ describe("POST /hooks/evidence", () => {
     delete process.env.RUNIR_EVIDENCE_SECRET;
   });
 });
+
+// ---------------------------------------------------------------------------
+// POST /hooks/enroll (HTTP face of upsertProjectEnrollment)
+// ---------------------------------------------------------------------------
+describe("POST /hooks/enroll", () => {
+  const ENROLL_USER = "u-enroll";
+  const PROJECT_KEY = "leit";
+
+  function installEnrollRouteMocks() {
+    const rows = new Map<string, any>();
+    (runtimeModule.runtime.db.query as any).mockImplementation(async (sql: string, vars?: Record<string, any>) => {
+      if (sql.includes("FROM type::record('project_enrollment'") && sql.includes("SELECT")) {
+        const row = rows.get(vars?.recordId);
+        return [[row].filter(Boolean)];
+      }
+      if (sql.includes("UPSERT type::record('project_enrollment'")) {
+        const row = {
+          id: vars?.recordId,
+          user_id: vars?.userId,
+          workspace_id: vars?.workspaceId,
+          project_key: vars?.projectKey,
+          project_id: vars?.projectId ?? null,
+          default_namespace_id: vars?.defaultNamespaceId ?? null,
+          repo_remote: vars?.repoRemote ?? null,
+          repo_root_fingerprint: vars?.repoRootFingerprint ?? null,
+          source: vars?.source,
+          enrolled_at: vars?.enrolledAt,
+        };
+        rows.set(vars?.recordId, row);
+        return [[row]];
+      }
+      return [[]];
+    });
+  }
+
+  beforeEach(() => {
+    delete process.env.RUNIR_EVIDENCE_SECRET;
+    delete process.env.RUNIR_API_KEY;
+    delete process.env.RUNIR_REQUIRE_API_KEY;
+    delete process.env.NODE_ENV;
+    delete process.env.RUNIR_SINGLE_TENANT;
+  });
+
+  it("401s when RUNIR_EVIDENCE_SECRET is unset (fail-closed)", async () => {
+    installEnrollRouteMocks();
+    const app = getApp();
+    const res = await app.request("/hooks/enroll", {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: "Bearer anything" },
+      body: JSON.stringify({ userId: ENROLL_USER, projectKey: PROJECT_KEY, source: "leit" }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("401s on a wrong bearer token", async () => {
+    process.env.RUNIR_EVIDENCE_SECRET = "correct-secret";
+    installEnrollRouteMocks();
+    const app = getApp();
+    const res = await app.request("/hooks/enroll", {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: "Bearer wrong-secret" },
+      body: JSON.stringify({ userId: ENROLL_USER, projectKey: PROJECT_KEY, source: "leit" }),
+    });
+    expect(res.status).toBe(401);
+    delete process.env.RUNIR_EVIDENCE_SECRET;
+  });
+
+  it("under RUNIR_REQUIRE_API_KEY=1 with no RUNIR_API_KEY returns the handler 401 not middleware 503", async () => {
+    process.env.RUNIR_REQUIRE_API_KEY = "1";
+    installEnrollRouteMocks();
+    const app = getApp();
+    const res = await app.request("/hooks/enroll", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ userId: ENROLL_USER, projectKey: PROJECT_KEY, source: "leit" }),
+    });
+    const json = await res.json();
+    expect(res.status).toBe(401);
+    expect(json.error).toBe("unauthorized");
+    delete process.env.RUNIR_REQUIRE_API_KEY;
+  });
+
+  it("400s when userId is missing", async () => {
+    process.env.RUNIR_EVIDENCE_SECRET = "test-secret";
+    installEnrollRouteMocks();
+    const app = getApp();
+    const res = await app.request("/hooks/enroll", {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: "Bearer test-secret" },
+      body: JSON.stringify({ projectKey: PROJECT_KEY, source: "leit" }),
+    });
+    const json = await res.json();
+    expect(res.status).toBe(400);
+    expect(json.error).toBe("userId is required");
+    delete process.env.RUNIR_EVIDENCE_SECRET;
+  });
+
+  it("400s when projectKey is missing", async () => {
+    process.env.RUNIR_EVIDENCE_SECRET = "test-secret";
+    installEnrollRouteMocks();
+    const app = getApp();
+    const res = await app.request("/hooks/enroll", {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: "Bearer test-secret" },
+      body: JSON.stringify({ userId: ENROLL_USER, source: "leit" }),
+    });
+    expect(res.status).toBe(400);
+    delete process.env.RUNIR_EVIDENCE_SECRET;
+  });
+
+  it("400s when source is not leit or manual", async () => {
+    process.env.RUNIR_EVIDENCE_SECRET = "test-secret";
+    installEnrollRouteMocks();
+    const app = getApp();
+    const res = await app.request("/hooks/enroll", {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: "Bearer test-secret" },
+      body: JSON.stringify({ userId: ENROLL_USER, projectKey: PROJECT_KEY, source: "archeion" }),
+    });
+    const json = await res.json();
+    expect(res.status).toBe(400);
+    expect(json.error).toBe("source must be leit or manual");
+    delete process.env.RUNIR_EVIDENCE_SECRET;
+  });
+
+  it("400s on a raw remote URL (A-1)", async () => {
+    process.env.RUNIR_EVIDENCE_SECRET = "test-secret";
+    installEnrollRouteMocks();
+    const app = getApp();
+    const res = await app.request("/hooks/enroll", {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: "Bearer test-secret" },
+      body: JSON.stringify({
+        userId: ENROLL_USER,
+        projectKey: PROJECT_KEY,
+        source: "leit",
+        repoRemote: "https://github.com/AlphaComposite/leit.git",
+      }),
+    });
+    const json = await res.json();
+    expect(res.status).toBe(400);
+    expect(json.error).toMatch(/repoRemote/);
+    delete process.env.RUNIR_EVIDENCE_SECRET;
+  });
+
+  it("400s on a raw repo path fingerprint (A-1)", async () => {
+    process.env.RUNIR_EVIDENCE_SECRET = "test-secret";
+    installEnrollRouteMocks();
+    const app = getApp();
+    const res = await app.request("/hooks/enroll", {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: "Bearer test-secret" },
+      body: JSON.stringify({
+        userId: ENROLL_USER,
+        projectKey: PROJECT_KEY,
+        source: "leit",
+        repoRootFingerprint: "/Users/brooks/Code/leit",
+      }),
+    });
+    const json = await res.json();
+    expect(res.status).toBe(400);
+    expect(json.error).toMatch(/repoRootFingerprint/);
+    delete process.env.RUNIR_EVIDENCE_SECRET;
+  });
+
+  it("200 upserts the Leit A-1 payload and canonicalizes omitted workspaceId to '-'", async () => {
+    process.env.RUNIR_EVIDENCE_SECRET = "test-secret";
+    installEnrollRouteMocks();
+    const app = getApp();
+    const res = await app.request("/hooks/enroll", {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: "Bearer test-secret" },
+      body: JSON.stringify({
+        userId: ENROLL_USER,
+        projectKey: PROJECT_KEY,
+        projectId: "project:leit",
+        repoRemote: "github.com/alphacomposite/leit",
+        repoRootFingerprint: "aaaaaaaaaaaaaaaaaaaaaaaa",
+        source: "leit",
+      }),
+    });
+    const json = await res.json();
+    expect(res.status).toBe(200);
+    expect(json.userId).toBe(ENROLL_USER);
+    expect(json.workspaceId).toBe("-");
+    expect(json.projectKey).toBe(PROJECT_KEY);
+    expect(json.projectId).toBe("project:leit");
+    expect(json.repoRemote).toBe("github.com/alphacomposite/leit");
+    expect(json.repoRootFingerprint).toBe("aaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(json.source).toBe("leit");
+    expect(typeof json.enrolledAt).toBe("string");
+    delete process.env.RUNIR_EVIDENCE_SECRET;
+  });
+
+  it("preserves A-1 optionals when a later enroll omits them", async () => {
+    process.env.RUNIR_EVIDENCE_SECRET = "test-secret";
+    installEnrollRouteMocks();
+    const app = getApp();
+    const headers = { "content-type": "application/json", Authorization: "Bearer test-secret" };
+    const first = await app.request("/hooks/enroll", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        userId: ENROLL_USER,
+        workspaceId: "ws",
+        projectKey: PROJECT_KEY,
+        projectId: "project:leit",
+        defaultNamespaceId: "ns:leit",
+        repoRemote: "github.com/alphacomposite/leit",
+        repoRootFingerprint: "aaaaaaaaaaaaaaaaaaaaaaaa",
+        source: "leit",
+      }),
+    });
+    expect(first.status).toBe(200);
+    const firstJson = await first.json();
+    const second = await app.request("/hooks/enroll", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        userId: ENROLL_USER,
+        workspaceId: "ws",
+        projectKey: PROJECT_KEY,
+        source: "leit",
+      }),
+    });
+    const json = await second.json();
+    expect(second.status).toBe(200);
+    expect(json.projectId).toBe("project:leit");
+    expect(json.defaultNamespaceId).toBe("ns:leit");
+    expect(json.repoRemote).toBe("github.com/alphacomposite/leit");
+    expect(json.repoRootFingerprint).toBe("aaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(json.enrolledAt).toBe(firstJson.enrolledAt);
+    delete process.env.RUNIR_EVIDENCE_SECRET;
+  });
+});
