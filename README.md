@@ -56,7 +56,7 @@ Agent (any framework)
   └─ POST /debug/ping          ← dry-run pipeline (RUNIR_DEBUG=1 only)
 ```
 
-The frozen endpoint list with source-line registrations lives in [docs/zed-01-beta-scope.md §1](docs/zed-01-beta-scope.md). Not shown above: the maintenance-class internal routes (`POST /hooks/entity-repair`, `POST /hooks/entity-candidates` — `MAINTENANCE_SECRET` bearer), `POST /hooks/evidence` (its own separate `RUNIR_EVIDENCE_SECRET` bearer), and `POST /hooks/traces/:id/rate` — all ops-only, not client surfaces.
+The frozen endpoint list with source-line registrations lives in [docs/zed-01-beta-scope.md §1](docs/zed-01-beta-scope.md). Not shown above: the maintenance-class internal routes (`POST /hooks/entity-repair`, `POST /hooks/entity-candidates` — `MAINTENANCE_SECRET` bearer), `POST /hooks/evidence` and `POST /hooks/enroll` (shared `RUNIR_EVIDENCE_SECRET` bearer), and `POST /hooks/traces/:id/rate` — all ops-only, not client surfaces.
 
 ### Retrieval pipeline
 
