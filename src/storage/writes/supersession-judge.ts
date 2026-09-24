@@ -71,6 +71,8 @@ export interface SupersessionJudgeCounters {
   vetoed: number;
   confirmed: number;
   duplicate: number;
+  /** Rúnir-szl: fact texts matched and only provenance differed; kept both without an LLM call. */
+  indistinguishable: number;
   ledger_write_failures: number;
 }
 
@@ -121,9 +123,20 @@ export const DEFAULT_JUDGE_CONFIDENCE_FLOOR = 0.6;
 export const DEFAULT_JUDGE_TEMPERATURE = 0.1;
 
 /** Rúnir-pn1l.13.7 D6 — frozen prompt version id carried in handle identity + provenance. */
-export const JUDGE_PROMPT_VERSION = "v2-continuation-2026-07-09";
+export const JUDGE_PROMPT_VERSION = "v3-strip-provenance-2026-09-25";
 
-const KEEP_BOTH: SupersessionVerdict = { verdict: "independent", confidence: 0 };
+/**
+ * What the judge sees of capture's provenance blocks (Rúnir-szl).
+ * "strip-provenance" is production; "raw" reproduces the v2 benchmark candidate.
+ */
+export type JudgeInputView = "raw" | "strip-provenance";
+
+export const JUDGE_PROMPT_VERSION_BY_VIEW: Readonly<Record<JudgeInputView, string>> = {
+  raw: "v2-continuation-2026-07-09",
+  "strip-provenance": JUDGE_PROMPT_VERSION,
+};
+
+export const KEEP_BOTH: SupersessionVerdict = { verdict: "independent", confidence: 0 };
 const VALID_LABELS: ReadonlySet<string> = new Set(["duplicate", "supersede", "independent"]);
 
 /**
@@ -150,11 +163,58 @@ export function judgePromptSha256(): string {
   return createHash("sha256").update(JUDGE_SYSTEM_PROMPT).digest("hex");
 }
 
+/**
+ * Capture appends trailing blocks to l2: `\n\nSource:\n…` (code excerpt) and
+ * `\n\nExact source list:\n…` (list repair; often the whole turn's list).
+ * Same-turn sibling facts carry the same or overlapping blocks, which made the
+ * judge read distinct facts as duplicates, and a one-sided turn list made NEW
+ * look like it covered OLD (Rúnir-szl). The judge therefore compares the fact
+ * text without these blocks. When the fact texts match (ignoring case, spacing,
+ * and trailing punctuation) but the blocks differ, the blocks are the only
+ * difference and the judge cannot weigh them fairly either way, so the pair is
+ * `indistinguishable` and callers keep both without asking the model. Stored l2
+ * keeps every block for retrieval.
+ */
+const PROVENANCE_MARKERS = ["\n\nSource:\n", "\n\nExact source list:\n"] as const;
+
+function withoutProvenance(text: string): string {
+  let cut = text.length;
+  for (const marker of PROVENANCE_MARKERS) {
+    const at = text.indexOf(marker);
+    if (at >= 0 && at < cut) cut = at;
+  }
+  return text.slice(0, cut).trimEnd();
+}
+
+function comparable(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").replace(/[.,;:!?]+$/, "").trim();
+}
+
+/** The OLD/NEW texts the judge sees under `view`, and whether it can tell them apart. */
+export function judgeInputTexts(
+  oldText: string,
+  newText: string,
+  view: JudgeInputView,
+): { oldText: string; newText: string; indistinguishable: boolean } {
+  if (view === "raw") return { oldText, newText, indistinguishable: false };
+  const stripped = { oldText: withoutProvenance(oldText), newText: withoutProvenance(newText) };
+  // Blocks compare exactly (case and indentation can matter in code and lists);
+  // only the fact text is compared loosely.
+  const blocksDiffer = oldText.slice(stripped.oldText.length).trim() !== newText.slice(stripped.newText.length).trim();
+  const indistinguishable = blocksDiffer && comparable(stripped.oldText) === comparable(stripped.newText);
+  return { ...stripped, indistinguishable };
+}
+
 /** Build the role-labeled chat messages for one OLD/NEW judgement. */
-export function buildJudgePrompt(oldText: string, newText: string): LlmGatewayMessage[] {
+export function buildJudgePrompt(
+  oldText: string,
+  newText: string,
+  view: JudgeInputView = "strip-provenance",
+): LlmGatewayMessage[] {
+  const texts = judgeInputTexts(oldText, newText, view);
   return [
     { role: "system", content: JUDGE_SYSTEM_PROMPT },
-    { role: "user", content: `OLD:\n${oldText}\n\nNEW:\n${newText}` },
+    { role: "user", content: `OLD:\n${texts.oldText}\n\nNEW:\n${texts.newText}` },
   ];
 }
 
@@ -234,6 +294,7 @@ export function emptyJudgeCounters(): SupersessionJudgeCounters {
     vetoed: 0,
     confirmed: 0,
     duplicate: 0,
+    indistinguishable: 0,
     ledger_write_failures: 0,
   };
 }

@@ -88,6 +88,7 @@ describe("health routes", () => {
         vetoed: expect.any(Number),
         confirmed: expect.any(Number),
         duplicate: expect.any(Number),
+        indistinguishable: expect.any(Number),
         ledger_write_failures: expect.any(Number),
       }),
     );

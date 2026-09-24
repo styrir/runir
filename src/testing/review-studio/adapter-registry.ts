@@ -1,6 +1,8 @@
+import { JUDGE_BENCHMARK_SCHEMA_VERSION } from "../judge-benchmark/types.js";
 import { BENCHMARK_SCHEMA_VERSION } from "../model-benchmark/types.js";
 import { THINK_BENCHMARK_SCHEMA_VERSION } from "../think-benchmark/types.js";
 import { adaptBenchmarkRun, ReviewAdapterError } from "./benchmark-adapter.js";
+import { adaptJudgeBenchmarkRun } from "./judge-adapter.js";
 import { adaptThinkBenchmarkRun } from "./think-adapter.js";
 import type { BenchmarkRunBundle, ReviewRun } from "./types.js";
 
@@ -12,6 +14,7 @@ export type ReviewRunAdapter = {
 export const REVIEW_RUN_ADAPTERS: readonly ReviewRunAdapter[] = [
   { sourceSchemaVersion: BENCHMARK_SCHEMA_VERSION, adapt: adaptBenchmarkRun },
   { sourceSchemaVersion: THINK_BENCHMARK_SCHEMA_VERSION, adapt: adaptThinkBenchmarkRun },
+  { sourceSchemaVersion: JUDGE_BENCHMARK_SCHEMA_VERSION, adapt: adaptJudgeBenchmarkRun },
 ];
 
 const ADAPTER_BY_SCHEMA = new Map<string, ReviewRunAdapter>();

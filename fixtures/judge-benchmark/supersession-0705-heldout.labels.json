@@ -1,0 +1,1576 @@
+{
+  "schemaVersion": "runir-judge-benchmark/v1",
+  "taskId": "supersession-pair/v1",
+  "datasetId": "supersession-0705-heldout",
+  "legacyBinaryGold": true,
+  "pairs": [
+    {
+      "pairId": "supersede_shadow:c92kmo2qn5vl279vjqal",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "80d76f02-d703-4332-9334-182163f32386",
+        "sha256": "57418132e0841b405d13850df65016530b0c4efb1555eb44c9bde27de6af7221",
+        "createdAt": "2026-06-24T17:39:16.082Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "1b2588fb-917b-4760-9e00-db5bc5dc8d8d",
+        "sha256": "bd3e1c745ef6456dbe10cdc9c4f9e400391acdf39c7cf24d026aaa0a97f6e173",
+        "createdAt": "2026-06-24T17:49:49.541Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7643179147449091,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "reconciled_content_verified",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:o4525tnk3xq2fmnm40gm",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "78a66017-333a-4bb5-9401-c1fce6d41ae2",
+        "sha256": "5dcd7e40926d43ec7fd3c9eedd0092a9a0258ebc0af82eabe706b1180c3a30af",
+        "createdAt": "2026-06-24T19:07:54.619Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "78a66017-333a-4bb5-9401-c1fce6d41ae2",
+        "sha256": "5dcd7e40926d43ec7fd3c9eedd0092a9a0258ebc0af82eabe706b1180c3a30af",
+        "createdAt": "2026-06-24T19:07:54.619Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8770739562430289,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:8nzmzkeryugnbtdadpwn",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "2e1b0c07-d0fa-456f-8d20-df8d0b3391f0",
+        "sha256": "7847428da9b8ade4683b2ffaecc8327c768992deb48cce9d42b35617482d3ab0",
+        "createdAt": "2026-06-24T20:33:52.321Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "b73761ef-d848-49a1-a980-9254e26da599",
+        "sha256": "0e822f35474d1d74cfcdbd175aeff8b07d118dbff6b42f7dadca4d051118e167",
+        "createdAt": "2026-06-25T07:01:05.953Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.845330303529409,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:o68a8l5fw24pztxepf14",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "991ba1e2-5ad8-400d-8f02-848b25b2c45a",
+        "sha256": "5234b30c12c037f028cd0334d5f5d5160b61a2ff42336cec6045f2a49c113b80",
+        "createdAt": "2026-07-03T04:41:46.650Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "1bee27c4-7ffb-4a0e-bee0-7d4c86759bba",
+        "sha256": "22cc3b20fe2fe3b5cca7895a2cf0335ab3945070c0afdb93d8b814aa8a81b128",
+        "createdAt": "2026-07-03T04:41:47.086Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7972828212938292,
+      "gold": {
+        "label": "independent",
+        "labelA": "supersede",
+        "labelB": "independent",
+        "resolution": "reconciled_content_verified",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:cfhcoe1hsrs8z7g6rxvq",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "991ba1e2-5ad8-400d-8f02-848b25b2c45a",
+        "sha256": "5234b30c12c037f028cd0334d5f5d5160b61a2ff42336cec6045f2a49c113b80",
+        "createdAt": "2026-07-03T04:41:46.650Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "403f361c-bb2b-4517-b982-346b6e4e0e47",
+        "sha256": "dd41f648d89495873ae00e745dde54c65c63ed30d6e18ddf815b8903c3285c4f",
+        "createdAt": "2026-07-03T04:41:47.516Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8147252207603787,
+      "gold": {
+        "label": "independent",
+        "labelA": "supersede",
+        "labelB": "independent",
+        "resolution": "reconciled_content_verified",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:bumj8pu8pjbzqsn8td5l",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "948de781-97ec-49b3-8592-84d2890a905d",
+        "sha256": "cf607169d68997ef780509cc4cab5642b4e33c510c0f44a3e81307451388c06a",
+        "createdAt": "2026-07-03T05:49:46.256Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "b6b02598-789e-4af2-9aa7-329bc9d0616a",
+        "sha256": "44909701898c4b70263a654321c7bd489064ff83feb5e3ef1bc66e79f3a7d26f",
+        "createdAt": "2026-07-03T06:29:22.734Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7654416607602641,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:jocvybtwcozz2a1na6vx",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "ecb3848b-708b-478b-9bc5-fde76a5d5d71",
+        "sha256": "bdef5566dc2ddf9bacf98f6c9998ea4e169b351c2da11122f1cf4cc3a4d64bad",
+        "createdAt": "2026-07-03T05:23:41.104Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "9e48e7fc-b752-4213-a303-526c9332df46",
+        "sha256": "26a5d1bbc9739a1ccb9cc5bd6fbced44258e6914f7af527f4eff2c9e7567cbba",
+        "createdAt": "2026-07-03T09:09:17.371Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8374988914842851,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:ay4th5phhqk4hdccsgd2",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "e4fa6ce7-4971-4ab9-84dc-20ef021002d9",
+        "sha256": "ccc485d0332ba013edb3d9b71bb8ac32f61260f078f9f2148115789d759c7ec7",
+        "createdAt": "2026-07-03T09:29:50.423Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "fe27a5ff-9e00-45b1-97b7-3fe8da099a4e",
+        "sha256": "c6f7b4f616ecba96c7d7ba646647236185b896dcc68ca81c1c4bd876f5ee3985",
+        "createdAt": "2026-07-03T08:03:50.552Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7878851834463088,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:0wxv83rz82in0fh73jjr",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "e4fa6ce7-4971-4ab9-84dc-20ef021002d9",
+        "sha256": "ccc485d0332ba013edb3d9b71bb8ac32f61260f078f9f2148115789d759c7ec7",
+        "createdAt": "2026-07-03T09:29:50.423Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "a40b816d-a03c-4bba-a5b4-8c9647713ba7",
+        "sha256": "25498bd967088a35073e2eec7efd5d674a511f282506c114451ad0e04dedf8d3",
+        "createdAt": "2026-07-03T09:29:51.429Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7988087439008381,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:ketkpwmkb0cm5dz5yvse",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "b94a5680-4d88-4f26-9753-8a5e6c68be28",
+        "sha256": "4503df460c6b0796e449fe99bae3f4595416d70812a543027f0de53efca74f9c",
+        "createdAt": "2026-07-03T09:23:09.478Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "1198e37a-bb5b-4ef6-a41c-e43048846331",
+        "sha256": "e8edb387ab13bd3d6107bda4271523d51a854c59d142f87a770962cb76e6b6cb",
+        "createdAt": "2026-07-03T09:30:24.566Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7818867388645792,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:xhp4cmkfcjmx13vv6706",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "51d88a87-3b73-49a3-8eb2-c720ae5b5053",
+        "sha256": "5d263673c4e74e67ddef7097eb7b9367c66ab1833359825d4c9c995daff17d7f",
+        "createdAt": "2026-07-03T11:42:11.972Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "bd165b56-199e-45ce-b08a-11732814126c",
+        "sha256": "e46aa6970d67eea53b14fdfa9fa6f328fc129a22614b4c356b330b8a7213e14f",
+        "createdAt": "2026-07-03T11:42:12.439Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7917765829858926,
+      "gold": {
+        "label": "independent",
+        "labelA": "supersede",
+        "labelB": "independent",
+        "resolution": "reconciled_content_verified",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:dw8ymlko3qgomj3k8o62",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "b94a5680-4d88-4f26-9753-8a5e6c68be28",
+        "sha256": "4503df460c6b0796e449fe99bae3f4595416d70812a543027f0de53efca74f9c",
+        "createdAt": "2026-07-03T09:23:09.478Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "7420de13-7eb9-49df-8143-f7de182858f0",
+        "sha256": "c226995d230be75d570c139bf618db37bb0ee82d265fe257aac43c48910f5504",
+        "createdAt": "2026-07-03T11:51:24.183Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7640774438783362,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:qeqxin20q6mxxsggarj3",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "b94a5680-4d88-4f26-9753-8a5e6c68be28",
+        "sha256": "4503df460c6b0796e449fe99bae3f4595416d70812a543027f0de53efca74f9c",
+        "createdAt": "2026-07-03T09:23:09.478Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "90333ac4-796c-4b02-b203-364351078312",
+        "sha256": "cec92839f46918fa3030c5095cf62d1b37487ac70beaf8ce3ba93429e091f51e",
+        "createdAt": "2026-07-03T11:52:28.065Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8045178959633461,
+      "gold": {
+        "label": "supersede",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "reconciled_content_verified",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:agy3vaypeakydz7k9421",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "90333ac4-796c-4b02-b203-364351078312",
+        "sha256": "cec92839f46918fa3030c5095cf62d1b37487ac70beaf8ce3ba93429e091f51e",
+        "createdAt": "2026-07-03T11:52:28.065Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "b726b361-51e5-48c7-a837-a8e42530eb44",
+        "sha256": "77e379db5403488c68917855db9ae300998f1c1a6361b6a40fe2d9bb666129d6",
+        "createdAt": "2026-07-03T11:57:29.212Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8384552785885141,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:4ynacvsp4info6mshovm",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "605ed694-60cc-4497-8ea0-e86d4f070f0c",
+        "sha256": "bfdfb64b14243496f832596e763f4c21310471be7711e62c2aa5c7957597b660",
+        "createdAt": "2026-07-03T12:53:40.854Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "19887502-7cd6-495c-a764-ed319c7551f0",
+        "sha256": "1bd53a2de99a54c32b60848a115efb54608db4dddcad9992afc1e04d054791bb",
+        "createdAt": "2026-07-03T15:04:51.646Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8197930303144141,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:uabjh20mel3famlgior4",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "5150b24b-a314-4117-b389-c35410da54bc",
+        "sha256": "7406dac8fac250cfdd7e042fbb8b1b62614499c04d66988180bd048b5b76682a",
+        "createdAt": "2026-07-03T11:42:12.882Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "b75953b0-08e4-4132-8bcb-6dc4f24813f3",
+        "sha256": "b86a7e50240ca669607d5017842bd712c7cd3ff8db03490f6924626fe803a81c",
+        "createdAt": "2026-07-03T15:21:05.018Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7920010517226399,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:ele7lq0nyrroci0g5ppm",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "7016405c-830c-4d02-a733-abf637b7af58",
+        "sha256": "deaa3cf5ee615b1c29c373167c5b6c193d15e383d7d3a9274f8dbb7237e30b3b",
+        "createdAt": "2026-07-03T12:49:27.506Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "3701ce72-e761-43e4-9571-267d9073f830",
+        "sha256": "7308319779aeb80a1c14d44eb716c0fe7956a9b4c14d39612eb43862cb680a39",
+        "createdAt": "2026-07-03T15:22:20.743Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8001787135408067,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:w86qf7ub83c0j8u3rw0a",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "70a08ac7-3681-48ab-aa3d-4a0c5d6c4311",
+        "sha256": "bf715c10b31610ae43f7a0a264596a3b6c34ae9548b80d3667c2dc544d4d2935",
+        "createdAt": "2026-07-03T15:54:44.793Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "c4a414b0-8d2e-4716-8569-a4fbf9143c29",
+        "sha256": "e92db8bd06a321e8835dd80349e878e2a44dfa0bf6af08fd6f297f5431b08d43",
+        "createdAt": "2026-07-03T16:16:33.890Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8344530625421259,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "independent",
+        "resolution": "reconciled_content_verified",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:8z6k5gh9bnrb66ybfoll",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "5b05bd06-3b8b-44ee-913d-2d7d42d1b3b3",
+        "sha256": "a02435d7d12bab72da4aa409b027af4d17fe97dd20517a2e1715d0f5a4e9c128",
+        "createdAt": "2026-07-03T17:08:08.155Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "3140c1a4-1b7e-4798-adbd-225b34d6770f",
+        "sha256": "b5d0785b585ac67172863862fc8023a54ec1db8b4c706add1bc48e8d98055382",
+        "createdAt": "2026-07-03T17:08:08.651Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8012547725388994,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:go23tahpjek3es1888oi",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "5150b24b-a314-4117-b389-c35410da54bc",
+        "sha256": "7406dac8fac250cfdd7e042fbb8b1b62614499c04d66988180bd048b5b76682a",
+        "createdAt": "2026-07-03T11:42:12.882Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "59c42f83-4748-4c80-958f-2c14d1f1bc9a",
+        "sha256": "fc4e73234e2eb88208a92f5b38e0458ee358ff5ebfeded6d4bfc980a0e1c9ac2",
+        "createdAt": "2026-07-03T09:23:09.005Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8239462168317773,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:impxm7cmjebb7ix4dg0e",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "5150b24b-a314-4117-b389-c35410da54bc",
+        "sha256": "7406dac8fac250cfdd7e042fbb8b1b62614499c04d66988180bd048b5b76682a",
+        "createdAt": "2026-07-03T11:42:12.882Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "de85cbfb-7537-4c69-b134-fce684133f85",
+        "sha256": "fae02daa94e572128cfdfb82fa74b4be95e2a5db00ff70ccc15c37ae8abbc656",
+        "createdAt": "2026-07-03T17:13:41.974Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8377762487205537,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:csqfexjya6e11yqgmcu0",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "d2b71670-9b75-4d3b-819e-254ca9b2e817",
+        "sha256": "2d40bb60e49f367a5303c28e9fb4f9b8d31da6407740ae9119847e838b8ea50f",
+        "createdAt": "2026-07-03T17:00:18.445Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "e7943c9b-9f19-44b4-b811-44856c7b0c5a",
+        "sha256": "33818c4c470781cd698309030fcbbdde4034435aedc774710529c11717808abb",
+        "createdAt": "2026-07-03T17:15:29.718Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7832176826412917,
+      "gold": {
+        "label": "independent",
+        "labelA": "supersede",
+        "labelB": "independent",
+        "resolution": "reconciled_content_verified",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:cy4mm1mc2ckfedgxyf2k",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "1198e37a-bb5b-4ef6-a41c-e43048846331",
+        "sha256": "e8edb387ab13bd3d6107bda4271523d51a854c59d142f87a770962cb76e6b6cb",
+        "createdAt": "2026-07-03T09:30:24.566Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "a423ccd4-0237-4d67-9304-6d2136074fb8",
+        "sha256": "e558968c101cc5054c1e5e222a5e18b266fb67fc2770a4ec3b0d10a46b7ccdd1",
+        "createdAt": "2026-07-03T19:28:44.303Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7607002781993107,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:1xh5w6xosmpm51sme9l2",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "ea5bc4e2-cfc8-42ae-8ade-c849c95b91b9",
+        "sha256": "f187f78100dd3601bea33ed6ec5e651377af254c411a84dedad64913168d6aa2",
+        "createdAt": "2026-07-03T17:13:42.473Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "c4e10b57-a0b9-4178-9be6-056b001bb2b7",
+        "sha256": "5c764247ebeca21f9ae62a98a7aea83be61b54e1ce783cbebaea0a296c220f87",
+        "createdAt": "2026-07-03T19:53:27.863Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8209261320862687,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:licedtb8tphk5h6halgn",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "ea5bc4e2-cfc8-42ae-8ade-c849c95b91b9",
+        "sha256": "f187f78100dd3601bea33ed6ec5e651377af254c411a84dedad64913168d6aa2",
+        "createdAt": "2026-07-03T17:13:42.473Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "86018f51-40f3-48c8-9e6c-07fefa63793f",
+        "sha256": "26bc172592a553096b33ed1b61c20024b1b6fa79ebe976a798f792e118ba8a66",
+        "createdAt": "2026-07-03T19:53:28.585Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8052424954471742,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:xvgqsvjlgxekge7m8oxt",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "b75953b0-08e4-4132-8bcb-6dc4f24813f3",
+        "sha256": "b86a7e50240ca669607d5017842bd712c7cd3ff8db03490f6924626fe803a81c",
+        "createdAt": "2026-07-03T15:21:05.018Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "4a295c11-6ecf-497c-9847-329542eceb60",
+        "sha256": "9775307fa8ec94a20685f9a76993c12862a2a679f7f1feaaa09c1f9116b6048b",
+        "createdAt": "2026-07-03T19:53:29.231Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8019752021503888,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:ovs1wbwsau74fqruzi59",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "f7166115-d830-408e-9652-3dbdc09eb33c",
+        "sha256": "d6c9a84262b32bc5b7214ea7edb202908baea3a443caa4efed57e210fc2dbc58",
+        "createdAt": "2026-07-03T22:46:06.446Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "68fdc038-c01f-4912-9c8f-384370d8b165",
+        "sha256": "2f08ba27b227ccfc44e115cad3ba7ca75625208f5fb015020ea9e07c144ef091",
+        "createdAt": "2026-07-03T22:46:07.558Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8396056503853844,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "reconciled_content_verified",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:xrltxtp8fukep95bx48a",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "c34b363c-c03f-488e-a178-8089238ca14c",
+        "sha256": "e202b16ec7eb1a88a8f15c3967bd02fc4da649b5814c59c079d98e4d9c8e0d4e",
+        "createdAt": "2026-07-03T23:35:33.107Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "016eb9b6-c17c-457c-a078-030b07eaa4e7",
+        "sha256": "52b2c5ebda74c5206abb193977996f6a88dec918a8fe541cb21b1e8b4dea5963",
+        "createdAt": "2026-07-03T23:35:33.637Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8393641255762456,
+      "gold": {
+        "label": "independent",
+        "labelA": "supersede",
+        "labelB": "independent",
+        "resolution": "reconciled_content_verified",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:no80j2ae3kkq8ibxpahs",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "016eb9b6-c17c-457c-a078-030b07eaa4e7",
+        "sha256": "52b2c5ebda74c5206abb193977996f6a88dec918a8fe541cb21b1e8b4dea5963",
+        "createdAt": "2026-07-03T23:35:33.637Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "49d551e5-0a63-4f9c-9be6-c3bae99211b5",
+        "sha256": "2b8957b043df7bebb0f01c12fd0e015ba8802dea2d231fe34efa412b0eacc088",
+        "createdAt": "2026-07-03T23:35:34.164Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7883355363587035,
+      "gold": {
+        "label": "independent",
+        "labelA": "supersede",
+        "labelB": "independent",
+        "resolution": "reconciled_content_verified",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:puftjtolj836d5fev592",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "3701ce72-e761-43e4-9571-267d9073f830",
+        "sha256": "7308319779aeb80a1c14d44eb716c0fe7956a9b4c14d39612eb43862cb680a39",
+        "createdAt": "2026-07-03T15:22:20.743Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "8d4aca2e-9d40-467c-a952-7dfe53afc23f",
+        "sha256": "e2d724cbf7d35e6e80f3ae74a9eb8b61040e8f6c064287e2fcc21be57c9a572f",
+        "createdAt": "2026-07-03T23:48:57.959Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7856683392374044,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:exs2j2b2lnjmnxno69t7",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "c4e10b57-a0b9-4178-9be6-056b001bb2b7",
+        "sha256": "5c764247ebeca21f9ae62a98a7aea83be61b54e1ce783cbebaea0a296c220f87",
+        "createdAt": "2026-07-03T19:53:27.863Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "83b73951-4ea1-4164-9a29-f22520e7cb53",
+        "sha256": "a637aed400ae2247427f5acdea8760f913bd81a6c4d93248035cb42d0b230760",
+        "createdAt": "2026-07-04T17:35:00.470Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8391649526458252,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:vfamj2uz1932sbkgjawi",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "cdc548c6-8c47-4b3b-bf3c-54df680a2a48",
+        "sha256": "fd7bb3f5da72a96dfe6fae6cf2d5ed76adfae5bc52a76373bee7357ea7d9bade",
+        "createdAt": "2026-07-04T15:48:52.751Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "b0922379-7e0f-45af-a21c-4d464d5ee927",
+        "sha256": "8c1be9c742bea00df8670cea64c0f89f32e6cd4591ccfac4a1383060f8c9e9a8",
+        "createdAt": "2026-07-04T18:09:31.931Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8127077922344775,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:tdvfffmzk95f83skrqy9",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "cdc548c6-8c47-4b3b-bf3c-54df680a2a48",
+        "sha256": "fd7bb3f5da72a96dfe6fae6cf2d5ed76adfae5bc52a76373bee7357ea7d9bade",
+        "createdAt": "2026-07-04T15:48:52.751Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "3440614e-1bea-4dd2-8eae-46e867279962",
+        "sha256": "f1f0cce5e8063cd45b64a89201efab669c93ec7f4705cb8fcd35ca75c1c688a0",
+        "createdAt": "2026-07-04T18:09:32.570Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.798859050743241,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:hl1fpwptldfs5mjutgzn",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "fbe2e2a9-a759-4e5a-b487-11b8db9b4076",
+        "sha256": "1973ad067f407707f98c0e919b25f42484e802f0caa8fac808e04e0595d1e8ed",
+        "createdAt": "2026-07-04T19:43:43.275Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "77d0fd12-8108-4761-98fe-541789a400e4",
+        "sha256": "2a7862eee6d7e6334082b408a193c4198053f34b1d7cbe0d2cae2d7e0b8dc324",
+        "createdAt": "2026-07-04T19:43:44.387Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8079093143387696,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:epp4ly6ns8rv42zuiy4v",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "fbe2e2a9-a759-4e5a-b487-11b8db9b4076",
+        "sha256": "1973ad067f407707f98c0e919b25f42484e802f0caa8fac808e04e0595d1e8ed",
+        "createdAt": "2026-07-04T19:43:43.275Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "d0d23216-5f78-4479-8d49-6e83a629da9b",
+        "sha256": "69a68fdd87b5884661bf40631a11856cfdf03b6079c407b96c5ec91a38a2444b",
+        "createdAt": "2026-07-04T19:43:46.968Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7602340510563776,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:z7ssiqkr7jfnjzgtgu42",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "7016405c-830c-4d02-a733-abf637b7af58",
+        "sha256": "deaa3cf5ee615b1c29c373167c5b6c193d15e383d7d3a9274f8dbb7237e30b3b",
+        "createdAt": "2026-07-03T12:49:27.506Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "bb3b1c89-cb6e-4258-a445-88c5775380ca",
+        "sha256": "2c7f7476ad7914b78f2c368a8deec7efbebe5c83e8c04875d7ac56d59a944e9f",
+        "createdAt": "2026-07-04T19:45:12.093Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7993681315340597,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:hn68qrmdlc3o88oc40e5",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "dabf29d4-0204-4528-bf33-75fc2e3954cb",
+        "sha256": "687b15020f789c255f64286f5734897acb859805ae3219c9ccb9f795161129b9",
+        "createdAt": "2026-07-04T19:49:05.503Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "1e2d30e4-33c7-4151-a5be-6090f72e5505",
+        "sha256": "aaafa39ae53114bef54eb6e8bb7649ab9f05f6b5bbd13a25a6305a9efd6af8ae",
+        "createdAt": "2026-07-04T19:49:06.175Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8013672580955858,
+      "gold": {
+        "label": "independent",
+        "labelA": "supersede",
+        "labelB": "independent",
+        "resolution": "reconciled_content_verified",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:ivimfwqizh1r18kld7pl",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "cf64dfec-ce13-49c9-a1ae-d3300acc64fa",
+        "sha256": "ff129e5c2ee6e2c164ac4b430d11029b73027722786fbfdee2f35aad90178b85",
+        "createdAt": "2026-07-03T12:53:40.387Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "dc0f0c13-9258-4a6a-a38b-fd123b6f2817",
+        "sha256": "5fe833e7b64275c3a14fcd3867d1afa9a42945ad4d9fbd1f5e8707901186f121",
+        "createdAt": "2026-07-04T20:20:49.973Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7743214415158572,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:s2vrfqo0jb1m8xvwep4u",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "1bee27c4-7ffb-4a0e-bee0-7d4c86759bba",
+        "sha256": "22cc3b20fe2fe3b5cca7895a2cf0335ab3945070c0afdb93d8b814aa8a81b128",
+        "createdAt": "2026-07-03T04:41:47.086Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "08f07d48-a538-4a7d-a97f-f934716ce1ee",
+        "sha256": "c9fd76623c6c9b1b5c4afa06fe74bfd7f2c2f65c871ebdfc1585934d5c2406d3",
+        "createdAt": "2026-07-04T20:20:50.719Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.776460956920962,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:hma18by67abbbc57uxib",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "cdc548c6-8c47-4b3b-bf3c-54df680a2a48",
+        "sha256": "fd7bb3f5da72a96dfe6fae6cf2d5ed76adfae5bc52a76373bee7357ea7d9bade",
+        "createdAt": "2026-07-04T15:48:52.751Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "22f183fc-ff2c-4415-ba47-8b0e7bce1464",
+        "sha256": "7d45d373ce8ed66bc44e5907d3972a0d6b0b5d8bcd56caab9cdbeff1ed345ef5",
+        "createdAt": "2026-07-04T20:20:51.454Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7935260134105926,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:za77z0d409pmp7bycnc9",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "c4e10b57-a0b9-4178-9be6-056b001bb2b7",
+        "sha256": "5c764247ebeca21f9ae62a98a7aea83be61b54e1ce783cbebaea0a296c220f87",
+        "createdAt": "2026-07-03T19:53:27.863Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "8c91c8ac-abcf-4f49-ac0a-24a89d0b6e9e",
+        "sha256": "f8ec3d34b4dd0ad8d9d220c31ce16ae78379e2ef7cb3035731baaf401c58c900",
+        "createdAt": "2026-07-04T20:20:52.300Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8043936614697336,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:saen889ls2np77spfg9r",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "cb522f85-6acc-469b-a8d7-5bb1e448bbf1",
+        "sha256": "bedc397677189c16f2ca203cf5129195462092dbcc4d0ffb7429e62f1d68987f",
+        "createdAt": "2026-07-04T20:44:34.582Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "65e813db-6e14-41b0-9b34-e353f9bd01b4",
+        "sha256": "1fa18b5bcb576b7bd16ff1b44721e93f39e8cef9f500783415780c5dfda37ab6",
+        "createdAt": "2026-07-04T20:44:35.250Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8355556616415963,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:7ac4a20i0k459jii7gvw",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "3c620753-ede7-422e-920c-a340fa981b7f",
+        "sha256": "3a35588764efad746fad97334b3ab8fcfc7e66ed88cabccbfd69c9b70b318df9",
+        "createdAt": "2026-07-04T20:53:20.863Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "f7cb019c-5356-4084-9c4d-75f9bb7c0c21",
+        "sha256": "2e5d480de6f9085adfbdb5feec43bcd03bb6c6a954f21f39c5e821faef81c9d5",
+        "createdAt": "2026-07-04T19:34:36.384Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8155458909865694,
+      "gold": {
+        "label": "supersede",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "reconciled_content_verified",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:jr8xcm6589gwss2ydef2",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "cdc548c6-8c47-4b3b-bf3c-54df680a2a48",
+        "sha256": "fd7bb3f5da72a96dfe6fae6cf2d5ed76adfae5bc52a76373bee7357ea7d9bade",
+        "createdAt": "2026-07-04T15:48:52.751Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "cb95f2b6-0f7d-4c34-8fd2-13487ef203af",
+        "sha256": "4bc832a810cb18d38574fe6d9a8dedf8226d2f223c66d9edea13f39bc95386ed",
+        "createdAt": "2026-07-04T21:11:09.038Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8098849869304428,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:tptdq405sn0515txnp1y",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "fa2ff610-6f95-47b4-a5d8-ad0429830120",
+        "sha256": "905f77842abc8cae5a88767fb3424c248816d2aaf2c644132e72b0c84b07d852",
+        "createdAt": "2026-07-04T19:55:36.583Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "adaad652-de1e-41c2-aec5-4eb1cfd30c5a",
+        "sha256": "9fcb7d0a9f429def98d7d0f9c931e797486a54e0a6971fc5b117e1c0a13baa4b",
+        "createdAt": "2026-07-04T21:17:22.526Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.809206677541669,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:o8d50d65k4ueoup32whn",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "e445391a-b87e-4f3c-b767-b419ebfe71ef",
+        "sha256": "55a211b9df7e3913a417cf43601106d84fe2ec77627b26e8208e895156ee6464",
+        "createdAt": "2026-06-23T12:23:47.920Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "5294163e-0990-4fc4-86a5-488585a7f203",
+        "sha256": "1524b97477cb554e8afa1e375ca75e0fc422072477f9b61fd657c245091b0ebe",
+        "createdAt": "2026-07-04T23:29:57.972Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7941314989357355,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:bb6yzthns9353tjqdtew",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "28bb2f82-96d8-4b06-85eb-e2d64d65a224",
+        "sha256": "8a5cf5aed6abc9e3cee74ce9a21d4b1b6021d8d85ac90e725d3fc6de257aba27",
+        "createdAt": "2026-07-04T23:41:55.427Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "1c7a27ab-33bd-4fca-a404-5291b0076bf8",
+        "sha256": "f6ae23dbe3ca262c1848a33db87bd98fbdfb3a08d52116b59c4658bded77e7a2",
+        "createdAt": "2026-07-04T23:41:56.040Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8170709616631988,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:4xy7vowzfpz2j5o6b12x",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "a1319918-40c7-41bf-89d8-f21737439c49",
+        "sha256": "874894a7e187f25a909316f4cd8449f3eed24ef5c4e411c21edfbcf9fe9f8c52",
+        "createdAt": "2026-07-03T16:20:13.370Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "c232eb54-c83a-4f45-bd07-60302ccb8679",
+        "sha256": "353b8c4fb8ca330c02318adf0d3f0b4c91e79150e5a0019064b7a90df86831a4",
+        "createdAt": "2026-07-03T16:20:25.725Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.8383574349880845,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:n1m2w8te4u7haxl37kx8",
+      "oldRef": {
+        "source": "prod:main/main:semiote",
+        "id": "17e59d89-6d57-484c-94bd-08820a5f0cd9",
+        "sha256": "98defec023779f50e464ff55d8472ccc895e46accf42fca9887a390c587a0790",
+        "createdAt": "2026-07-03T05:03:15.103Z"
+      },
+      "newRef": {
+        "source": "prod:main/main:semiote",
+        "id": "c80cd8c6-3a82-43e9-bf77-ebbfd02a940b",
+        "sha256": "2062c567cdb15919a523cb3f1d5fd474f1c037fcd4acca156c1eec04971942bf",
+        "createdAt": "2026-07-05T03:51:36.212Z"
+      },
+      "stratum": "legacy-heldout",
+      "split": "heldout",
+      "origin": "shadow-0705",
+      "population": "legacy",
+      "cosine": 0.7691748172099682,
+      "gold": {
+        "label": "supersede",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "reconciled_content_verified",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "heldout",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": null
+    }
+  ]
+}

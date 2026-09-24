@@ -321,14 +321,19 @@ function renderComparison(comparison) {
   const baseline = state.runs.find((run) => run.catalogId === state.baselineId);
   const candidate = state.runs.find((run) => run.catalogId === state.candidateId);
   const think = baseline?.runKind === "think-synthesis" || baseline?.runKind === "think-e2e";
+  const judge = baseline?.runKind === "judge-pairs";
   const e2e = baseline?.runKind === "think-e2e";
   const preferredMetricIds = think
     ? [...(e2e ? ["retrievalSuccessRate"] : []), "meanAnswerCompleteness", "meanUnsupportedClaimRate", "meanCitationPrecision", "meanCitationCompleteness", "meanGapAccuracy", "p95LatencyMs", "meanCostPerThink"]
+    : judge
+    ? ["harmfulRate", "updateRecall", "correctionDroppedRate", "errorRate", "p95LatencyMs", "meanCostUsd"]
     : ["meanAtomicPrecision", "meanAtomicRecall", "meanHallucinationRate", "meanOmissionRate", "p95LatencyMs", "meanCostPerExtraction"];
   const allAggregateMetricIds = [...new Set(comparison.aggregateDeltas.flatMap((delta) => Object.keys(delta.metrics || {})))];
   const metricIds = [...preferredMetricIds.filter((metric) => allAggregateMetricIds.includes(metric)), ...allAggregateMetricIds.filter((metric) => !preferredMetricIds.includes(metric))];
   const caseMetricIds = think
     ? [...(e2e ? ["retrievalPass"] : []), "answerCompleteness", "unsupportedClaimRate", "citationPrecision", "citationCompleteness", "gapAccuracy", "latencyMs"]
+    : judge
+    ? ["harmful", "updateLanded", "correctionDropped", "error", "latencyMs", "retireScore"]
     : ["atomicPrecision", "atomicRecall", "hallucinationRate", "omissionRate", "latencyMs", "evidenceFidelity"];
   return `<div class="notice ${status === "compatible" ? "good" : ""}"><div>${badge(status || "unknown", tone)}</div><p>${escapeHtml((comparison.compatibility?.reasons || []).join(" "))} ${escapeHtml((comparison.compatibility?.warnings || []).join(" "))} ${comparison.compatibility?.pairing === "explicit-override" ? "Human pairing override is recorded." : ""}</p></div>
     <div class="compare-grid"><section class="paper-card card-pad"><h3>Aggregate deltas</h3><p class="card-caption">Candidate minus baseline. Every candidate in the matrix gets its own row; direction is metric metadata and no composite health score is invented.</p><table class="metric-table"><thead><tr><th>Metric</th><th>Candidate identity</th><th>Baseline</th><th>Candidate</th><th>Delta</th></tr></thead><tbody>${metricIds.map((metric) => aggregateDeltasForMetric(comparison, metric).map((delta) => renderAggregateMetric(delta, metric)).join("")).join("")}</tbody></table></section><section class="paper-card card-pad"><h3>Dumbbell field</h3><p class="card-caption">Each candidate has a labeled dumbbell. Click a mark to list that candidate's contributing case rows.</p>${renderDumbbells(comparison, metricIds)}</section></div>
@@ -433,8 +438,26 @@ function renderCaseColumn(entry) {
   }
   const content = item.detail?.kind === "think-synthesis" || item.detail?.kind === "think-e2e"
     ? renderThinkCaseDetail(item.detail)
-    : renderCaptureCaseDetail(item.detail || {});
+    : item.detail?.kind === "judge-pairs"
+      ? renderJudgeCaseDetail(item.detail)
+      : renderCaptureCaseDetail(item.detail || {});
   return `<section class="paper-card card-pad evidence-column"><h3>${escapeHtml(entry.side)}</h3><p class="case-meta">${escapeHtml(item.candidateId)} · repetition ${escapeHtml(item.repetition)} · ${badge(item.status, item.status === "pass" ? "good" : item.status === "fail" || item.status === "error" ? "warn" : "neutral")}</p><div class="metric-pills">${Object.entries(item.metrics || {}).filter(([, value]) => value !== null).slice(0, 10).map(([metric, value]) => `<span class="metric-pill">${escapeHtml(labelFor(metric))}: <strong>${escapeHtml(formatMetric(metric, value))}</strong></span>`).join("")}</div><div class="evidence-block"><h4>Input / row reference</h4><pre>${escapeHtml(`case: ${item.inputRef?.locator || item.caseId}\nrow: ${item.outputRef?.locator || item.comparisonKey}`)}</pre></div>${content}<button class="button-primary" data-open-raw="${escapeHtml(entry.catalogId)}" data-raw-key="${escapeHtml(item.comparisonKey)}">Open exact raw evidence</button></section>`;
+}
+
+function renderJudgeCaseDetail(detail) {
+  const fields = [
+    ["Gold", detail.goldLabel],
+    ["Decision", detail.decision],
+    ["Retire score", detail.retireScore],
+    ["Latency", detail.latencyMs],
+    ["Error class", detail.errorClass],
+    ["HTTP status", detail.httpStatus],
+  ].filter(([, value]) => value !== undefined && value !== null);
+  const rows = fields.map(([label, value]) => `<div class="contributor-row"><div><strong>${escapeHtml(label)}</strong><small class="mono">${escapeHtml(value)}</small></div></div>`).join("");
+  const previews = detail.oldPreview || detail.newPreview
+    ? `<div class="evidence-block"><h4>Local snapshot preview</h4><p><strong>OLD</strong> ${escapeHtml(detail.oldPreview || "")}</p><p><strong>NEW</strong> ${escapeHtml(detail.newPreview || "")}</p></div>`
+    : "";
+  return `<div class="evidence-block"><h4>Judgement</h4>${rows}</div>${previews}`;
 }
 
 function renderCaptureCaseDetail(detail) {

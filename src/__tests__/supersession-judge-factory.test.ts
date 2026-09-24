@@ -143,12 +143,22 @@ describe("buildSupersessionJudge (handle)", () => {
     expect(handle.identity.temperature).toBe(0.1);
     expect(handle.identity.promptVersion).toBe(JUDGE_PROMPT_VERSION);
     expect(handle.identity.promptSha256).toBe(judgePromptSha256());
-    await handle.judge("a", "b");
+    await handle.judge("a\n\nSource:\nshared excerpt", "b\n\nSource:\nshared excerpt");
+    // Rúnir-szl: the judge never sees capture's shared provenance excerpt.
+    expect(JSON.stringify(mockCallLlmGateway.mock.calls[0][0].messages)).not.toContain("shared excerpt");
     // Factory threads construction-time values via baseUrl + effectiveJsonMode
     // (not just jsonMode) so the gateway cannot re-resolve from env (P0#1).
     expect(mockCallLlmGateway.mock.calls[0][0].baseUrl).toBe("http://localhost:7811");
     expect(mockCallLlmGateway.mock.calls[0][0].effectiveJsonMode).toBe(false);
     expect(mockCallLlmGateway.mock.calls[0][0].timeoutMs).toBe(12_000);
+  });
+
+  it("keeps both without an LLM call when only provenance blocks differ (Rúnir-szl)", async () => {
+    const handle = buildSupersessionJudge({ apiKey: "k" });
+    const outcome = await handle.judge("Listed fixes.\n\nExact source list:\n- A", "listed fixes\n\nExact source list:\n- B");
+    expect(outcome).toEqual({ status: "verdict", verdict: { verdict: "independent", confidence: 0 } });
+    expect(mockCallLlmGateway).not.toHaveBeenCalled();
+    expect(handle.getCounters().indistinguishable).toBe(1);
   });
 
   it("sub-floor supersede stays a verdict (floor is the resolver's job, not the factory)", async () => {
