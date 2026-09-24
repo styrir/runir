@@ -1,0 +1,3 @@
+# Fake tokens asserted as redacted by the continuity-report tests.
+495b74ae91ae4b481bfbfc5ef596079e628c2b64:src/__tests__/continuity-report.test.ts:gitlab-pat:187
+495b74ae91ae4b481bfbfc5ef596079e628c2b64:src/__tests__/continuity-report.test.ts:gitlab-pat:235

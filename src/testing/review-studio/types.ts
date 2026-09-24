@@ -10,8 +10,8 @@ export type ReviewMetricDefinition = {
   direction: ReviewMetricDirection;
 };
 
-export type ReviewRunKind = "model-benchmark" | "think-synthesis" | "think-e2e";
-export type ReviewCasePresentation = "capture-extraction" | "think-synthesis" | "think-e2e";
+export type ReviewRunKind = "model-benchmark" | "think-synthesis" | "think-e2e" | "judge-pairs";
+export type ReviewCasePresentation = "capture-extraction" | "think-synthesis" | "think-e2e" | "judge-pairs";
 
 export type ReviewCandidate = {
   id: string;
@@ -27,7 +27,10 @@ export type ReviewArtifactRef = {
     | "benchmark-manifest"
     | "think-case"
     | "think-row"
-    | "think-manifest";
+    | "think-manifest"
+    | "judge-case"
+    | "judge-row"
+    | "judge-manifest";
   locator: string;
 };
 
@@ -80,7 +83,20 @@ export type ReviewThinkCaseDetail = {
   retrieval?: Record<string, unknown>;
 };
 
-export type ReviewCaseDetail = ReviewCaptureCaseDetail | ReviewThinkCaseDetail;
+export type ReviewJudgeCaseDetail = {
+  kind: "judge-pairs";
+  goldLabel: string | null;
+  decision: string;
+  retireScore: number | null;
+  latencyMs: number;
+  errorClass?: string;
+  httpStatus?: number;
+  /** Present only when a local snapshot line matched the committed sha256. */
+  oldPreview?: string;
+  newPreview?: string;
+};
+
+export type ReviewCaseDetail = ReviewCaptureCaseDetail | ReviewThinkCaseDetail | ReviewJudgeCaseDetail;
 
 export type ReviewCaseResult = {
   comparisonKey: string;
@@ -196,6 +212,11 @@ export type BenchmarkRunBundle = {
   rows: readonly unknown[];
   /** Optional caller label; it is not used as a compatibility identity. */
   sourceRoot?: string;
+  /**
+   * Hash-verified text previews for a judge-pairs bundle.
+   * Absent when the local snapshot is missing or did not verify.
+   */
+  judgeTextPreviews?: Readonly<Record<string, { oldPreview?: string; newPreview?: string }>>;
 };
 
 export type ReviewRunSet = {

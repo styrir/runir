@@ -20,16 +20,19 @@ import {
 } from "../storage/surreal/supersession-judge-ledger.js";
 import {
   buildJudgePrompt,
+  judgeInputTexts,
+  KEEP_BOTH,
   parseJudgeVerdictRaw,
   DEFAULT_JUDGE_MODEL,
   DEFAULT_JUDGE_CONFIDENCE_FLOOR,
   DEFAULT_JUDGE_TEMPERATURE,
-  JUDGE_PROMPT_VERSION,
+  JUDGE_PROMPT_VERSION_BY_VIEW,
   judgePromptSha256,
   emptyJudgeCounters,
   type SupersessionJudgeHandle,
   type SupersessionJudgeCounters,
   type JudgeOutcome,
+  type JudgeInputView,
 } from "../storage/writes/supersession-judge.js";
 
 // Resolve base URL / timeout LOCALLY (not via shared/config.js) so the many
@@ -51,8 +54,15 @@ export function buildSupersessionJudge(opts: {
   apiKey: string;
   model?: string;
   timeoutMs?: number;
+  /** Defaults to RUNIR_LLM_BASE_URL, resolved once at construction. */
+  baseUrl?: string;
   confidenceFloor?: number;
   logger?: (msg: string) => void;
+  /**
+   * Default "strip-provenance" (production). "raw" reproduces the v2 judge and
+   * is set only by the judge benchmark.
+   */
+  inputView?: JudgeInputView;
 }): SupersessionJudgeHandle {
   // Rúnir-pn1l.13.7 D4: resolve the FULL effective request configuration ONCE at
   // construction. Mid-process env mutation is out of contract.
@@ -60,9 +70,10 @@ export function buildSupersessionJudge(opts: {
   const confidenceFloor = opts.confidenceFloor ?? DEFAULT_JUDGE_CONFIDENCE_FLOOR;
   const temperature = DEFAULT_JUDGE_TEMPERATURE;
   const effectiveJsonMode = process.env.RUNIR_LLM_JSON_MODE !== "0";
-  const baseUrl = resolveJudgeBaseUrl();
+  const baseUrl = opts.baseUrl ?? resolveJudgeBaseUrl();
   const timeoutMs = opts.timeoutMs ?? resolveJudgeTimeoutMs();
-  const promptVersion = JUDGE_PROMPT_VERSION;
+  const inputView = opts.inputView ?? "strip-provenance";
+  const promptVersion = JUDGE_PROMPT_VERSION_BY_VIEW[inputView];
   const promptSha256 = judgePromptSha256();
   const counters = emptyJudgeCounters();
 
@@ -104,11 +115,16 @@ export function buildSupersessionJudge(opts: {
         opts.logger?.("supersession-judge: unavailable (empty api key)");
         return { status: "unavailable" };
       }
+      if (judgeInputTexts(oldText, newText, inputView).indistinguishable) {
+        counters.indistinguishable += 1;
+        opts.logger?.("supersession-judge: indistinguishable (fact texts match, provenance differs): keep both");
+        return { status: "verdict", verdict: KEEP_BOTH };
+      }
       try {
         const content = await callLlmGateway({
           model,
           apiKey: opts.apiKey,
-          messages: buildJudgePrompt(oldText, newText),
+          messages: buildJudgePrompt(oldText, newText, inputView),
           temperature,
           // Thread the construction-time resolved identity EXACTLY — env-independent
           // at call time (Rúnir-pn1l.13.7 D4 / code-review P0#1). baseUrl +

@@ -446,6 +446,184 @@ plus the fixed prompt overhead and output ceiling. The manifest records
 `route_usage_or_reservation` so Review Studio does not present that cost basis
 as gateway billing.
 
+## Judge benchmark
+
+The judge benchmark scores supersession pairs. A candidate sees OLD and NEW and
+returns retire, duplicate, keep, or error. The committed labels file is
+text-free. Memory text stays in a gitignored snapshot that the loader checks
+against the committed sha256. A mismatch or a missing text is a case error.
+The CI `pii-scan` job runs Presidio (`scripts/pii-audit/presidio_scan.py`) over
+`fixtures/judge-benchmark/`; add any new corpus derived from real memories or
+transcripts to that job in the same change.
+
+```text
+fixtures/judge-benchmark/<datasetId>.labels.json
+.styrir/analysis/judge-benchmark/texts/<datasetId>.jsonl
+.styrir/analysis/judge-benchmark/cassettes/<candidateId>.jsonl
+.styrir/analysis/raw/judge-benchmark-<runId>.jsonl
+.styrir/analysis/reports/judge-benchmark-<runId>.md
+```
+
+Candidates are frozen: `judge-v2`, `judge-v3`, `jev-noul-v1`, `jev-choice-v1`,
+`jev-noul-v2`, and `jev-noul-v3`. `judge-v2` replays the judge as it ran before
+provenance stripping; `judge-v3` is the current production judge. Jev uses `typesafe/jev-1.13.0` through
+Requesty's Decisions API. Default concurrency is 1 because that gateway
+returns 429s under parallel load. The credential is `REQUESTY_API_KEY` and is
+never logged.
+
+```bash
+# Zero-network preflight. Prints the planned request count and cost cap.
+npm run benchmark:judge -- run \
+  --dataset supersession-q4-insample \
+  --candidate judge-v2
+
+# Paid recording. Refuses a dirty worktree, a missing cap, and a missing key.
+npm run benchmark:judge -- run \
+  --dataset supersession-q4-insample \
+  --candidate jev-noul-v1 \
+  --confirm-cost \
+  --max-total-cost-usd 1 \
+  --probe order-swap
+
+# $0 rescore. A cassette miss fails loudly.
+npm run benchmark:judge -- run \
+  --dataset supersession-q4-insample \
+  --candidate jev-noul-v1 \
+  --replay-only
+
+# Rebuild the snapshot from SurrealDB by exact id. Drift is reported, not substituted.
+npm run benchmark:judge -- hydrate --dataset supersession-q4-insample
+```
+
+`calibrate --split calibration` fits only the retire threshold on the
+probability sample. Duplicate decisions stay at the lane's fixed floor and
+count as harmful at every candidate threshold. Ties go to the highest
+threshold. If none qualifies, the file records `no_qualifying_threshold` and
+keeps the lane default. Calibrate refuses test rows.
+
+`run`, `score`, and `calibrate` share one test-split guard. Omitting `--split`
+excludes test rows and scores or executes the non-test splits only; the
+preflight states that. `run --split test` and `score --split test` refuse
+unless `--unlock-test` is passed with a sealed thresholds file whose
+`datasetId` is the target dataset and whose `split` is `calibration`. The
+unlock ledger line is appended before any result is printed or written, once
+per unlock, at `.styrir/analysis/judge-benchmark/test-unlock-ledger.jsonl`.
+Every raw row `score` would score must carry `datasetId` equal to `--dataset`
+and to the thresholds file's `datasetId`. Any mismatch refuses the command
+before the ledger is appended and before anything is printed or written.
+
+A paid call reserves its worst-case cost before dispatch: the max input-token
+estimate times the lane price, plus the same amount for every retry that might
+still be billed. The reservation is atomic. Dispatch stops when the remaining
+budget cannot cover another reservation. On each reconciliation, if the
+reconciled actual plus outstanding reservations is at least the cap, dispatch
+stops and the run is partial with stopReason `cost_cap`. A single in-flight call
+may exceed its reservation by the provider's billed excess; no further calls
+are dispatched once the cap is reached.
+
+The cassette stores the normalized telemetry of a successful call:
+`latencyMs`, `usage`, `billedCostUsd`, `estimatedCostUsd`, and `retryCount`.
+Concurrent calls for the same cassette key share one provider request and one
+recorded entry, so both rows receive that telemetry. Failed calls stay
+unrecorded. Exact replay holds for error-free recordings. `--replay-only` over
+a run that had error rows fails loudly on the cassette miss. Replay copies the
+recorded telemetry onto the new row. `scoredRowIdentityFields` is
+every raw-row field except `runId` and `timestamp`. Those two are per-run
+metadata. A record followed by a replay matches on `scoredRowIdentityFields`
+and on the scored metrics.
+
+A missing, non-finite, or out-of-range probability is an `error` decision
+before any retire or duplicate choice, including `jev-choice` when
+`argmax` is `duplicate`. The row counts in error/coverage.
+
+Q4 import reads full OLD text from `pn1l_eval/seed_q4corpus` (`payload.l2`,
+then `payload.l0`). It does not fall back to `text_trunc`. A pair with no
+full text fails the import. The command reports the failure count and exits
+nonzero if any pair failed.
+
+The only pass/fail gate is the Wilson-95 upper bound of `harmful / n` on the
+test split of the probability sample. It passes when that bound is below 0.10.
+An error rate above 2% on that split is `invalid`. Every other interval is
+descriptive, and any group with n < 35 is `underpowered`. Legacy sets keep
+their original denominators: Q4 is 97 diverged (headline) and 78 (strict);
+July-5 is 49 (headline) and 36 (strict). Controls are scored separately.
+
+Markdown reports and the Review Studio `judge-pairs` view project an allowlist
+of manifest and row fields: ids, hashes, gold, decision, scores, latency,
+cost, metrics, `errorClass`, and `httpStatus`. Unexpected keys such as
+`detail`, `explanation`, and `body` are dropped. Text previews appear only
+when the local snapshot is present and hash-verified.
+
+Imported datasets:
+
+- `supersession-q4-insample` — 97 diverged + 11 control, from the pn1l Q4 adjudication
+- `supersession-0705-heldout` — 49 pairs from the July-5 prod adjudication
+- `supersession-fresh-v1` — 350 pairs mined from the current stored state (2026-07-15 to
+  2026-09-20): a 200-pair probability sample (top-1 prior candidate at cosine ≥ 0.85, the
+  only gated population) and a 150-pair cue-enriched challenge set, each split 50/50
+  calibration/test with a fixed seed
+- `supersession-shadow-v1` — 510 decision-time pairs from `supersede_shadow` rows that
+  carry a candidate snapshot (since 2026-07-10); descriptive update-recall set, split `heldout`
+
+The fresh and shadow sets are built by orchestrator scripts, in this order:
+`scripts/judge-benchmark/mine-supersession-pairs.ts` and `mine-shadow-pairs.ts` (read-only
+SurrealDB, gitleaks gate with a positive probe), `label-pairs.ts` (two blind external
+labelers under `labeler-protocol.md`), `reconcile-labels.ts` (agreement, disagreement
+worklist, seeded spot-check sample), then `finalize-labels.ts` (text-free labels file +
+split). Current-state mining cannot see most real updates: a high-cosine correction is
+merged or skipped before it is stored as its own row. That is why the shadow set exists.
+
+### Current judge benchmark result (2026-09-24)
+
+Gold labels come from dual blind model labelers (`gpt-6-sol` and `grok-4.7`, low effort)
+with orchestrator content verification of every disagreement and every agreed positive.
+This is **not human adjudication.** Under the strict protocol, real value replacements are
+rare: 4 supersede pairs in 860 labeled pairs, plus 49 duplicates.
+
+Gated result: the test split of the probability sample (n=100; 1 supersede, 6 duplicate,
+93 independent), with one unlock per candidate and thresholds frozen from the calibration
+split.
+
+| Candidate | Threshold | Harmful | Gate | Update / duplicate recognized |
+|---|---|---|---|---|
+| `judge-v2` | 0.6 (no qualifying) | 45 (39 wrong skips) | fail | 1/1, 6/6 |
+| `judge-v3` | 0.95 (fitted) | 3 (7 at production 0.6) | pass | 1/1, 5/6 |
+| `jev-noul-v1` | 0.87 (fitted) | 1 | pass | 0/1, 4/6 |
+| `jev-noul-v2` | 0.66 (fitted) | 1 | pass | 0/1, 0/6 |
+| `jev-noul-v3` | 0.91 (fitted) | 0 | pass | 0/1, 0/6 |
+| `jev-choice-v1` | 0.5 (no qualifying) | 15 | fail | 0/1, 5/6 |
+
+Findings:
+
+- `judge-v2` is mostly harmful through wrong **duplicate skips**. Capture appends a verbatim
+  `Source:` excerpt to each fact (`src/capture/extraction/capture.ts`), and facts from the
+  same turn share it, so the judge reads distinct sibling facts as duplicates.
+- `judge-v3` (Rúnir-szl, production) judges the fact text without the trailing `Source:` and
+  `Exact source list:` blocks; stored l2 keeps them for retrieval. When the fact texts match
+  (ignoring case, spacing, and trailing punctuation) and only the blocks differ, the judge
+  cannot tell the facts apart, so both are kept without a model call. No benchmark pair hits
+  that rule, so every recorded prompt is exactly what production sends. Reworded fact texts
+  with different lists are still judged without the lists (known gap). Wrong
+  skips on the gated test fell from 39 to 2 and harmful from 45 to 7 at the production 0.6
+  threshold. On the descriptive shadow set harmful fell only from 101 to 91 of 510, so
+  over-retirement there remains. Latency is unchanged at about 1.0 s median per call.
+- Rejected variant: dropping only blocks both sides share (so one-sided or differing blocks
+  stay) scored 9 harmful on the gated test and 99 on the shadow set. All 15 extra shadow
+  retirements were pairs where NEW carried the whole turn's source list, which made NEW look
+  like it covered OLD.
+- The Jev noul lanes pass the gate mainly by retiring almost nothing. Their fitted
+  thresholds come from a calibration split with one positive, so update recall is
+  unmeasured. On the descriptive shadow set at default thresholds, every lane over-retires
+  relative to the strict gold (67–285 harmful of 470 independent pairs).
+- Replay is exact: a $0 re-score reproduced 108/108 recorded rows for both `judge-v2` and
+  `jev-noul-v1`.
+- Total model spend for recording all five candidates on all four datasets, the test unlock
+  and the order-swap probe was $0.23 billed across 7,645 scored rows (the pre-run estimate was $0.58).
+
+Rebuild them with `npx tsx scripts/judge-benchmark/import-legacy.ts`. That
+command reads SurrealDB and the local adjudication archive; it does not call
+a model.
+
 ## Open the results in Review Studio
 
 Point Studio at the directory containing paired `.jsonl` and `.manifest.json`

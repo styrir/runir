@@ -48,7 +48,6 @@ export default defineConfig({
       "src/__tests__/transcript-derived-fixtures.test.ts",
       "src/storage/writes/__tests__/dedup-property.test.ts",
       "src/storage/writes/__tests__/h435-1-unit-b-blind-view.test.ts",
-      "src/testing/**",
       // Unsupported clients / packaging surfaces not in product export
       "test/openclaw-plugin-hooks.test.ts",
       "test/plugin-packaging.test.ts",

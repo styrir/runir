@@ -362,7 +362,7 @@ describe("MFC — judgeEnabled=false in shadow resolves", () => {
       },
       getCounters: () => ({
         verdict: 0, unavailable: 0, transport_error: 0, invalid_response: 0,
-        vetoed: 0, confirmed: 0, duplicate: 0, ledger_write_failures: 0,
+        vetoed: 0, confirmed: 0, duplicate: 0, indistinguishable: 0, ledger_write_failures: 0,
       }),
       noteResolution: vi.fn(),
       noteLedgerWriteFailure: vi.fn(),

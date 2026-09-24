@@ -7,6 +7,7 @@ import {
   JUDGE_PROMPT_VERSION,
   JUDGE_SYSTEM_PROMPT,
   judgePromptSha256,
+  judgeInputTexts,
 } from "../supersession-judge.js";
 
 // Rúnir-pn1l Layer 2 / 13.7 — the PURE judge module (no LLM gateway import).
@@ -22,6 +23,54 @@ describe("buildJudgePrompt", () => {
     // OLD must appear before NEW so the role assignment is stable across calls.
     expect(user.content.indexOf("OLD")).toBeLessThan(user.content.indexOf("NEW"));
   });
+
+  it("compares fact text without capture provenance blocks (Rúnir-szl)", () => {
+    const shared = "\n\nSource:\n```ts\nconst x = 1;\n```";
+    const msgs = buildJudgePrompt(`Fixed the parser bug${shared}`, `Added a parser test${shared}\n\nExact source list:\n- a`);
+    const user = msgs.find((m) => m.role === "user")!;
+    expect(user.content).toBe("OLD:\nFixed the parser bug\n\nNEW:\nAdded a parser test");
+  });
+
+  it("drops a one-sided turn list, which made NEW look like it covered OLD", () => {
+    const texts = judgeInputTexts("Signing failed", "Owner waived signing\n\nExact source list:\n- Signing failed\n- PR 7 unblocked", "strip-provenance");
+    expect(texts).toEqual({ oldText: "Signing failed", newText: "Owner waived signing", indistinguishable: false });
+  });
+
+  it("marks a pair indistinguishable when only the provenance blocks tell the facts apart", () => {
+    const listA = "\n\nExact source list:\n- fix A\n- fix B";
+    const listB = "\n\nExact source list:\n- fix C\n- fix D";
+    // Punctuation, case, and spacing differences in the fact text do not hide the match.
+    for (const [old, neu] of [
+      ["User listed three exact-QA fixes.", "User listed three exact-QA fixes."],
+      ["User listed three exact-QA fixes.", "user listed  three exact-QA fixes"],
+    ]) {
+      expect(judgeInputTexts(`${old}${listA}`, `${neu}${listB}`, "strip-provenance").indistinguishable).toBe(true);
+    }
+  });
+
+  it("treats case or indentation differences inside the blocks as a real difference", () => {
+    const fact = "Config names the key.";
+    expect(judgeInputTexts(`${fact}\n\nExact source list:\n- API_KEY`, `${fact}\n\nExact source list:\n- api_key`, "strip-provenance").indistinguishable).toBe(true);
+    expect(judgeInputTexts(`${fact}\n\nSource:\nif x:\n    y()`, `${fact}\n\nSource:\nif x:\ny()`, "strip-provenance").indistinguishable).toBe(true);
+  });
+
+  it("is not indistinguishable when the fact texts differ or the blocks match", () => {
+    const list = "\n\nExact source list:\n- fix A";
+    expect(judgeInputTexts(`Fixed A${list}`, `Fixed B${list}\n- fix B`, "strip-provenance").indistinguishable).toBe(false);
+    expect(judgeInputTexts(`Same fact${list}`, `Same fact.${list}`, "strip-provenance").indistinguishable).toBe(false);
+    expect(judgeInputTexts("Same fact", "Same fact", "strip-provenance").indistinguishable).toBe(false);
+  });
+
+  it("raw view reproduces the frozen v2 benchmark candidate", () => {
+    const old = "Old\n\nSource:\nx";
+    expect(judgeInputTexts(old, "New", "raw")).toEqual({ oldText: old, newText: "New", indistinguishable: false });
+  });
+
+  it("leaves text without the exact append shape untouched", () => {
+    for (const text of ["Plain fact", "Source: the design doc says X", "Line one\nSource:\ninline"]) {
+      expect(judgeInputTexts(text, "other", "strip-provenance").oldText).toBe(text);
+    }
+  });
 });
 
 // ── D6 — prompt v2 snapshot + version/sha (test 12) ──────────────────────────
@@ -33,7 +82,7 @@ const FROZEN_JUDGE_PROMPT_SHA256 =
 
 describe("prompt v2 (Rúnir-pn1l.13.7 D6)", () => {
   it("exports frozen JUDGE_PROMPT_VERSION and continuation clause; sha is pinned literal", () => {
-    expect(JUDGE_PROMPT_VERSION).toBe("v2-continuation-2026-07-09");
+    expect(JUDGE_PROMPT_VERSION).toBe("v3-strip-provenance-2026-09-25");
     expect(JUDGE_SYSTEM_PROMPT).toContain("A CONTINUATION is independent, not a supersession");
     expect(JUDGE_SYSTEM_PROMPT).toContain(
       "Progress in the same workstream does not make the earlier step stale",

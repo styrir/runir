@@ -1,0 +1,3464 @@
+{
+  "schemaVersion": "runir-judge-benchmark/v1",
+  "taskId": "supersession-pair/v1",
+  "datasetId": "supersession-q4-insample",
+  "legacyBinaryGold": true,
+  "pairs": [
+    {
+      "pairId": "supersede_shadow:bo08v4r6aoon9pqr1kuk",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "809887b2-a701-4443-be12-f75916e6dd62",
+        "sha256": "476b735e7c81602861dc4f84048fa646bf5a8d9c8d86eb341fd137cb2669fd34",
+        "createdAt": "2026-05-26T08:11:51.519Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:bo08v4r6aoon9pqr1kuk",
+        "sha256": "b3ef2c0887409ac069fb8c8434d20976774c0277767a0113cd7aa50fbec61cf2",
+        "createdAt": "2026-07-07T16:49:18.146361Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:oskybls1i4dqkf78tgab",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "b13631d0-fc46-4e76-8a0d-322098ff8b94",
+        "sha256": "b3ef2c0887409ac069fb8c8434d20976774c0277767a0113cd7aa50fbec61cf2",
+        "createdAt": "2026-05-26T08:11:51.813Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:oskybls1i4dqkf78tgab",
+        "sha256": "f0b9fb15d52dec2caddcd312f410245f3320ab321f74608478aa112fa6a815cc",
+        "createdAt": "2026-07-07T16:49:18.375606Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:m6gvsdd6ligf15tk39xu",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "891c1373-9e5e-4339-a2b9-c8f7a0013584",
+        "sha256": "faf0e5e7b76119ee60ecbbb083b02a2a37dc2c818c57a3e3957cf9b41ef9197d",
+        "createdAt": "2026-05-26T08:18:55.633Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:m6gvsdd6ligf15tk39xu",
+        "sha256": "4c2f189bf5c80abea4eb8062c63f1951cc518ac394939278fa008f8c116900a0",
+        "createdAt": "2026-07-07T16:49:18.471715Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:n5p0vlcc6luph31bxw61",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "e2a7ffe3-0fd6-4fe6-b8f5-40e51b23bab3",
+        "sha256": "ed3e86961e3d53e773471b60f9035997488677806f3edf8294ecad14c7433deb",
+        "createdAt": "2026-05-26T08:18:56.582Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:n5p0vlcc6luph31bxw61",
+        "sha256": "cf8e5f6d4f089a652ea00c4ceba533e1de5e0aaee72949b39c29214abba2e90e",
+        "createdAt": "2026-07-07T16:49:18.854569Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:eiplt4m4wwiua20i86pi",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "891c1373-9e5e-4339-a2b9-c8f7a0013584",
+        "sha256": "faf0e5e7b76119ee60ecbbb083b02a2a37dc2c818c57a3e3957cf9b41ef9197d",
+        "createdAt": "2026-05-26T08:18:55.633Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:eiplt4m4wwiua20i86pi",
+        "sha256": "cef6000289366e0769bb41197f0938a0d52d9b61f3a673798aaa5722edc64495",
+        "createdAt": "2026-07-07T16:49:18.905969Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:wmjd3vykg3d6buk5ieua",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "6fe53471-a940-409d-8740-b96cb5bb366f",
+        "sha256": "cef6000289366e0769bb41197f0938a0d52d9b61f3a673798aaa5722edc64495",
+        "createdAt": "2026-05-26T08:37:05.834Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:wmjd3vykg3d6buk5ieua",
+        "sha256": "4b3bc9dc5cf8c2694dde4e44bb9a6279accd4e7442de549fa592a9c481843bc2",
+        "createdAt": "2026-07-07T16:49:19.055576Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:y3yii4r0vejd5awqz1p5",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "42e89712-9f7b-4a99-b2f2-eab0bde4aca7",
+        "sha256": "cf8e5f6d4f089a652ea00c4ceba533e1de5e0aaee72949b39c29214abba2e90e",
+        "createdAt": "2026-05-26T08:34:42.678Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:y3yii4r0vejd5awqz1p5",
+        "sha256": "c8760726d499550ec4921d89b72f8528d3e7ccd46fda4055cda14035fbe085f0",
+        "createdAt": "2026-07-07T16:49:19.803108Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:yp14vhqquk4urcu62k9k",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "9aa002a0-1564-4a82-9691-db8adda2a161",
+        "sha256": "9d9ac46c89837fb281560e6b3e2044c6febca5d49dc6d6378ed79be50d41d4c8",
+        "createdAt": "2026-05-27T12:50:35.169Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:yp14vhqquk4urcu62k9k",
+        "sha256": "11763d701ee7626d321fa2ff0cad15c7c7addc7996e00a02044e0470d843ad6d",
+        "createdAt": "2026-07-07T16:49:20.854679Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:cbi3mo17zbsgmbtbqp71",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "26329ed5-9429-439c-a3e1-01aa635ac611",
+        "sha256": "88019ce06ac76b846a8b926583641a38d8dd04bf19c55c14d1a78ecac9325555",
+        "createdAt": "2026-05-27T21:55:32.860Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:cbi3mo17zbsgmbtbqp71",
+        "sha256": "1b971b4ac2a018937d83e2354bb2f7a85f87de8b0ffc27142ae98e1cb35e9b4c",
+        "createdAt": "2026-07-07T16:49:21.643838Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:s4doyql5odp97gmo9p73",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "188bd0a3-62c3-4ae5-87a0-6b0f6f82c611",
+        "sha256": "31d7187da3f2a9dd1650f417b75d5361a045f86fcb9f32a28618d9b2a6e980c3",
+        "createdAt": "2026-05-28T05:25:41.892Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:s4doyql5odp97gmo9p73",
+        "sha256": "4faf0e921a067c68cbd36c76c4d72a9587e0457ed68b7aa921ca0cead09a5e23",
+        "createdAt": "2026-07-07T16:49:22.509082Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:ml3ym1xvzjlag9sat9ch",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "f1ba6571-6f89-4384-aa37-d11152b1f1f6",
+        "sha256": "97b2c113348bdb8201d541d7de704d4fd698e70c8a301e84387fcb7d4c92c5d6",
+        "createdAt": "2026-05-28T08:51:15.921Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:ml3ym1xvzjlag9sat9ch",
+        "sha256": "30c2472e364049c64f116f9c5d451e08b79e6f46dfcdbc9c760ca3b2a2696fd3",
+        "createdAt": "2026-07-07T16:49:23.000713Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:w7eyaazyd97jij6u7ea7",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "cfda6f2c-729b-4496-b3b0-e62d8daacb85",
+        "sha256": "c0e995714e1d0a35db5e2be7b3618defc17b7748e8b5856ed966a9405b4c54a0",
+        "createdAt": "2026-05-28T08:51:16.271Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:w7eyaazyd97jij6u7ea7",
+        "sha256": "556fc4952a7ec721cb07b0365f40439aa1e8082ffc98a3721aba63d24ba7d527",
+        "createdAt": "2026-07-07T16:49:23.727721Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:8p445vaw17ihj6wvg47x",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "f1ba6571-6f89-4384-aa37-d11152b1f1f6",
+        "sha256": "97b2c113348bdb8201d541d7de704d4fd698e70c8a301e84387fcb7d4c92c5d6",
+        "createdAt": "2026-05-28T08:51:15.921Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:8p445vaw17ihj6wvg47x",
+        "sha256": "9e9b84bb6d4c332dc3c3213d9528fb16b256549b55ccaa3b5ed5edf1454a3492",
+        "createdAt": "2026-07-07T16:49:24.250898Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:ms80j0h0ixptkm0vsnnz",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "55fe1ed8-217c-45d2-88db-a4d15612eeb4",
+        "sha256": "c8e2dab616f1156cdd40e58f4b0b3fa3bfa32939e54e43ba08b91000b282f0f5",
+        "createdAt": "2026-05-28T09:22:59.272Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:ms80j0h0ixptkm0vsnnz",
+        "sha256": "6522fce99f9654ac0a13c065bb98d6b552af3c298cea36f9f2e786064f3c93c6",
+        "createdAt": "2026-07-07T16:49:25.425419Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:6pk50mao1g1apc7yv6dx",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "fef84be0-e8a3-455f-8802-82bcab6e7c47",
+        "sha256": "d4f965cc8d57dfa8439c7c58f351cebdd649b638fcf4b6e1517b48de5c7d9384",
+        "createdAt": "2026-05-29T11:54:02.095Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:6pk50mao1g1apc7yv6dx",
+        "sha256": "c95bb16809a1ab861afd8bd7fda65b110890ddfd5d10a87e99873b499ebc099f",
+        "createdAt": "2026-07-07T16:49:29.642743Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:45ox1qoa6uoewdtd9lxv",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "bba7dde2-5653-4df6-acd9-4bf0fde35e7f",
+        "sha256": "6dbcd5d8d00e2aab464db772f19ec02610aae30940e4c821258f064e26822004",
+        "createdAt": "2026-05-29T12:37:05.656Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:45ox1qoa6uoewdtd9lxv",
+        "sha256": "d60f136a71663e2148487676143b9e1bad5b44f631b1309fef481782d8ebbac7",
+        "createdAt": "2026-07-07T16:49:31.485871Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:5d7mh30qaiiiorjb9g7k",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "fef84be0-e8a3-455f-8802-82bcab6e7c47",
+        "sha256": "d4f965cc8d57dfa8439c7c58f351cebdd649b638fcf4b6e1517b48de5c7d9384",
+        "createdAt": "2026-05-29T11:54:02.095Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:5d7mh30qaiiiorjb9g7k",
+        "sha256": "eac7addb0031f709fd884fafc05db9027a7535c687f30f5f4da994af5a3c75e4",
+        "createdAt": "2026-07-07T16:49:31.924124Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:so4zpzx22a39lrymsknv",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "210d6c82-7ffb-4be5-81e5-08a3fcd4aaeb",
+        "sha256": "24289eb08ccf0d9039db151a0e96074e8e05ade3312ff694a2e091eb34f0ac1e",
+        "createdAt": "2026-05-29T14:14:03.019Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:so4zpzx22a39lrymsknv",
+        "sha256": "6a23821c0b03fadc48d591f0c066ab31f94e4d38e268a8b08e9ee691013c933f",
+        "createdAt": "2026-07-07T16:49:32.081773Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:mq8c90u96f8f05jn33nd",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "5241cba1-d0e5-4fdc-b5f4-e51a6846bf00",
+        "sha256": "3af349642d4454163e3179876b78d5eb846234560cd99964b7912fd4c361a6bc",
+        "createdAt": "2026-05-29T14:14:06.793Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:mq8c90u96f8f05jn33nd",
+        "sha256": "d03ecd1d15bf7c8c5feb0892726eac0a9d8037c1075a07cdd555291dc6b7e3b5",
+        "createdAt": "2026-07-07T16:49:32.762923Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:pkdakbyq87ns9lc77crc",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "fef84be0-e8a3-455f-8802-82bcab6e7c47",
+        "sha256": "d4f965cc8d57dfa8439c7c58f351cebdd649b638fcf4b6e1517b48de5c7d9384",
+        "createdAt": "2026-05-29T11:54:02.095Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:pkdakbyq87ns9lc77crc",
+        "sha256": "ab816519b64189dc478091b2194af686c7d4842277a2ded38a835f4413d25c2c",
+        "createdAt": "2026-07-07T16:49:33.236742Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:kck05l37z4g7fe76ckfk",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "120f3158-34f1-4c24-af92-8181c979b3d6",
+        "sha256": "070ce4330b51f1e88a5e0fab1f24a9af05b9529b3e32af561a1dd43fadcf7eb9",
+        "createdAt": "2026-05-29T12:03:42.797Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:kck05l37z4g7fe76ckfk",
+        "sha256": "d08dfcec680e4ee19f67d82b9bd0eaf337bc093b7c959d22db473f6b8a2a38cc",
+        "createdAt": "2026-07-07T16:49:34.991485Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:kp93xmplhid9lmfo0tr1",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "99280083-d603-4308-84cf-c90a934909c2",
+        "sha256": "42a893f3ed1b745d5bbb36a04d3d5b7e2491b2b8cd6b541e5722a5bf2c563d4c",
+        "createdAt": "2026-05-29T21:26:44.586Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:kp93xmplhid9lmfo0tr1",
+        "sha256": "0eb70e43de46d3b8dc268d85cc9a4219e864a61ac6f7a32cc0abc883aaaab015",
+        "createdAt": "2026-07-07T16:49:38.494863Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:dh9xxp9c7jyc4at93z8o",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "fef84be0-e8a3-455f-8802-82bcab6e7c47",
+        "sha256": "d4f965cc8d57dfa8439c7c58f351cebdd649b638fcf4b6e1517b48de5c7d9384",
+        "createdAt": "2026-05-29T11:54:02.095Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:dh9xxp9c7jyc4at93z8o",
+        "sha256": "2d95d939f62829f330dfd1894c806c36814ed78932b79d69c9e540fe85dd81c9",
+        "createdAt": "2026-07-07T16:49:38.846468Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:hsy8n3wndscsrgwdp97g",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "a427d05f-44b7-48e1-abc1-993987e5b673",
+        "sha256": "b2a65d42104b24c1ecbf835114f2f38ffa0c0fdfaac1af711406dc62b7e6e5d6",
+        "createdAt": "2026-05-29T20:40:24.631Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:hsy8n3wndscsrgwdp97g",
+        "sha256": "1427f0a8500d41b4365fc0045698a5dbd26aaed46b28ef4dfdc9d1653222ba88",
+        "createdAt": "2026-07-07T16:49:39.026666Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:8vop1oxdo2dgkscrft56",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "3e8c9b9a-824f-4861-ad7c-f27e76c637c5",
+        "sha256": "abaae40ac58a4c7529309bc8001db2fadc8f00d404460c7ca9bde859ef4b8de1",
+        "createdAt": "2026-05-30T08:17:11.966Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:8vop1oxdo2dgkscrft56",
+        "sha256": "2c4d0c39be206aa0766b94cad3b1bd2a6142b8083ad20978e9b3e0518b8d5f1d",
+        "createdAt": "2026-07-07T16:49:40.818926Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:whoc2pfzbfnxievk3nhu",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "35fe2715-7514-4364-b1be-396342ee0574",
+        "sha256": "f958ecd3a7cdb641861ba97b2fa7b1af1846df661b052ca5d7370d717cf54811",
+        "createdAt": "2026-05-30T10:10:15.758Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:whoc2pfzbfnxievk3nhu",
+        "sha256": "e9fbd888558972b1cab7b719603ac4ea44835ca38a99a6a0b0db59cc5c231def",
+        "createdAt": "2026-07-07T16:49:41.622747Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:x9npkb0bl0mpl2p1y308",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "fa92b55f-fe8c-449b-be3f-33fc5a0680ef",
+        "sha256": "2d08e835c60a8f00da6ea15b0d6c3f3353fd6865ed0aa6938dab59163167d97c",
+        "createdAt": "2026-05-30T10:25:50.249Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:x9npkb0bl0mpl2p1y308",
+        "sha256": "ba63ba8407c140faa78285fc0b0d9f4c87079732e81f790d9751eb09d9e075f9",
+        "createdAt": "2026-07-07T16:49:41.992212Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:2n3tnr7kdqlh4mi05egb",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "31a85591-26aa-451a-9385-042f1f3ccb4f",
+        "sha256": "00f6b39f95bdd1eb6484af85bf1efb6f2290c3791a4b1e33ea9ace7c9c8f171f",
+        "createdAt": "2026-05-30T10:30:19.518Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:2n3tnr7kdqlh4mi05egb",
+        "sha256": "d29dd0abb4444bc23c67102ffd075cc100fd867eaeb10bb7c850ecf549332697",
+        "createdAt": "2026-07-07T16:49:42.082215Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:l46nyrcaniyc05djyt22",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "4d61cac3-f7eb-41f4-9efa-239ec937531c",
+        "sha256": "eac7addb0031f709fd884fafc05db9027a7535c687f30f5f4da994af5a3c75e4",
+        "createdAt": "2026-05-29T14:14:02.587Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:l46nyrcaniyc05djyt22",
+        "sha256": "f0ae5128e2d64197ee2085c7812667fe3ec95dd8963601b91c593015c6d408e0",
+        "createdAt": "2026-07-07T16:49:43.720174Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:6ot8a0lk65wf4ss11fha",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "aa5d0dcb-a358-4ac9-adbb-bb1a232a3849",
+        "sha256": "f0ae5128e2d64197ee2085c7812667fe3ec95dd8963601b91c593015c6d408e0",
+        "createdAt": "2026-05-30T22:12:07.427Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:6ot8a0lk65wf4ss11fha",
+        "sha256": "981bd62a07ac27b07a8b23d23b725043339d1dd30384e328134236fef7591b60",
+        "createdAt": "2026-07-07T16:49:43.998997Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:1bxand65qo0g3hhci5hs",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "f7fba55a-133b-41b3-a9d3-731c517082f0",
+        "sha256": "cc9d08ac26afd3dba26b82dc84d546e7555ebb0a28e14ae17c9bd079f573a411",
+        "createdAt": "2026-05-31T04:13:50.111Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:1bxand65qo0g3hhci5hs",
+        "sha256": "8a57bfdfa0ecbdcd18b5a52192b24859a1248ed484ddf5bd2036cf75e96c10f8",
+        "createdAt": "2026-07-07T16:49:45.325590Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:v1qgzv5xr0r935updk6e",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "18218b64-cec5-47ea-88e7-7fb47d8007f5",
+        "sha256": "67455a5e0d2470b6e2fbb67def0e7c2e147cba4222e4c1e320842c0932450ec3",
+        "createdAt": "2026-05-30T07:09:46.561Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:v1qgzv5xr0r935updk6e",
+        "sha256": "12cba3e8990ef156222b464ebe02242ca950e6af80c7d214756a8c17385de67c",
+        "createdAt": "2026-07-07T16:49:48.400131Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:wbvw5t83swuwy3rif2u4",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "20e9a153-42ba-4529-948d-a15c71d47730",
+        "sha256": "cba6f681869717d95944fe4153875898653bcc272e0fa3944ded25e9fab2bed2",
+        "createdAt": "2026-06-01T09:59:44.157Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:wbvw5t83swuwy3rif2u4",
+        "sha256": "4e3a0a6ffc2da238e5174b74a73f162e38ad17020845f56291fd5a64a1f60783",
+        "createdAt": "2026-07-07T16:49:50.233015Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:5u7wj8veppfialicgcxc",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "a1edcf3e-e8fd-47ed-a879-4c59d6bcaf13",
+        "sha256": "4e3a0a6ffc2da238e5174b74a73f162e38ad17020845f56291fd5a64a1f60783",
+        "createdAt": "2026-06-01T10:07:27.218Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:5u7wj8veppfialicgcxc",
+        "sha256": "e9433d795d430f4a19e86488bf51c9b9eeb7abc09ebfc4776b4707949a8cf93b",
+        "createdAt": "2026-07-07T16:49:54.397751Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:l374ut5wxunk00gb4548",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "77b448e9-5c47-4c4d-92f3-f039d591a9b9",
+        "sha256": "4c5b27978e955ef46077685ea5873a89d162a3b3b045862e27be807525057f90",
+        "createdAt": "2026-06-01T17:39:23.058Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:l374ut5wxunk00gb4548",
+        "sha256": "c6263f7fb07b74fd1fe2ac928cc83f32b9c40bb084ab1b854706058f44d3bb4c",
+        "createdAt": "2026-07-07T16:49:54.767769Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:099egofi46my0ura5qmq",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "49ac7b1b-cc42-4046-81db-0b250d2a3722",
+        "sha256": "b08f5357070bb34a7e3aec75d4341e7264ed38e64feed48abe318fc9963e9f9d",
+        "createdAt": "2026-06-01T17:13:28.270Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:099egofi46my0ura5qmq",
+        "sha256": "1c25c9f57a3b675258e67dea9cd7267e9ab08a043555f071113fe03b81f40e6c",
+        "createdAt": "2026-07-07T16:49:55.320210Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:80jb1f1t0jyj3eydp855",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "20912577-e565-4a70-a3d0-936bae704d9a",
+        "sha256": "1c25c9f57a3b675258e67dea9cd7267e9ab08a043555f071113fe03b81f40e6c",
+        "createdAt": "2026-06-01T18:09:28.122Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:80jb1f1t0jyj3eydp855",
+        "sha256": "55a8f8747acc2b9995fb48f3e37a1fa27e146548304c611fd5cd408ae768aa91",
+        "createdAt": "2026-07-07T16:49:55.412856Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:2ds3reztgmsbvycidxia",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "aeb4cd0b-10cb-4666-8370-1826ad5dc6c9",
+        "sha256": "b598a46ac3d9f18d1e11b8510c32b31f8d15863b0c3b4f7156c83a76633bd1e7",
+        "createdAt": "2026-06-01T18:37:09.996Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:2ds3reztgmsbvycidxia",
+        "sha256": "1b2a88ddd80623b33627dfb77692360d2053c4e251ed3f148b1fc97876a16578",
+        "createdAt": "2026-07-07T16:49:57.912888Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:em836u9rrtvm3pxumurz",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "e83a4277-2cc5-4853-bb56-22976d7f7af6",
+        "sha256": "90b022431824fe7624dc46bc21e19cbafe9fb0bee7646446c8a689535962311b",
+        "createdAt": "2026-06-01T15:06:34.886Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:em836u9rrtvm3pxumurz",
+        "sha256": "9adfbb06958651d6389cf439f6efd0b80f585714412591df5fdc29a72e077f14",
+        "createdAt": "2026-07-07T16:49:58.216181Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:v9yqtpbltkaue53uj5uj",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "77b448e9-5c47-4c4d-92f3-f039d591a9b9",
+        "sha256": "4c5b27978e955ef46077685ea5873a89d162a3b3b045862e27be807525057f90",
+        "createdAt": "2026-06-01T17:39:23.058Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:v9yqtpbltkaue53uj5uj",
+        "sha256": "233b18f2312975e0ebacb075206728296dbee8eae5dab88d33464368259a1534",
+        "createdAt": "2026-07-07T16:49:58.312323Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:qsu74o2l35vxtfvahsu6",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "b3517ebf-cdb8-40f9-a4b2-09c9e99e9706",
+        "sha256": "32cac050f15b43642de0c1aa042224110cc3ef8294d5a2440f9a40814e4ff282",
+        "createdAt": "2026-06-01T20:24:05.527Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:qsu74o2l35vxtfvahsu6",
+        "sha256": "bffb01359e7a65de756e56790c05da12b585738e220936d44e1b89a2afbc60a0",
+        "createdAt": "2026-07-07T16:50:01.804287Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:1u82z9mqp2y4ny2cmzbd",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "d55e5b3c-6afc-4910-bf2c-3507aea359a9",
+        "sha256": "6ca9f190d25912a2e6f9403a66b03848e1995b9337f0391fbc3535825c1bf90d",
+        "createdAt": "2026-06-01T21:00:04.527Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:1u82z9mqp2y4ny2cmzbd",
+        "sha256": "f7c95353295239c1eb4ce779bc14b78909faecc5144182a0bd045e1708f818f3",
+        "createdAt": "2026-07-07T16:50:02.319849Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:ph1eo2kca3jj4iv9y36y",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "cc2fb28e-bce2-48c4-bcbb-26967eb46056",
+        "sha256": "4f69e3acd3ee0bb048ac52a82ae584457e4573600881c9c1634131e8ce55c4c5",
+        "createdAt": "2026-06-02T23:10:05.943Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:ph1eo2kca3jj4iv9y36y",
+        "sha256": "52e6a094048b1fec372bc9b311d4d3d41d501ef85fac01b86122c7a0bea66cb8",
+        "createdAt": "2026-07-07T16:50:12.324943Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:rtyi677cas2of6yukcka",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "d32265a7-389e-4802-84b4-3f26a9ec1850",
+        "sha256": "90676b8f69454f11634e4de21c8d7ac63b7e77b826d9999b30e8343d8a9b85eb",
+        "createdAt": "2026-06-02T04:17:03.848Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:rtyi677cas2of6yukcka",
+        "sha256": "048e9962397653fad0573a7ee6f925771eed52183f56bc509ae570a65a03924d",
+        "createdAt": "2026-07-07T16:50:13.269041Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:xm81lqgwuu5pjq9h8r1y",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "e1e1d4f1-0f46-47ef-b47e-476032aeed20",
+        "sha256": "12cba3e8990ef156222b464ebe02242ca950e6af80c7d214756a8c17385de67c",
+        "createdAt": "2026-05-31T19:05:52.086Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:xm81lqgwuu5pjq9h8r1y",
+        "sha256": "adc77c459fc488a7930e5eaf7bc2315c04fc2a1e102e18c26564d3bae111ae8f",
+        "createdAt": "2026-07-07T16:50:13.687912Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:9fuyti8ruo4t7ygk2r0v",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "b516c384-9cfd-4d25-a742-a87ded0cec84",
+        "sha256": "f348c2fbcd4a4f2df27e8dc76141f1d3e65c661ad4c389c7f7da6a3c8047a14b",
+        "createdAt": "2026-05-31T19:32:31.320Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:9fuyti8ruo4t7ygk2r0v",
+        "sha256": "3cf9dbd311d41fccc3d9843512566d6def3aaa8d96293b781086072d757dffc2",
+        "createdAt": "2026-07-07T16:50:15.721560Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:owxejzxyuififhtjyr6q",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "d80345fd-4bf6-42ea-88d6-c7c0d80c6c77",
+        "sha256": "1b8cc09a348875197f899930f0ea9a388ed8658526e3b521967ed6795f511961",
+        "createdAt": "2026-06-01T11:48:26.181Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:owxejzxyuififhtjyr6q",
+        "sha256": "f7490b5d997a1465665570d2308379b5f0a9a34f7bb5ec31ae62994c3183fe1c",
+        "createdAt": "2026-07-07T16:50:18.183937Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:00h3tmhbmly9j4vacw71",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "3e1a5924-1aee-4907-a987-cf2d6386bd3b",
+        "sha256": "0e6acc4a383a24f0b9145c3ada296a92c6423c6f0916daf33470481e11863bed",
+        "createdAt": "2026-06-02T23:17:51.331Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:00h3tmhbmly9j4vacw71",
+        "sha256": "e1f30fdd15fba3cbf31c05961a472c09eb1d21fec1f76cbbc79d1bf76383c3dd",
+        "createdAt": "2026-07-07T16:50:19.064262Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:o7u7juzxll7b6w0owvp3",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "ae871955-c7db-4366-b4cf-b166e45d587f",
+        "sha256": "ad9f2fe8c090278c0701341c2b95cbe2be8f15f4f995632a9979f365431b6141",
+        "createdAt": "2026-06-01T11:27:14.478Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:o7u7juzxll7b6w0owvp3",
+        "sha256": "981087e210af1263a274bd122d8ad9a66687696d3ef5cb44e43adaed883dd387",
+        "createdAt": "2026-07-07T16:50:19.392329Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:lfqoln5hhortnfsh5cot",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "d6a1237a-e81e-474a-9503-27927a59d5b6",
+        "sha256": "67f223d21fab189eb345b2476012c626dd94bd873fd032d91577e7d581078ed5",
+        "createdAt": "2026-06-03T21:59:03.936Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:lfqoln5hhortnfsh5cot",
+        "sha256": "e7ffe8a31b0b973a58639feaf7d6a17b2bed4c4c1f316cee5a398c803bfdb423",
+        "createdAt": "2026-07-07T16:50:19.500010Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:eb3mfkr4jgzd2n65ujdo",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "2f2e0d63-9aab-407a-ad2a-2ac334e07400",
+        "sha256": "981087e210af1263a274bd122d8ad9a66687696d3ef5cb44e43adaed883dd387",
+        "createdAt": "2026-06-03T21:59:04.582Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:eb3mfkr4jgzd2n65ujdo",
+        "sha256": "1352cd617f9cc8c5ac4e357376578f0507ed1bb987398ad648a6dec9deadaadd",
+        "createdAt": "2026-07-07T16:50:19.610139Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:kcuzz7c53wudnnbzm4eu",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "5a72a925-6581-40dc-97e5-8df86171f607",
+        "sha256": "5e4a88f2f51bdbf045ac6d17008278f21aa9f963f7d8ed940447b7eed8bc052c",
+        "createdAt": "2026-06-01T10:07:28.339Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:kcuzz7c53wudnnbzm4eu",
+        "sha256": "870b624ea96b69ec9c0b20393a31b825d5024a82bbca2c8aabf360c35c6e8bdd",
+        "createdAt": "2026-07-07T16:50:20.187810Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:s9ji8ehngo3vzwlcznda",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "b3517ebf-cdb8-40f9-a4b2-09c9e99e9706",
+        "sha256": "32cac050f15b43642de0c1aa042224110cc3ef8294d5a2440f9a40814e4ff282",
+        "createdAt": "2026-06-01T20:24:05.527Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:s9ji8ehngo3vzwlcznda",
+        "sha256": "bf9dd9ad7e171a0c98c1c9f99df04b791a300728caff5f7f33330be84cd27c7e",
+        "createdAt": "2026-07-07T16:50:23.804982Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:9b9nvptjdt23ypyh2zos",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "26d7c734-0859-4e07-a4e3-18e36655f69a",
+        "sha256": "53c54da9476d7f6e8c84e03d706802b3e2afb8355a8fde707b3c3c02024fb737",
+        "createdAt": "2026-06-03T22:39:40.932Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:9b9nvptjdt23ypyh2zos",
+        "sha256": "e37b5a2309978b894ef9b89c4b4b21cdaed91bfa4a6e6eaf5f527b034cdd1ccf",
+        "createdAt": "2026-07-07T16:50:27.948015Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:2wcgzoskg8yn0pf1b99y",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "0c9508b1-4d09-4ba3-880c-5aa3b6f4e657",
+        "sha256": "61cd08756834ccb3c4f7defb34860e92bcd722dd1dd6cbb06cea5132da35932d",
+        "createdAt": "2026-06-04T00:13:35.444Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:2wcgzoskg8yn0pf1b99y",
+        "sha256": "84133ec8fa4803ffda6c3530d7e1d4363de3b2c69890c42e3bb15200b059c1eb",
+        "createdAt": "2026-07-07T16:50:31.243821Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:hxce38xo3acubvkwujnr",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "aa052f99-d545-4106-a6a9-1580b7e4a357",
+        "sha256": "dcc06d8712240c1516e7cab391e45030cd68844aac71a0b35e76eb000e58defe",
+        "createdAt": "2026-06-02T22:21:21.840Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:hxce38xo3acubvkwujnr",
+        "sha256": "a2ab9a56c5fbfaf45709cb545f0237f7ae0898e03f73b62439cdd04bc4b9ca49",
+        "createdAt": "2026-07-07T16:50:33.858150Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:aqum3u6whaq2u20ucux5",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "546de3b4-0368-4150-9f25-ff935d4b19be",
+        "sha256": "724bee3cef8b127b057c862d3768f1f848282747585fada4fb7d582d19a8dec1",
+        "createdAt": "2026-06-03T22:42:06.829Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:aqum3u6whaq2u20ucux5",
+        "sha256": "76866249cad7bfb3cedf06e3a91b4feb0ec0afe1415a8453040e5bb8bf3b7a44",
+        "createdAt": "2026-07-07T16:50:35.531949Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:4huyx435rltig684p2gl",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "41ed44eb-69b7-4ab4-ae5b-f25730c7ae14",
+        "sha256": "36b660f6a6ac3ee57f70c24eba972481c379a5ad9517a4fdb1eb76ce0a16e9e0",
+        "createdAt": "2026-06-04T06:44:59.145Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:4huyx435rltig684p2gl",
+        "sha256": "f350d3cc7a1fd677a62b18cbf3a296cfc65a0608d3738e03fcfcdffdf7188ba5",
+        "createdAt": "2026-07-07T16:50:44.400739Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:5hel1zf7mdx5kofe7tr3",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "73aad37a-07ef-4eb9-8ab6-66c1d983eec4",
+        "sha256": "83e20f4a10022b33bdd086864b592d33623ffcdf2a14191fe9a8dbb909352173",
+        "createdAt": "2026-06-03T22:42:10.713Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:5hel1zf7mdx5kofe7tr3",
+        "sha256": "914e8b10439737a5936bd6dda6e53e5cd3abe76369dfe97abfdcdbbfe8f87660",
+        "createdAt": "2026-07-07T16:50:45.484441Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:uh3543lho6fmeqe71tz4",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "7be55b00-fa35-4c63-8ebf-ae6f97a9c0d5",
+        "sha256": "9c0acaa803c3665683592b4600d523c135ada831d83054d38273187812562a22",
+        "createdAt": "2026-06-03T21:01:23.044Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:uh3543lho6fmeqe71tz4",
+        "sha256": "c48ad96146bf6d28de623161147e8eb8a2aea82e2070c4c06e6b4e72169d4062",
+        "createdAt": "2026-07-07T16:50:49.228343Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:f614yj92lt10u4rutl2e",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "e8067c2a-dc49-491f-83be-cb801ffccff3",
+        "sha256": "b836abaa52175a2fb2ea18cbcf219ab28f199eff30dd432f744d39792b96979a",
+        "createdAt": "2026-06-04T08:22:04.473Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:f614yj92lt10u4rutl2e",
+        "sha256": "e06fcf4761472ceb491884e77bca64563270b0c8eaab991aa35c93fd49786275",
+        "createdAt": "2026-07-07T16:50:52.160792Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:owhtnhl8hvgrrl2q13ga",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "f38569d4-b42e-4c26-8a88-d7fb902b8906",
+        "sha256": "117916f7ca1b7db3cf65f9536a174b2ffa889c00fe9b573b086f0a9d57ab739b",
+        "createdAt": "2026-06-04T08:36:53.343Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:owhtnhl8hvgrrl2q13ga",
+        "sha256": "cfd8d2ee9c9417427724606399bf079038a6ef747488780a033bd8b61fbfd5c6",
+        "createdAt": "2026-07-07T16:50:54.560720Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:j75mn9u14l9dq3j8fjvu",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "2b25b97c-4ca2-4fce-a4a6-71a6d3605c72",
+        "sha256": "de106dd42ae4cb88a9d5d13556abbf3bda9fedf316678d7c509bf856c497ea34",
+        "createdAt": "2026-06-03T23:10:15.772Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:j75mn9u14l9dq3j8fjvu",
+        "sha256": "622e4ed54ccdfb7189e61cd64e235f47fc90866b014d22b6a5bd8a076824de09",
+        "createdAt": "2026-07-07T16:50:55.601658Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:ufgw73om7walc3mgfcnp",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "a832c4a9-87a6-4dd0-86b9-29aeb0a5a3ed",
+        "sha256": "602b4452a06c58c495d949475a05dcd24d6b128cf66b9974310091e4cbe2d393",
+        "createdAt": "2026-06-03T23:06:13.440Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:ufgw73om7walc3mgfcnp",
+        "sha256": "ca09e6d3ecfa61e97abdea6cfb1171ab0ac12d881aa0c46405b0d3b680e90fc2",
+        "createdAt": "2026-07-07T16:50:57.704730Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:435utjzp1h8mznc6obrm",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "63637dd5-c8da-4f25-8ae0-ec5f00bd9322",
+        "sha256": "cedf25addb32fff02463654f6022524acbb75bb868682b39abe6411368396b4c",
+        "createdAt": "2026-06-04T09:46:20.064Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:435utjzp1h8mznc6obrm",
+        "sha256": "fe5ad169e884ffb25fee4786c9342cae97302a49fa115085d847d38e7686a649",
+        "createdAt": "2026-07-07T16:50:58.009319Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:5iewta9311zvlozizu5e",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "598568cb-8aff-4788-8e02-e74da841a56a",
+        "sha256": "aec284895acf297cdb2298e07fd6d6c241dee2c08eba51e8e6ada1b0bb5aa85a",
+        "createdAt": "2026-06-04T16:48:17.482Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:5iewta9311zvlozizu5e",
+        "sha256": "b341cda9d491547ededa2217d21cbe913e3833a53307a2bae0b1613122bac0af",
+        "createdAt": "2026-07-07T16:50:59.463948Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:g9wj6a9q2c1axw20fguf",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "598568cb-8aff-4788-8e02-e74da841a56a",
+        "sha256": "aec284895acf297cdb2298e07fd6d6c241dee2c08eba51e8e6ada1b0bb5aa85a",
+        "createdAt": "2026-06-04T16:48:17.482Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:g9wj6a9q2c1axw20fguf",
+        "sha256": "8a9ea8bfc89ef96bfefef761899308c096b88d7d13869e76d7372adb2e09986a",
+        "createdAt": "2026-07-07T16:50:59.625878Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:z0bwm49qei911q5h9dzh",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "aa052f99-d545-4106-a6a9-1580b7e4a357",
+        "sha256": "dcc06d8712240c1516e7cab391e45030cd68844aac71a0b35e76eb000e58defe",
+        "createdAt": "2026-06-02T22:21:21.840Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:z0bwm49qei911q5h9dzh",
+        "sha256": "198955122eb5ac39b29d3ac825370bca75455f0a03decb6bb35c5ba1e8fff5c2",
+        "createdAt": "2026-07-07T16:51:00.219312Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:ifb8rcprbbs8xxdvb4vx",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "8314a1d2-daed-4fb8-a0ac-530213d6a22d",
+        "sha256": "a823b6034dfeb882b9497a4e6dc304f19482de2725f348f05f32935299a9076b",
+        "createdAt": "2026-06-04T20:44:27.611Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:ifb8rcprbbs8xxdvb4vx",
+        "sha256": "28bb6ba8c1987ace12fafc4dd60138e8c98f0bd46a4af320134996e4a9c6a1a2",
+        "createdAt": "2026-07-07T16:51:08.183840Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:fkipwnr9hzapjxck1iq6",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "c295b3da-64e4-4377-a8cb-9039b2077b5b",
+        "sha256": "5cd743a7e49623d26de406f6cc083c7893b6b59ee800fd958b0c6e979066faa4",
+        "createdAt": "2026-06-10T12:54:35.292Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:fkipwnr9hzapjxck1iq6",
+        "sha256": "7f216b29129ebce731a315ff8ae8681d61dbf9a9f77e4b70cb30f855ab2e7a38",
+        "createdAt": "2026-07-07T16:51:16.229992Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:jwrjsflngh56gfnm107b",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "3e03f2ef-2308-4a38-9b09-75ea3c2be355",
+        "sha256": "ea49e1222d84567534a86b51dd3dc008f412d22e47ce09831daf85582f90ffac",
+        "createdAt": "2026-06-11T17:26:53.162Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:jwrjsflngh56gfnm107b",
+        "sha256": "fe19f0c11212f6180d6cefa92e954341b1645c9f14e5b8f320d550193b5f9cb7",
+        "createdAt": "2026-07-07T16:52:04.718420Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:xtia3nhfm7xjqwvxp52y",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "69a806df-6ec5-484c-88af-faca2b886ab0",
+        "sha256": "d9d6bc11b766f723b2873d1aa209b6ef3b4391c7877106e5a5c9f1ec32ad7ef8",
+        "createdAt": "2026-06-13T16:00:14.547Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:xtia3nhfm7xjqwvxp52y",
+        "sha256": "4a44b3d41f930e269fd3b4c2fe628d17a916661aaeb01b61a37886556b32a95a",
+        "createdAt": "2026-07-07T16:52:24.170544Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:5e2cu368dynzxxhksi6d",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "69a806df-6ec5-484c-88af-faca2b886ab0",
+        "sha256": "d9d6bc11b766f723b2873d1aa209b6ef3b4391c7877106e5a5c9f1ec32ad7ef8",
+        "createdAt": "2026-06-13T16:00:14.547Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:5e2cu368dynzxxhksi6d",
+        "sha256": "ed5dcde7e129c607c4ff9a40ca097af4300060c0711fc90511704b67733b7761",
+        "createdAt": "2026-07-07T16:52:25.151593Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:h6rmzfz7savkyt7mjowv",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "69a806df-6ec5-484c-88af-faca2b886ab0",
+        "sha256": "d9d6bc11b766f723b2873d1aa209b6ef3b4391c7877106e5a5c9f1ec32ad7ef8",
+        "createdAt": "2026-06-13T16:00:14.547Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:h6rmzfz7savkyt7mjowv",
+        "sha256": "6fbc7dfa0a1039e69a90e580e460689347fd71331a7bdabf2120b6ec0a58e788",
+        "createdAt": "2026-07-07T16:52:25.299477Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:f09gsdmn8rik1ahpfu0n",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "cd068c29-0da2-4fe7-9c7e-09dcf0655ff9",
+        "sha256": "e476e3d50cb21f276e767950b72bde0bd057810bfbc2c7879b1d911d3a113f26",
+        "createdAt": "2026-06-15T08:02:43.096Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:f09gsdmn8rik1ahpfu0n",
+        "sha256": "f4543ba9aa145c3f3d4a85ba7a941e29446b0d5a419f0ce923a5b133b6cf0729",
+        "createdAt": "2026-07-07T16:52:29.259785Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:mnd8muukapbbsqplywc6",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "cef13a44-ea57-4940-8d25-ffe2f49c2c18",
+        "sha256": "a4406779960d8353368bffe910b33a491bece453ed24774e1b8bfb7e495ba72f",
+        "createdAt": "2026-06-19T14:14:30.743Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:mnd8muukapbbsqplywc6",
+        "sha256": "6ab2d81b8445d1faa6a90b358aacc6d9ac1611e3c3d074593ccb4c1aa29625f0",
+        "createdAt": "2026-07-07T16:53:03.011374Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:4c6j8haxq4gy55b5ceeb",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "dcf363bf-73b5-4911-af25-a1d2ecb03ef6",
+        "sha256": "68826df5b0c2020f36138c429869e4e4ba978a32e4d4e81613095923e577591b",
+        "createdAt": "2026-06-20T08:08:20.334Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:4c6j8haxq4gy55b5ceeb",
+        "sha256": "db8254102b356e3d64d69b391a1333f9db3ab02d62f272e67efe0f355d3a5272",
+        "createdAt": "2026-07-07T16:53:23.277007Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:j8kesqd95xv3qr1tkce9",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "11fc0d9e-db03-4eb9-9f26-1a21bf40cdc3",
+        "sha256": "2d68a68b8c67e06d36ffbae78cf497f5cb5f95b658c82763c1a0c2258c3e1d2d",
+        "createdAt": "2026-06-20T19:44:08.310Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:j8kesqd95xv3qr1tkce9",
+        "sha256": "aa35f295d160d1314279addf2dbe1001554f2d700513609b7cdda3dc816508ce",
+        "createdAt": "2026-07-07T16:54:05.737578Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:bbrbk0uy6pm8hy1qqihe",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "11776754-93fb-49ed-91f6-c7133a376419",
+        "sha256": "b92975184922cbbe869d2577d92a2a0518ec0b24331f68d64dcfd06cd0185105",
+        "createdAt": "2026-06-21T07:02:00.617Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:bbrbk0uy6pm8hy1qqihe",
+        "sha256": "af0b8284f960b4997f87c99362c728573e979e54a5b57d98e4909f3bbd94838e",
+        "createdAt": "2026-07-07T16:54:21.922870Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:wlnk2gnu2cghgk4xccbm",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "4cf6d9ec-d80e-4741-a841-af1c70c787c9",
+        "sha256": "46074f04105f00f5075171fa6e2e30a983d86b469e65c2946243622e0cd67dc9",
+        "createdAt": "2026-06-19T09:10:58.831Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:wlnk2gnu2cghgk4xccbm",
+        "sha256": "1969ab807ae74ea85b37e0f14f8c9b484fa4c9ec91082738c8decdc334a27a6c",
+        "createdAt": "2026-07-07T16:54:32.790200Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:ranpnykd24ra9671c075",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "7e69ffc6-1989-4d60-a1a3-b6ea04705116",
+        "sha256": "1eb48aefe64aab0e419ea41a2e2321695739ccb7657cfb03b42f3e36c43c28aa",
+        "createdAt": "2026-06-20T12:38:37.620Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:ranpnykd24ra9671c075",
+        "sha256": "232922c2aa417ed9ffa4cf8f33b4a0da3cc068d7653f69ed1bec3988eb657f0e",
+        "createdAt": "2026-07-07T16:55:11.432010Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:ews5uvmtm6iigioz54xh",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "5870d369-511b-4c0f-b75b-e9f1f6a6e9c4",
+        "sha256": "d78a5235fe991ad1d3b53aafc976829f088fb73e675a33a2a59b93b5c7417561",
+        "createdAt": "2026-06-21T21:06:12.919Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:ews5uvmtm6iigioz54xh",
+        "sha256": "f4db9a6dd1953d9a4e7a285683d7b4c174b1d0a5f92a2741c69fc4e67af7daeb",
+        "createdAt": "2026-07-07T16:55:23.337195Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:b3fmvdr9rjuddl953932",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "dff3fb7f-5fef-4d9c-a105-e0d7883f9214",
+        "sha256": "414a21bc0b2c8ddcd2a60af533990e8efa6ed5af106b2ac3cfa4dc82cb14ad55",
+        "createdAt": "2026-06-21T05:45:13.877Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:b3fmvdr9rjuddl953932",
+        "sha256": "59faab4f9c91ad26ba8a1557a436d1dc78c7d871d2008be05254f48f57bb8613",
+        "createdAt": "2026-07-07T16:55:30.536572Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:2i8502fttpk977lx7avx",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "3837b50f-edad-455d-a295-5bb906a4290d",
+        "sha256": "0429a0cd743ecdff5344cccf8cfa290c28f59dd4d5493779c5710dc19ca51f60",
+        "createdAt": "2026-06-20T06:38:35.639Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:2i8502fttpk977lx7avx",
+        "sha256": "dbe04c604cbe6dcf54583d1d47a2c92ef2df9c4807bdc657ce92fb020322df58",
+        "createdAt": "2026-07-07T16:55:49.165475Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:824pkl5cd55au9vieon4",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "fb66cd84-f2f1-4bf9-9d87-52fbfe7fc5b3",
+        "sha256": "4e4a5a866296152e66c32f07878e29f764ee0ff133fbe22d4a760ee0958027da",
+        "createdAt": "2026-06-22T13:16:25.561Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:824pkl5cd55au9vieon4",
+        "sha256": "528fbae2fe41187bee55d2216747dc47f7921be69d8563de849d02f6d28777b3",
+        "createdAt": "2026-07-07T16:56:09.067353Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:nlggwmx4l8kpvh58lk0e",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "d125ff7b-3a90-4391-85f9-b6650d3dba56",
+        "sha256": "dfa169e58d8b2ffa5dce8006eee4309422a221b6c673f9d1f35515c8c096aff8",
+        "createdAt": "2026-06-21T18:21:07.927Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:nlggwmx4l8kpvh58lk0e",
+        "sha256": "057ad4ee868e29113f80d28c9147fb1ccd82235d2295d35957c73fcdcfa2e148",
+        "createdAt": "2026-07-07T16:56:35.339810Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:17kskyn17fvs8tn84xrb",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "edaad25e-bf2a-4033-9842-f75602fed87d",
+        "sha256": "5940ebc9a745b1e1e6c7658e0e266fb74b318bed27c9543cf5d97c7286029787",
+        "createdAt": "2026-06-22T15:22:24.277Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:17kskyn17fvs8tn84xrb",
+        "sha256": "93ad492779b2cce60994d2e66db2ad10e4342bab91dfc892924c7ca69122f36e",
+        "createdAt": "2026-07-07T16:56:35.893962Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:0fxtj4rddixa0s9ndsj7",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "5e3b53ae-70a7-412d-8c90-53eeb488a63c",
+        "sha256": "9a7f7a7ab335236f6c0e5eaaffd4649f8fa39ebac32c8fafca66b68f87c746f2",
+        "createdAt": "2026-06-21T07:17:21.493Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:0fxtj4rddixa0s9ndsj7",
+        "sha256": "631ae66e58ff4fede43e5f510edf9b58d531b614957eb56dbc98464ce88286e1",
+        "createdAt": "2026-07-07T16:56:47.703273Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:hdceotwvgwh17fd88on6",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "e0718829-61b8-4fa9-b81f-586508556dee",
+        "sha256": "74697ad68b21df11ce2c3de868ff693315826473a6bb6eb222bbd6781a9addfb",
+        "createdAt": "2026-06-21T18:21:09.419Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:hdceotwvgwh17fd88on6",
+        "sha256": "343bb017aeb968dcf036ca006b41ca4f63e492e63ae0f28878516c24b6429208",
+        "createdAt": "2026-07-07T16:57:00.877555Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:13mxzedm56y9t7e5pa0d",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "2d4592d8-6da5-4757-b93a-395bfc66ad9c",
+        "sha256": "f4ee2586d78c240a0db221ccdc25b2909a4b91dcd638c4193ddcd2b9370b68ca",
+        "createdAt": "2026-06-21T19:43:50.624Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:13mxzedm56y9t7e5pa0d",
+        "sha256": "2f967c873224b2a72fb94bb7f6cab3317f3f9f775b6e99a0cb70cfd684f745d9",
+        "createdAt": "2026-07-07T16:57:26.127875Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:h0di218d2o8k06ql7b6m",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "5b64c8c0-749a-496d-87b8-720a64682afc",
+        "sha256": "2f967c873224b2a72fb94bb7f6cab3317f3f9f775b6e99a0cb70cfd684f745d9",
+        "createdAt": "2026-06-23T08:28:05.525Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:h0di218d2o8k06ql7b6m",
+        "sha256": "703dd8f2da84d8a1f769eec466d3825a288711ee2df2b30cab0208fe3cec8682",
+        "createdAt": "2026-07-07T16:57:26.404609Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:ad8y499ivels67s5e21o",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "5b64c8c0-749a-496d-87b8-720a64682afc",
+        "sha256": "2f967c873224b2a72fb94bb7f6cab3317f3f9f775b6e99a0cb70cfd684f745d9",
+        "createdAt": "2026-06-23T08:28:05.525Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:ad8y499ivels67s5e21o",
+        "sha256": "2b1c842b2b471f13ca034eb468e9cf5115e6b4fee3c6dbf98d8e3b687c719cd9",
+        "createdAt": "2026-07-07T16:57:27.545019Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:e5nqqjfglhygq8klh2qy",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "78b99b8d-2f95-4221-919a-bf1b770598b2",
+        "sha256": "7847428da9b8ade4683b2ffaecc8327c768992deb48cce9d42b35617482d3ab0",
+        "createdAt": "2026-06-24T20:33:52.321Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:e5nqqjfglhygq8klh2qy",
+        "sha256": "0e822f35474d1d74cfcdbd175aeff8b07d118dbff6b42f7dadca4d051118e167",
+        "createdAt": "2026-07-07T16:58:58.054129Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:59kq413vdhhjdbei3eqn",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "a1fc5b90-52a4-41ca-8fff-0565afb6aa02",
+        "sha256": "0a6064e408442f360e9ccdc64d802ea5d88afc240bea272d8793f8e4a8c67efa",
+        "createdAt": "2026-07-03T12:53:41.312Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:59kq413vdhhjdbei3eqn",
+        "sha256": "ddc02b72dbb0dfcf803e93ec7801282aa190edf39e5c314e52806f7d148d4cde",
+        "createdAt": "2026-07-07T17:01:52.477909Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "independent",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": "independent"
+    },
+    {
+      "pairId": "supersede_shadow:2pgwz32ivqejlncf884k",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "08d23b2e-dbd7-4768-b732-ccce66666621",
+        "sha256": "2d40bb60e49f367a5303c28e9fb4f9b8d31da6407740ae9119847e838b8ea50f",
+        "createdAt": "2026-07-03T17:00:18.445Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:2pgwz32ivqejlncf884k",
+        "sha256": "33818c4c470781cd698309030fcbbdde4034435aedc774710529c11717808abb",
+        "createdAt": "2026-07-07T17:02:00.078399Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:d44n4tb9wch0jtbciwpe",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "b746f182-4247-4167-8571-26934846d3f1",
+        "sha256": "ee2fa4a70e1780981858fce870c0564621b1300ff16da16bb54726797f2c2296",
+        "createdAt": "2026-07-03T04:55:14.523Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:d44n4tb9wch0jtbciwpe",
+        "sha256": "aa3da19691e9e397301b0761d72f10ff1b2670b9609925b4e9917e0f2ebb7313",
+        "createdAt": "2026-07-07T17:04:58.780996Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:jofrg5ys77o1iw8kjzbb",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "a035a9f9-ff2d-4bd1-b7c2-eae82e04726e",
+        "sha256": "cd7dadd8ccefc9ae61de5199921eb7d7b7347a1d0d60e6e24cb5c6bf19160e07",
+        "createdAt": "2026-07-05T08:34:27.692Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:jofrg5ys77o1iw8kjzbb",
+        "sha256": "d77b777256c0387254f79203cfdb073eb58c3d05206564f5a739e465faf60320",
+        "createdAt": "2026-07-07T17:04:59.482840Z"
+      },
+      "stratum": "legacy-diverged",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "diverged",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:9xojk6k3hbowxsyrpcu1",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "6fe53471-a940-409d-8740-b96cb5bb366f",
+        "sha256": "cef6000289366e0769bb41197f0938a0d52d9b61f3a673798aaa5722edc64495",
+        "createdAt": "2026-05-26T08:37:05.834Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:9xojk6k3hbowxsyrpcu1",
+        "sha256": "e49e59e52b0041eb2edc73c74152a68cec1301fe30135ceb8f2191668560c0ec",
+        "createdAt": "2026-07-07T16:49:19.357502Z"
+      },
+      "stratum": "legacy-control",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "control",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:lruos2ztqz76z687mvd5",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "bba7dde2-5653-4df6-acd9-4bf0fde35e7f",
+        "sha256": "6dbcd5d8d00e2aab464db772f19ec02610aae30940e4c821258f064e26822004",
+        "createdAt": "2026-05-29T12:37:05.656Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:lruos2ztqz76z687mvd5",
+        "sha256": "a5d14d7aa50c122253a8d39944e62f194b7125454407c8f68dfe422b41eed32c",
+        "createdAt": "2026-07-07T16:49:31.565171Z"
+      },
+      "stratum": "legacy-control",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "control",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:k54fmfrmhrp5m7i2z00s",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "e29159ad-f282-4525-b2d0-67e38f1be9ca",
+        "sha256": "95c082fe8ff664df556377f7c18f156008cd7ea1d7702f551ad798b588f2e1cf",
+        "createdAt": "2026-06-01T18:51:40.294Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:k54fmfrmhrp5m7i2z00s",
+        "sha256": "9a7324928f6646f60972c3acab679d34754eed77d61f660e28cd3c9e227e38ef",
+        "createdAt": "2026-07-07T16:49:58.120988Z"
+      },
+      "stratum": "legacy-control",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "control",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:nh55cbebmocvvolml1vv",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "1fd84dd5-b5af-4648-87df-96d947270248",
+        "sha256": "5cb725e2d094995922932310f78885486ebe19253a5e5362705eaf9a44ac4504",
+        "createdAt": "2026-06-13T16:00:13.735Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:nh55cbebmocvvolml1vv",
+        "sha256": "d9d6bc11b766f723b2873d1aa209b6ef3b4391c7877106e5a5c9f1ec32ad7ef8",
+        "createdAt": "2026-07-07T16:51:58.503735Z"
+      },
+      "stratum": "legacy-control",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "control",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:9pj2gdctvl97mr0g5lgs",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "3a378eec-dd71-4b70-92e5-e266b0d64663",
+        "sha256": "57418132e0841b405d13850df65016530b0c4efb1555eb44c9bde27de6af7221",
+        "createdAt": "2026-06-24T17:39:16.082Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:9pj2gdctvl97mr0g5lgs",
+        "sha256": "09e058027f29b248a12766a5f996e5b953e57564ebf33cc2ad74218c76edb3b1",
+        "createdAt": "2026-07-07T16:58:26.496528Z"
+      },
+      "stratum": "legacy-control",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "control",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:azbro44szdrehz6oktw5",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "823c7bfe-295d-4853-b291-b214e064998f",
+        "sha256": "472e91f7e429a724a34827670ba018fa6fef68e4bdfe0555a9d44e8286ce5d75",
+        "createdAt": "2026-06-24T18:16:17.667Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:azbro44szdrehz6oktw5",
+        "sha256": "1f7b4b6b5d056fa2709ceec72fec4b94be756bd79828d0cf1ba22ec05cfd8f64",
+        "createdAt": "2026-07-07T16:58:34.829925Z"
+      },
+      "stratum": "legacy-control",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "control",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:hb4oe9a08uj17k87nj1u",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "c9ae7326-078f-43bb-a2e1-71ae8e59a136",
+        "sha256": "db73c26cab88db195f21a79e5591bf546707e3fd299d7798009ed49c9d6982a4",
+        "createdAt": "2026-06-26T14:29:32.786Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:hb4oe9a08uj17k87nj1u",
+        "sha256": "624d095de0e4e608d5a5cf31ceb7b775596034a507896019f698dbc40a3e3eee",
+        "createdAt": "2026-07-07T16:59:42.010658Z"
+      },
+      "stratum": "legacy-control",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "control",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:bsvdkpm9wsbp5kd4x13b",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "7b2f04fd-0a91-43b2-a300-0d1537386dbe",
+        "sha256": "95ca8a788bc72515c554987f4267937637521e9ab321de74fd722be2f53bde0a",
+        "createdAt": "2026-06-29T20:39:55.335Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:bsvdkpm9wsbp5kd4x13b",
+        "sha256": "b9b015ef632044012730b4f336b2b1e00c0ea987156128bc92a47b3c48082616",
+        "createdAt": "2026-07-07T16:59:46.300199Z"
+      },
+      "stratum": "legacy-control",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "control",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    },
+    {
+      "pairId": "supersede_shadow:4imp9tomzupo8sm06iqo",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "b4d5a916-b57b-472f-a655-7bbac628ccd0",
+        "sha256": "bb596b6e7a5b504d84887d46aa39a2add9ecbd0b4e2980b7b54c7c98a64c903e",
+        "createdAt": "2026-07-04T20:46:53.940Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:4imp9tomzupo8sm06iqo",
+        "sha256": "c5ffcc670e8fc0a687e789b67572112cc0b2e9d653c9bbb9a35f36a00c0ca45e",
+        "createdAt": "2026-07-07T17:03:47.750954Z"
+      },
+      "stratum": "legacy-control",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "control",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:8xogjr4mlyoz6g94gsn2",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "eb330c54-109c-4910-ac90-c8144515f05d",
+        "sha256": "8a0a0923eaaebbe69aa79413daddc8eba5eb683f14d420f03f23e225137552df",
+        "createdAt": "2026-07-04T20:48:47.149Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:8xogjr4mlyoz6g94gsn2",
+        "sha256": "3a35588764efad746fad97334b3ab8fcfc7e66ed88cabccbfd69c9b70b318df9",
+        "createdAt": "2026-07-07T17:03:49.502761Z"
+      },
+      "stratum": "legacy-control",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "independent",
+        "labelA": "independent",
+        "labelB": "supersede",
+        "resolution": "disagreement_defaulted_over",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "control",
+      "legacyBinaryGold": true,
+      "goldHeadline": "independent",
+      "goldStrict": null
+    },
+    {
+      "pairId": "supersede_shadow:yumle7dh9hcxuy71dlca",
+      "oldRef": {
+        "source": "eval:pn1l_eval/seed_q4corpus:semiote",
+        "id": "7c82eb60-f977-433b-8648-b7ae3c79d8a5",
+        "sha256": "4f90ab36afe4ee8716551ce3529601e4138ab65bfd493bbc695f6481f86e381e",
+        "createdAt": "2026-07-03T11:42:12.882Z"
+      },
+      "newRef": {
+        "source": "archive:q4-labeler-input",
+        "id": "q4-incoming:supersede_shadow:yumle7dh9hcxuy71dlca",
+        "sha256": "cd7dadd8ccefc9ae61de5199921eb7d7b7347a1d0d60e6e24cb5c6bf19160e07",
+        "createdAt": "2026-07-07T17:04:57.377796Z"
+      },
+      "stratum": "legacy-control",
+      "split": "insample",
+      "origin": "pn1l-u5-q4",
+      "population": "legacy",
+      "cosine": null,
+      "gold": {
+        "label": "supersede",
+        "labelA": "supersede",
+        "labelB": "supersede",
+        "resolution": "agreed",
+        "spotChecked": false,
+        "spotCheckVerdict": null
+      },
+      "frame": "control",
+      "legacyBinaryGold": true,
+      "goldHeadline": "supersede",
+      "goldStrict": "supersede"
+    }
+  ]
+}

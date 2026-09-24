@@ -3,6 +3,9 @@ import {
   compareReviewRuns,
   type CompareReviewRunsOptions,
 } from "../../src/testing/review-studio/benchmark-adapter.js";
+import { textsPathFor } from "../../src/testing/judge-benchmark/paths.js";
+import { judgeTextPreviewsForBundle } from "../../src/testing/judge-benchmark/previews.js";
+import { DATASET_ID } from "../../src/testing/judge-benchmark/schema.js";
 import { adaptReviewRun } from "../../src/testing/review-studio/adapter-registry.js";
 import type {
   BenchmarkRunBundle,
@@ -355,8 +358,25 @@ function loadBundle(
   }
 
   const rows = parseJsonl(rowsRead.text, artifact, limits, sink);
+  const judgeTextPreviews = judgeTextPreviewsForBundle({
+    manifest,
+    rows,
+    readText: (datasetId) => {
+      if (!DATASET_ID.test(datasetId)) return null;
+      try {
+        return readFileSync(resolve(process.cwd(), textsPathFor(datasetId)), "utf8");
+      } catch {
+        return null;
+      }
+    },
+  });
   return {
-    bundle: { manifest, rows, sourceRoot: artifact.root.label },
+    bundle: {
+      manifest,
+      rows,
+      sourceRoot: artifact.root.label,
+      ...(judgeTextPreviews ? { judgeTextPreviews } : {}),
+    },
     artifact: {
       rootLabel: artifact.root.label,
       relativeManifest: artifact.relativeManifest,

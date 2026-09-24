@@ -24,6 +24,7 @@
     "review-studio:check": "npm run review-studio:test && tsc -p tsconfig.json --noEmit",
     "review-studio:stub": "node --import tsx/esm tools/review-studio/stub-server.ts",
     "benchmark:think": "tsx scripts/model-benchmark-think.ts",
+    "benchmark:judge": "tsx scripts/judge-benchmark.ts",
     "styrir:workspace": "node --import tsx/esm cli/index.ts workspace",
     "workspace:check": "node --import tsx/esm cli/index.ts workspace check --repo . --json",
     "build:plugin-archives": "python3 scripts/build-plugin-marketplace-archives.py",
