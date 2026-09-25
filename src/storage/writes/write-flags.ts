@@ -13,6 +13,13 @@ export function judgeGateEnabled(): boolean {
 export function f2JudgeConfirmEnabled(): boolean {
   return process.env.RUNIR_SUPERSEDE_F2_JUDGE_CONFIRM === "1";
 }
+// W2/W3 live overlap guards are independent, opt-in, and default OFF.
+export function f2RequireValueChangeEnabled(): boolean {
+  return process.env.RUNIR_F2_REQUIRE_VALUE_CHANGE === "1";
+}
+export function mergeKeepBothOnFusionEnabled(): boolean {
+  return process.env.RUNIR_MERGE_KEEP_BOTH_ON_FUSION === "1";
+}
 // Rúnir-pn1l.5 — merge-band keep-both guard, opt-in (default OFF), ship-dark like the supersede
 // gates. Read in arbitrateWrite; resolveDecision receives the resolved flag as a param.
 export function mergeKeepBothGuardEnabled(): boolean {

@@ -73,6 +73,8 @@ export type AtomicIsolatedEvaluationInput = {
   cueGateParam: boolean;
   incomingKeys: ReferentKeys;
   f2JudgeConfirm: boolean;
+  f2RequireValueChange?: boolean;
+  mergeKeepBothOnFusion?: boolean;
   /** Shared lane clock: withinHours + atomic guard unit + persisted lane_clock_ms. */
   laneClockMs: number;
   /** Applied decision for PIN-2 safety-activation comparison. */
@@ -188,6 +190,8 @@ export function computeAtomicIsolatedEvaluation(
     cueGateParam,
     incomingKeys,
     f2JudgeConfirm,
+    f2RequireValueChange = false,
+    mergeKeepBothOnFusion = false,
     laneClockMs,
     appliedDecision,
   } = input;
@@ -213,6 +217,8 @@ export function computeAtomicIsolatedEvaluation(
     f2JudgeConfirm,
     /* atomicAuthority */ true,
     laneClockMs,
+    f2RequireValueChange,
+    mergeKeepBothOnFusion,
   );
 
   const isolatedUnresolved: "judge_pending" | undefined =
