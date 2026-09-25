@@ -28,6 +28,8 @@ from typing import Any, Dict, List, Optional, Tuple
 # Local import — runir_watermark.py sits next to this script in the plugin hooks directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from runir_watermark import (  # type: ignore  # noqa: E402
+    bump_epoch,
+    load_epoch,
     load_fallback_hash,
     load_watermark,
     save_fallback_hash,
@@ -142,6 +144,7 @@ def read_messages(transcript_path: Optional[str]) -> List[Dict[str, Any]]:
                 if role == "user" and should_skip_capture_message(content):
                     continue
                 out: Dict[str, Any] = {"role": role, "content": content}
+                out["turnIndex"] = len(messages)
                 ts = item.get("timestamp")
                 if isinstance(ts, str) and ts:
                     out["timestamp"] = ts
@@ -269,9 +272,14 @@ def main() -> int:
     # Transcript shorter than watermark → reset (compaction / truncation).
     if not using_fallback and total_count < watermark:
         log(f"reset: session={session_id} total={total_count} watermark={watermark}")
+        if session_id:
+            bump_epoch(session_id)
         watermark = 0
 
     new_messages = select_new_messages(all_messages, watermark)
+    if not using_fallback and session_id:
+        epoch = f"epoch:{load_epoch(session_id)}"
+        new_messages = [{**message, "sessionEpoch": epoch} for message in new_messages]
     if not new_messages:
         log(f"skip: session={session_id} reason=no_new watermark={watermark} total={total_count}")
         return 0

@@ -1,5 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 
+const sourceAppend = vi.hoisted(() => vi.fn(async (turns: unknown[]) => turns.map(() => true)));
+vi.mock("../capture/source-turn-spool.js", () => ({
+  SourceTurnSpool: class {
+    appendBatch = sourceAppend;
+    drain = vi.fn().mockResolvedValue(undefined);
+    snapshot = vi.fn().mockReturnValue({ appended: 0, pending: 0, pendingBytes: 0, appendFailures: 0 });
+  },
+}));
+
 // ---------------------------------------------------------------------------
 // Mock all side-effect modules BEFORE importing the app
 // ---------------------------------------------------------------------------
@@ -262,11 +271,13 @@ import { resolveCaptureApiKey } from "../shared/config.js";
 import { getPrimaryMemoryRowsByIds, getRetrievalFootprintFromTrace, getRetrievalTrace, listRetrievalTraces, patchRetrievalTraceCaptureReceipt, patchSemioteProvenance, retrievalFootprintIdentityMatches, upsertSemioteRelation } from "../storage/surreal/phase2-store.js";
 import { normalizeCaptureMessages } from "../capture/extraction/capture.js";
 import { createApp } from "../../index.js";
+import { runtime } from "../app/runtime.js";
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 describe("POST /hooks/capture integration (MIM-58)", () => {
+  afterEach(() => vi.unstubAllEnvs());
   beforeEach(() => {
     vi.clearAllMocks();
     (extractMemories as Mock).mockResolvedValue([]);
@@ -517,6 +528,83 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
     expect(arbitrateWrite).not.toHaveBeenCalled();
   });
 
+  it("stores redacted source before a no-key early exit when the flag is on", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    (resolveCaptureApiKey as Mock).mockReturnValue(undefined);
+    const app = getApp();
+    const res = await app.request("/hooks/capture", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "test-user", sessionId: "synthetic-session", client: "codex",
+        scope: "global", teamId: "untrusted-team", projectKey: "untrusted-project",
+        messages: [{ role: "user", content: "synthetic.person@example.com", turnIndex: 8, sessionEpoch: "epoch:2" }] }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).reason).toBe("no capture API key");
+    expect(sourceAppend).toHaveBeenCalledTimes(1);
+    const stored = sourceAppend.mock.calls[0]?.[0] as Array<{
+      content: string; turnIndex: number; identityQuality: string;
+      scope: string; teamId?: string; projectKey?: string;
+    }>;
+    expect(stored[0]?.content).not.toContain("synthetic.person@example.com");
+    expect(stored[0]).toMatchObject({ turnIndex: 8, identityQuality: "ordinal" });
+    expect(stored[0]?.scope).toBe("user");
+    expect(stored[0]?.teamId).toBeUndefined();
+    expect(stored[0]?.projectKey).not.toBe("untrusted-project");
+    const status = await app.request("/hooks/source-spool");
+    expect(status.status).toBe(200);
+    expect(await status.json()).toMatchObject({ pending: 0, appendFailures: 0 });
+  });
+
+  it("counts a failed spool append and returns normal capture with an unavailable fact link", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    sourceAppend.mockResolvedValueOnce([false]);
+    (extractMemories as Mock).mockResolvedValueOnce([
+      { l2: "A synthetic compiler fact with sufficient length", confidence: 0.9, source_turn_index: 0 },
+    ]);
+    const app = getApp();
+    const res = await app.request("/hooks/capture", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "test-user", sessionId: "synthetic-session", client: "codex",
+        messages: [{ role: "user", content: "synthetic compiler fact", turnIndex: 0, sessionEpoch: "epoch:0" }] }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.error).toBeUndefined();
+    expect(body.skipped).toBe(false);
+    expect((runtime.db.query as Mock).mock.calls.some(([sql, params]) =>
+      String(sql).includes("source_turn_link_state") && params?.state === "unavailable")).toBe(true);
+  });
+
+  it("refuses source writes on an HMAC fingerprint mismatch but still accepts capture", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "different-synthetic-key");
+    (runtime.db.query as Mock).mockImplementation(async (sql: string) =>
+      String(sql).includes("SELECT VALUE key_fingerprint FROM session_turn")
+        ? [["0000000000000000"]] : [[]]);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    (extractMemories as Mock).mockResolvedValueOnce([
+      { l2: "A synthetic compiler fact with sufficient length", confidence: 0.9, source_turn_index: 0 },
+    ]);
+    try {
+      const res = await getApp().request("/hooks/capture", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: "test-user", sessionId: "synthetic-key-mismatch", client: "grok",
+          messages: [{ role: "user", content: "synthetic compiler fact" }] }),
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()).error).toBeUndefined();
+      expect(sourceAppend).not.toHaveBeenCalled();
+      expect(errorLog).toHaveBeenCalledWith(expect.stringMatching(/key fingerprint mismatch configured=[0-9a-f]{16} recorded=0000000000000000/));
+      expect((runtime.db.query as Mock).mock.calls.some(([sql, params]) =>
+        String(sql).includes("source_turn_link_state") && params?.state === "unavailable")).toBe(true);
+    } finally {
+      errorLog.mockRestore();
+      (runtime.db.query as Mock).mockResolvedValue([[]]);
+    }
+  });
+
   it("POST /hooks/capture persists an exact headless capture receipt on the retrieval trace", async () => {
     const prompt = "Which deployment target did we choose?";
     const answer = "production";
@@ -591,6 +679,8 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
   });
 
   it("POST /hooks/capture rejects a headless receipt whose memory identities do not exactly match the trace", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
     (getRetrievalTrace as Mock).mockResolvedValueOnce({
       id: "trace-headless",
       userId: "agent-hermes",
@@ -626,6 +716,7 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
     expect(listRetrievalTraces).not.toHaveBeenCalled();
     expect(extractMemories).not.toHaveBeenCalled();
     expect(patchRetrievalTraceCaptureReceipt).not.toHaveBeenCalled();
+    expect(sourceAppend).not.toHaveBeenCalled();
   });
 
   it("POST /hooks/capture rejects prefix-normalized memoryIds instead of rewriting the receipt", async () => {

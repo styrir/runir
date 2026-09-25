@@ -360,7 +360,6 @@ function extractText(content: unknown): string {
       const record = part as Record<string, unknown>;
       if (record.type === "text" && typeof record.text === "string")
         return record.text;
-      if (typeof record.content === "string") return record.content;
       return "";
     })
     .filter(Boolean)
@@ -369,8 +368,8 @@ function extractText(content: unknown): string {
 
 function extractMessages(
   entriesOrMessages: any[],
-): Array<{ role: string; content: string; timestamp?: string }> {
-  const out: Array<{ role: string; content: string; timestamp?: string }> = [];
+): Array<{ role: string; content: string; timestamp?: string; turnKey?: string; turnIndex?: number; sessionEpoch?: string }> {
+  const out: Array<{ role: string; content: string; timestamp?: string; turnKey?: string; turnIndex?: number; sessionEpoch?: string }> = [];
   for (const entryOrMessage of entriesOrMessages) {
     const msg =
       entryOrMessage?.type === "message"
@@ -379,10 +378,16 @@ function extractMessages(
     if (!msg || !["user", "assistant"].includes(msg.role)) continue;
     const content = extractText(msg.content).trim();
     if (!content) continue;
-    const item: { role: string; content: string; timestamp?: string } = {
+    const item: { role: string; content: string; timestamp?: string; turnKey?: string; turnIndex?: number; sessionEpoch?: string } = {
       role: msg.role,
       content,
     };
+    const entryId = entryOrMessage?.id;
+    if (typeof entryId === "string" && /^[A-Za-z0-9._:-]{1,200}$/.test(entryId)) {
+      item.turnKey = `pi:${entryId}`;
+      item.turnIndex = out.length;
+      item.sessionEpoch = "pi-native";
+    }
     if (typeof entryOrMessage.timestamp === "string") {
       item.timestamp = entryOrMessage.timestamp;
     } else if (typeof msg.timestamp === "string") {

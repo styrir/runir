@@ -13,7 +13,7 @@ import hashlib
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from watermark import load_fallback_hash, load_watermark, save_fallback_hash, save_watermark
+from watermark import bump_epoch, load_epoch, load_fallback_hash, load_watermark, save_fallback_hash, save_watermark
 
 RUNIR_BASE = os.environ.get("RUNIR_BASE", "http://127.0.0.1:7700")
 RUNIR_USER_ID = os.environ.get("RUNIR_USER_ID")
@@ -71,6 +71,8 @@ def read_messages(transcript_path: Optional[str]) -> List[Dict[str, Any]]:
                 for content in payload.get("content") or []:
                     if not isinstance(content, dict):
                         continue
+                    if content.get("type") not in (None, "input_text", "output_text", "text"):
+                        continue
                     text = content.get("text") or content.get("content")
                     if text:
                         text_parts.append(text)
@@ -79,6 +81,7 @@ def read_messages(transcript_path: Optional[str]) -> List[Dict[str, Any]]:
                     if role == "user" and should_skip_capture_message(content):
                         continue
                     message: Dict[str, Any] = {"role": role, "content": content}
+                    message["turnIndex"] = len(messages)
                     timestamp = item.get("timestamp")
                     if isinstance(timestamp, str) and timestamp:
                         message["timestamp"] = timestamp
@@ -173,10 +176,15 @@ def main() -> int:
     # Transcript shorter than watermark → reset (transcript truncation/compaction)
     if not using_fallback and total_count < watermark:
         _debug(f"transcript reset: {total_count} < watermark {watermark}, resetting to 0")
+        if session_id:
+            bump_epoch(session_id)
         watermark = 0
 
     # Slice to only new messages
     new_messages = select_new_messages(all_messages, watermark)
+    if not using_fallback and session_id:
+        epoch = f"epoch:{load_epoch(session_id)}"
+        new_messages = [{**message, "sessionEpoch": epoch} for message in new_messages]
     if not new_messages:
         _debug(f"no new messages (watermark={watermark}, total={total_count})")
         return 0

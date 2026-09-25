@@ -59,6 +59,23 @@ def load_watermark(session_id: str) -> int:
     return count if isinstance(count, int) and count >= 0 else 0
 
 
+def load_epoch(session_id: str) -> int:
+    value = _load_entry(_read_all(), session_id).get("sessionEpoch", 0)
+    return value if isinstance(value, int) and value >= 0 else 0
+
+
+def bump_epoch(session_id: str) -> int:
+    data = _read_all()
+    entry = _load_entry(data, session_id)
+    epoch = load_epoch(session_id) + 1
+    data[session_id] = {
+        **entry, "messageCount": 0, "sessionEpoch": epoch,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    _write_all(data)
+    return epoch
+
+
 def load_fallback_hash(session_id: str) -> Optional[str]:
     data = _read_all()
     entry = _load_entry(data, session_id)
@@ -73,6 +90,7 @@ def save_watermark(session_id: str, message_count: int) -> None:
         "messageCount": message_count,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
         "lastFallbackHash": entry.get("lastFallbackHash"),
+        "sessionEpoch": entry.get("sessionEpoch", 0),
     }
     _write_all(data)
 
@@ -85,5 +103,6 @@ def save_fallback_hash(session_id: str, fallback_hash: str) -> None:
         "messageCount": message_count if isinstance(message_count, int) and message_count >= 0 else 0,
         "updatedAt": datetime.now(timezone.utc).isoformat(),
         "lastFallbackHash": fallback_hash,
+        "sessionEpoch": entry.get("sessionEpoch", 0),
     }
     _write_all(data)

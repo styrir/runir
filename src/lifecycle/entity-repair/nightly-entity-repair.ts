@@ -165,16 +165,31 @@ async function findMentionInTurns(
   db: SurrealClient,
   mention: string,
   userId: string,
-  sinceIso: string,
+  _sinceIso: string,
 ): Promise<TurnHit[]> {
-  const result = await db.query<any>(
-    `SELECT session_id, turn_index, content FROM session_turn
-      WHERE user_id = $userId AND created_at >= <datetime>$sinceIso
-      AND string::contains(string::lowercase(content), $mention)
-      ORDER BY session_id, turn_index LIMIT 3;`,
-    { userId, mention, sinceIso },
+  const matches = await db.query<any>(
+    `SELECT turn_id FROM session_turn_chunk WHERE user_id = $userId
+      AND string::contains(text_norm, $mention) LIMIT 12;`,
+    { userId, mention },
   );
-  return (result[0] ?? []) as TurnHit[];
+  const hits: TurnHit[] = [];
+  for (const turnId of new Set((matches[0] ?? []).map((row: { turn_id: string }) => row.turn_id))) {
+    const header = await db.query<any>(
+      `SELECT session_id, turn_index FROM type::record('session_turn', $turnId)
+        WHERE user_id = $userId AND occurred_at >= time::now() - 30d;`,
+      { turnId, userId },
+    );
+    const row = header[0]?.[0] as { session_id: string; turn_index: number } | undefined;
+    if (!row) continue;
+    const chunks = await db.query<any>(
+      `SELECT content FROM session_turn_chunk WHERE user_id = $userId
+        AND turn_id = $turnId ORDER BY chunk_index;`, { userId, turnId },
+    );
+    hits.push({ session_id: row.session_id, turn_index: row.turn_index,
+      content: (chunks[0] ?? []).map((chunk: { content: string }) => chunk.content).join("") });
+    if (hits.length >= 3) break;
+  }
+  return hits;
 }
 
 export async function runNightlyEntityRepair(deps: {

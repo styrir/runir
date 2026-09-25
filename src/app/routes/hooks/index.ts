@@ -1,6 +1,10 @@
 import type { Hono } from "hono";
 import { redactFact, redactFactText, redactSourceTurn } from "../../../shared/source-redaction.js";
 import { resolveLlmBaseUrl, resolveLlmTimeoutMs } from "../../../shared/config.js";
+import { prepareSourceTurn, sourceKeyFingerprint, type SourceTurn } from "../../../capture/source-turn-identity.js";
+import { SourceTurnSpool } from "../../../capture/source-turn-spool.js";
+import { assertSourceKeyFingerprint, SourceKeyMismatchError, upsertSourceTurn } from "../../../storage/surreal/session-turn-store.js";
+import { markFactSourceLink, reconcileSourceTurnLinks } from "../../../storage/surreal/source-turn-link-store.js";
 import type { EntityMention, ExtractedFact, MemoryRole, RawExtractedFact } from "../../../domain/memory/types.js";
 import {
   scoreHexisFit,
@@ -18,7 +22,7 @@ import {
   normalizeExtractedFact,
   resolveCapturePrompt,
 } from "../../../capture/extraction/capture.js";
-import { compressMessages } from "../../../capture/continuity/session-compressor.js";
+import { compressMessages, compressMessagesWithIndices } from "../../../capture/continuity/session-compressor.js";
 import { scoreSessionSalience } from "../../../capture/continuity/session-salience.js";
 import { buildWarmedProjectState, type WarmingFact } from "../../../capture/continuity/project-state-warming.js";
 import { buildCaptureContextPacket } from "../../../capture/capture-context-assembler.js";
@@ -87,6 +91,36 @@ import {
   resolveActiveHexis,
   writeWithArbitration,
 } from "../../runtime.js";
+
+const sourceTurnSpool = new SourceTurnSpool();
+const sourceStoreEnabled = () => process.env.RUNIR_SOURCE_STORE === "on";
+function recordSourceKeyRefusal(error: SourceKeyMismatchError, model: string): void {
+  recordPipelineDrop("capture", "element", "source_key_mismatch", model);
+  console.error(`[runir] source-store write refused: key fingerprint mismatch configured=${error.configured} recorded=${error.recorded}`);
+}
+let sourceDrainInFlight = false;
+let sourceDrainTimer: ReturnType<typeof setInterval> | undefined;
+function scheduleSourceDrain(): void {
+  if (sourceDrainInFlight) return;
+  sourceDrainInFlight = true;
+  setImmediate(() => {
+    void sourceTurnSpool.drain(async (turn) => {
+      const configured = sourceKeyFingerprint(process.env.RUNIR_SOURCE_HMAC_KEY ?? "");
+      if (turn.keyFingerprint !== configured) {
+        const error = new SourceKeyMismatchError(configured, turn.keyFingerprint);
+        recordSourceKeyRefusal(error, "source-drain");
+        throw error;
+      }
+      try {
+        await upsertSourceTurn(runtime.db, turn);
+        await reconcileSourceTurnLinks(runtime.db, turn);
+      } catch (error) {
+        if (error instanceof SourceKeyMismatchError) recordSourceKeyRefusal(error, "source-drain");
+        throw error;
+      }
+    }).catch(() => undefined).finally(() => { sourceDrainInFlight = false; });
+  });
+}
 
 function optionalTrimmedString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -590,6 +624,14 @@ function selectDerivedFromSourceId(args: {
 }
 
 export function registerHookRoutes(app: Hono) {
+  if (sourceStoreEnabled() && !sourceDrainTimer) {
+    scheduleSourceDrain();
+    sourceDrainTimer = setInterval(scheduleSourceDrain, 5_000);
+    sourceDrainTimer.unref();
+  }
+  if (sourceStoreEnabled()) {
+    app.get("/hooks/source-spool", (c) => c.json(sourceTurnSpool.snapshot()));
+  }
   // Forced/manual trigger for the nightly demand-driven entity repair
   // (Rúnir-b40x.4). Same auth class as /hooks/maintenance. Body:
   // { userId?, sinceHours? (default 24), maxMentions?, maxReextractions? }.
@@ -1162,6 +1204,62 @@ export function registerHookRoutes(app: Hono) {
         throw new Error("capture context resolution did not complete");
       }
 
+      // The source store is independent of extraction and of every early
+      // capture exit below. Receipt binding has already completed here.
+      const sourceTurnsByMessage = new Map<number, { turn: SourceTurn; available: boolean }>();
+      if (sourceStoreEnabled()) {
+        let keyAllowed = false;
+        const hmacKey = process.env.RUNIR_SOURCE_HMAC_KEY ?? "";
+        try {
+          await assertSourceKeyFingerprint(runtime.db, sourceKeyFingerprint(hmacKey));
+          keyAllowed = true;
+        } catch (error) {
+          if (error instanceof SourceKeyMismatchError) recordSourceKeyRefusal(error, cfg.extractModel ?? "unknown");
+          else recordPipelineDrop("capture", "element", "source_spool_unavailable", cfg.extractModel ?? "unknown");
+        }
+        if (keyAllowed) {
+        const rawEligible = (Array.isArray(messages) ? messages : [])
+          .filter((message: unknown) => normalizeCaptureMessages([message]).length === 1) as Array<Record<string, unknown>>;
+        const prepared: Array<{ index: number; turn: SourceTurn }> = [];
+        for (let index = 0; index < safeFormatted.length; index++) {
+          const message = safeFormatted[index]!;
+          const raw = rawEligible[index] ?? {};
+          try {
+            if (Array.isArray(raw.content) && raw.content.some((part: unknown) =>
+              !part || typeof part !== "object" || (part as Record<string, unknown>).type !== "text")) {
+              throw new Error("non-text source block");
+            }
+            const turn = prepareSourceTurn({
+              userId: uid,
+              client: captureClient ?? "unknown",
+              sessionId: typeof body.sessionId === "string" && body.sessionId ? body.sessionId : runirSession.id,
+              sessionEpoch: typeof raw.sessionEpoch === "string" ? raw.sessionEpoch : undefined,
+              turnKey: typeof raw.turnKey === "string" ? raw.turnKey : undefined,
+              turnIndex: Number.isSafeInteger(raw.turnIndex) ? raw.turnIndex as number : undefined,
+              role: message.role as "user" | "assistant",
+              content: message.content,
+              occurredAt: typeof raw.timestamp === "string" && !Number.isNaN(Date.parse(raw.timestamp))
+                ? new Date(raw.timestamp).toISOString() : new Date().toISOString(),
+              scope: "user",
+              projectKey: contextIdentity.projectKey,
+              path: capturePath ?? undefined,
+            }, hmacKey);
+            prepared.push({ index, turn });
+          } catch {
+            recordPipelineDrop("capture", "element", "source_spool_unavailable", cfg.extractModel ?? "unknown");
+          }
+        }
+        const accepted = await sourceTurnSpool.appendBatch(prepared.map((entry) => entry.turn));
+        for (let i = 0; i < prepared.length; i++) {
+          const { index, turn } = prepared[i]!;
+          const available = accepted[i] ?? false;
+          if (!available) recordPipelineDrop("capture", "element", "source_spool_unavailable", cfg.extractModel ?? "unknown");
+          sourceTurnsByMessage.set(index, { turn, available });
+        }
+        scheduleSourceDrain();
+        }
+      }
+
       const salience = await scoreSessionSalience(
         runtime.db,
         safeFormatted,
@@ -1176,7 +1274,11 @@ export function registerHookRoutes(app: Hono) {
       });
       timer.mark("score_salience");
 
-      const compressed = compressMessages(formatted, cfg.extractMaxChars);
+      const compressedWithIndices = sourceStoreEnabled()
+        ? compressMessagesWithIndices(formatted, cfg.extractMaxChars) : undefined;
+      const compressed = compressedWithIndices
+        ? compressedWithIndices.map(({ message }) => message)
+        : compressMessages(formatted, cfg.extractMaxChars);
       const apiKey = resolveCaptureApiKey(cfg);
       // Fixture-mode only: prefer a PER-REQUEST body field (so the product-eval
       // lane can drive distinct facts per session — the process-global env blob
@@ -1223,7 +1325,13 @@ export function registerHookRoutes(app: Hono) {
       );
       timer.mark("extract_memories");
       let rawFacts: ExtractedFact[];
-      try { rawFacts = extractedRawFacts.map((fact) => normalizeExtractedFact(redactFact(fact))); }
+      const sourceIndexByFact = new Map<ExtractedFact, number>();
+      try { rawFacts = extractedRawFacts.map((fact) => {
+        const normalized = normalizeExtractedFact(redactFact(fact));
+        if ("source_turn_index" in fact && typeof fact.source_turn_index === "number")
+          sourceIndexByFact.set(normalized, fact.source_turn_index);
+        return normalized;
+      }); }
       catch { return redactionDrop(); }
       for (const rejection of pendingRejections) {
         void logRejection(runtime.db, { ...rejection, sessionId: body.sessionId, userId: uid });
@@ -1349,6 +1457,24 @@ export function registerHookRoutes(app: Hono) {
           rankingExplanation: hexisScore.explanation,
           semioteProvenance: captureOrigin.provenance,
         });
+        if (sourceStoreEnabled() && result.memoryId) {
+          const sourceIndex = sourceIndexByFact.get(fact);
+          const originalIndex = sourceIndex === undefined
+            ? -1 : compressedWithIndices?.[sourceIndex]?.originalIndex ?? -1;
+          const source = sourceTurnsByMessage.get(originalIndex);
+          try {
+            if (source) {
+              await markFactSourceLink(runtime.db, result.memoryId, uid, source.turn,
+                source.available ? "pending" : "unavailable", result.outcome === "skip");
+              if (source.available) void reconcileSourceTurnLinks(runtime.db, source.turn).catch(() => undefined);
+            } else if (sourceIndex !== undefined && result.outcome !== "skip") {
+              await markFactSourceLink(runtime.db, result.memoryId, uid, undefined, "unavailable");
+            }
+          } catch (error) {
+            if (error instanceof SourceKeyMismatchError) recordSourceKeyRefusal(error, cfg.extractModel ?? "unknown");
+            else recordPipelineDrop("capture", "element", "source_link_unavailable", cfg.extractModel ?? "unknown");
+          }
+        }
         outcomes[result.outcome] = (outcomes[result.outcome] ?? 0) + 1;
         const derivedFromSourceId = selectDerivedFromSourceId({
           shownRows,
