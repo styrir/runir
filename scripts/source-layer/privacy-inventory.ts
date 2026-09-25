@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
 import { assertNoSecrets, redactFactText, redactSourceTurn, redactWithMarkers, SECRET_MARKER_KINDS, type MarkerKind } from "../../src/shared/source-redaction.js";
 import type { SurrealClient } from "../../src/storage/surreal/surreal-store.js";
+import { ownedVaultFiles } from "./vault-ownership.js";
 
 export const TABLES = ["semiote", "noema", "memories", "rejection_log", "retrieval_trace", "session_turn_chunk", "session_turn", "source_turn_evidence"] as const;
 export type PrivacyTable = typeof TABLES[number];
@@ -109,14 +110,6 @@ export function inspectField(table: PrivacyTable, field: string, value: unknown)
   return count;
 }
 
-export async function* vaultFiles(root: string): AsyncGenerator<string> {
-  for (const entry of await readdir(root, { withFileTypes: true })) {
-    const path = join(root, entry.name);
-    if (entry.isDirectory()) yield* vaultFiles(path);
-    else if (entry.isFile() && entry.name.endsWith(".md")) yield path;
-  }
-}
-
 export async function inventory(db: Pick<SurrealClient, "query">, identity: { namespace: string; database: string }, vaultRoot?: string,
   embed?: (text: string) => Promise<number[]>): Promise<Inventory> {
   const fields: Record<string, FieldCount> = {};
@@ -174,7 +167,9 @@ export async function inventory(db: Pick<SurrealClient, "query">, identity: { na
     }
   }
   rows.vault_files = 0;
-  if (vaultRoot) for await (const file of vaultFiles(vaultRoot)) {
+  const vault = vaultRoot ? await ownedVaultFiles(db, vaultRoot) : undefined;
+  rows.owner_files_skipped = vault?.ownerFilesSkipped ?? 0;
+  for (const file of vault?.files ?? []) {
     rows.vault_files++;
     const bytes = await readFile(file);
     hash.update(bytes);
