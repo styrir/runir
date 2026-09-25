@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import { scoreExactQaCandidate } from "../domain/memory/exact-qa.js";
 import { prepareSourceTurn } from "../capture/source-turn-identity.js";
 import { inventory, verifyInventory } from "../../scripts/source-layer/privacy-inventory.js";
 import { applyScrub, type ScrubDb } from "../../scripts/source-layer/scrub.js";
+import { ownedVaultFiles } from "../../scripts/source-layer/vault-ownership.js";
 
 const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
 const identity = { namespace: `runir277scrub${suffix}`, database: `scratch${suffix}` };
@@ -38,6 +39,88 @@ afterAll(async () => {
 });
 
 describe("Slice 3 live SQL scrub", () => {
+  it("resolves signed Markdown IDs through record point lookups", async (ctx) => {
+    if (!available) return ctx.skip();
+    const { mkdir } = await import("node:fs/promises");
+    const vault = join(dir, "point-lookup-vault");
+    await mkdir(vault);
+    const frontmatter = (id: string) => `---\nid: ${id}\ncategory: profile\ntier: durable\ntags: []\nconfidence: 1\nscope: user\ncreatedAt: now\nupdatedAt: now\nactive: true\nwriteSource: capture\n---\nsynthetic`;
+    await writeFile(join(vault, "owned.md"), frontmatter("vault-lookup"));
+    await writeFile(join(vault, "forged.md"), frontmatter("missing-lookup"));
+    await db.query("CREATE type::record('semiote', 'vault-lookup') CONTENT { user_id: 'synthetic' };");
+    try {
+      const result = await ownedVaultFiles(db, vault);
+      expect(result.files).toEqual([join(vault, "owned.md")]);
+      expect(result.ownerFilesSkipped).toBe(1);
+    } finally { await db.query("REMOVE TABLE semiote;"); }
+  });
+
+  it("preserves derived values for source-only rows and removes unredactable fields and names", async (ctx) => {
+    if (!available) return ctx.skip();
+    const { mkdir, readFile, stat } = await import("node:fs/promises");
+    const vault = join(dir, "correctness-vault");
+    await mkdir(vault);
+    const unsafe = "Authorization: Basic AAAAAAAAAAAAAAAA";
+    const originalName = `${unsafe}.md`;
+    const owned = join(vault, originalName);
+    const owner = join(vault, "owner.md");
+    const frontmatter = `---\nid: ownedfix6\ncategory: profile\ntier: durable\ntags: []\nconfidence: 1\nscope: user\ncreatedAt: now\nupdatedAt: now\nactive: true\nwriteSource: capture\n---\nsynthetic`;
+    await writeFile(owned, frontmatter);
+    await writeFile(owner, unsafe);
+    const ownerBefore = { bytes: await readFile(owner), mtime: (await stat(owner)).mtimeMs };
+    const backupPath = join(dir, "fix6-backup.surql");
+    const vaultBackupPath = join(dir, "fix6-vault.tar");
+    const checkpointPath = join(dir, "fix6-checkpoint.json");
+    await writeFile(backupPath, "synthetic", { mode: 0o600 });
+    await writeFile(vaultBackupPath, "synthetic", { mode: 0o600 });
+    await db.query(`
+      DEFINE TABLE session_turn SCHEMALESS;
+      DEFINE TABLE session_turn_chunk SCHEMALESS;
+      DEFINE TABLE noema SCHEMALESS;
+      CREATE type::record('semiote', 'rawonlyfix6') CONTENT { user_id: 'synthetic', session_id: 's',
+        payload: { client: 'synthetic', raw_source_text: 'ordinary source', l2: 'clean fact' }, text_norm: 'original norm', embedding: [0.77] };
+      CREATE type::record('semiote', 'excerptfix6') CONTENT { payload: { l2: 'useful fact\\nSource:\\nprivate excerpt' }, text_norm: 'old norm', embedding: [0.55] };
+      CREATE type::record('semiote', 'spanfix6') CONTENT { payload: { l2: 'other clean fact', rawSpan: { text: '${unsafe}' } },
+        text_norm: 'other original norm', embedding: [0.66] };
+      CREATE type::record('semiote', 'rawfailfix6') CONTENT { user_id: 'synthetic', payload: { l2: 'still clean', raw_source_text: '${unsafe}' },
+        text_norm: 'kept norm', embedding: [0.33] };
+      CREATE type::record('semiote', 'ownedfix6') CONTENT { payload: { l2: 'synthetic' }, text_norm: 'synthetic', embedding: [0.44] };
+      CREATE type::record('noema', 'canonicalfix6') CONTENT { canonical_text: 'clean canonical',
+        canonical: { l0: '${secret}' }, canonical_norm: 'kept canonical norm', embedding: [0.88] };
+    `);
+    try {
+      const before = await inventory(db, identity, vault);
+      expect(before.fields["semiote.text_norm"].wouldChange).toBe(1);
+      expect(before.fields["semiote.embedding"].wouldChange).toBe(1);
+      expect(before.fields["vault.filename"].assertionFailures).toBe(1);
+      let embedCalls = 0;
+      const after = await applyScrub(db, { identity, inventoryHash: before.hash, inventoryCreatedAt: new Date().toISOString(),
+        backupPath, vaultBackupPath, checkpointPath, vaultRoot: vault, hmacKey: "synthetic-hmac-key", confirmed: true,
+        embed: async () => [++embedCalls, 0.25] });
+      expect(verifyInventory(after)).toBe(true);
+      expect(embedCalls).toBe(1);
+      const rows = (await db.query<any>("SELECT * FROM semiote;"))[0];
+      const find = (id: string) => rows.find((row: any) => String(row.id).includes(id));
+      expect(find("rawonlyfix6")).toMatchObject({ text_norm: "original norm", embedding: [0.77] });
+      expect(find("rawonlyfix6").payload.raw_source_text).toBeUndefined();
+      expect(find("excerptfix6")).toMatchObject({ text_norm: "useful fact", embedding: [1, 0.25] });
+      expect(find("spanfix6").payload.rawSpan).toBeUndefined();
+      expect(find("rawfailfix6")).toMatchObject({ text_norm: "kept norm", embedding: [0.33] });
+      expect(find("rawfailfix6").payload.raw_source_text).toBeUndefined();
+      const noema = (await db.query<any>("SELECT * FROM type::record('noema', 'canonicalfix6');"))[0][0];
+      expect(noema).toMatchObject({ canonical_norm: "kept canonical norm", embedding: [0.88] });
+      const safeName = `runir-redacted-${createHash("sha256").update(originalName).digest("hex").slice(0, 12)}.md`;
+      expect(await readFile(join(vault, safeName), "utf8")).toBe(frontmatter);
+      const checkpoint = await readFile(checkpointPath, "utf8");
+      expect(checkpoint).not.toContain(originalName);
+      expect(checkpoint).toContain(createHash("sha256").update(originalName).digest("hex"));
+      expect(JSON.parse(checkpoint).counts).toMatchObject({ semiote: { rows_reembedded: 1, removed_unredactable: 2 },
+        vault: { files_renamed: 1, removed_unredactable: 1 } });
+      expect(await readFile(owner)).toEqual(ownerBefore.bytes);
+      expect((await stat(owner)).mtimeMs).toBe(ownerBefore.mtime);
+    } finally { await db.query("REMOVE TABLE semiote; REMOVE TABLE noema; REMOVE TABLE session_turn; REMOVE TABLE session_turn_chunk;"); }
+  });
+
   it("scrubs every store, keeps spans, resumes, verifies and reruns unchanged", async (ctx) => {
     if (!available) return ctx.skip();
     const vault = join(dir, "vault");
@@ -207,8 +290,10 @@ describe("Slice 3 live SQL scrub", () => {
     const planted = await inventory(db, identity, vault, options.embed);
     for (const field of ["noema.canonical.text", "noema.canonical.stableClaim.subject", "noema.canonical.stableClaim.predicate",
       "noema.canonical.stableClaim.value", "noema.stable_claim.predicate", "noema.stable_claim.value", "noema.canonical.factKey",
-      "noema.fact_key", "noema.fact_key_seed", "noema.canonical_norm", "semiote.text_norm", "noema.embedding"])
+      "noema.fact_key", "noema.fact_key_seed"])
       expect(planted.fields[field].wouldChange).toBeGreaterThan(0);
+    for (const field of ["noema.canonical_norm", "semiote.text_norm", "noema.embedding"])
+      expect(planted.fields[field].wouldChange).toBe(0);
     expect(verifyInventory(planted)).toBe(false);
     const collision = prepareSourceTurn({ userId: "synthetic", client: "synthetic", sessionId: "session", role: "user",
       content: `collision ${secret}`, occurredAt: new Date().toISOString(), scope: "user" }, "synthetic-hmac-key");

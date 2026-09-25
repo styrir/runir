@@ -3,7 +3,7 @@ import { mkdir, open, readFile, realpath, rename, stat, writeFile } from "node:f
 import { basename, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveEmbeddingProvider } from "../../src/shared/config.js";
-import { SOURCE_REDACTION_VERSION, redactFactText, redactSourceTurn } from "../../src/shared/source-redaction.js";
+import { RedactionAssertionError, SOURCE_REDACTION_VERSION, redactFactText, redactSourceTurn } from "../../src/shared/source-redaction.js";
 import { chunkSourceTurn, prepareSourceTurn, sourceKeyFingerprint } from "../../src/capture/source-turn-identity.js";
 import type { SurrealClient } from "../../src/storage/surreal/surreal-store.js";
 import { embeddingForStore } from "../../src/storage/surreal/memory-crud-store.js";
@@ -26,7 +26,10 @@ export type ScrubOptions = {
   batchSize?: number;
   confirmed: boolean;
 };
-type Checkpoint = { version: number; namespace: string; database: string; inventoryHash: string; tableIndex: number; cursor: string; vaultDone: boolean };
+type TableCounts = { rows_rewritten: number; rows_reembedded: number; removed_unredactable: number; files_renamed: number };
+type Checkpoint = { version: number; namespace: string; database: string; inventoryHash: string; tableIndex: number; cursor: string; vaultDone: boolean;
+  counts?: Record<string, TableCounts>; renamed?: Array<{ oldHash: string; newHash: string }> };
+const emptyCounts = (): TableCounts => ({ rows_rewritten: 0, rows_reembedded: 0, removed_unredactable: 0, files_renamed: 0 });
 const NORM = (text: string) => text.trim().toLowerCase().replace(/\s+/g, " ");
 const idOf = (row: PrivacyRow, table: PrivacyTable): string => String((row.id as { id?: unknown })?.id ?? row.id).replace(new RegExp(`^${table}:`), "");
 
@@ -61,7 +64,7 @@ async function loadCheckpoint(path: string): Promise<Checkpoint | undefined> {
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
 }
 
-function factPayload(row: PrivacyRow): PrivacyRow {
+function factPayload(row: PrivacyRow, removed: () => void): PrivacyRow {
   let payload = row.payload;
   if (typeof payload === "string") {
     try { payload = JSON.parse(payload); }
@@ -69,7 +72,7 @@ function factPayload(row: PrivacyRow): PrivacyRow {
   }
   if (payload == null) payload = {};
   if (typeof payload !== "object" || Array.isArray(payload)) throw new Error("legacy payload shape invalid");
-  return scrubFieldValue("semiote", "payload", payload) as PrivacyRow;
+  return scrubFieldValue("semiote", "payload", payload, removed) as PrivacyRow;
 }
 
 function sourceMigration(row: PrivacyRow, hmacKey: string) {
@@ -92,17 +95,35 @@ function sourceMigration(row: PrivacyRow, hmacKey: string) {
       && (!row.source_turn_id || row.source_turn_hmac === turn.contentHmac) };
 }
 
-async function updateBatch(db: ScrubDb, table: PrivacyTable, page: PrivacyRow[], embed: Embed, hmacKey: string): Promise<void> {
+type BatchResult = { changedText: boolean; norm?: string; embedding?: number[]; counts: TableCounts };
+async function updateBatch(db: ScrubDb, table: PrivacyTable, page: PrivacyRow[], embed: Embed, hmacKey: string): Promise<BatchResult> {
+  const counts = emptyCounts();
+  let changedText = false;
+  let expectedNorm: string | undefined;
+  let expectedEmbedding: number[] | undefined;
   for (const row of page) {
     const id = idOf(row, table);
+    const removed = () => { counts.removed_unredactable++; };
     if (table === "semiote" || table === "memories") {
-      const payload = factPayload(row);
+      const payload = factPayload(row, removed);
       const text = String(payload.l2 ?? payload.data ?? "");
-      const norm = NORM(text);
+      const originalPayload = typeof row.payload === "string" ? JSON.parse(row.payload) as PrivacyRow : row.payload;
+      const previousText = String(originalPayload?.l2 ?? originalPayload?.data ?? "");
+      changedText = text !== previousText;
+      const norm = changedText ? NORM(text) : undefined;
       let embedding: number[] | undefined;
-      try { embedding = text ? await embed(text) : undefined; } catch { embedding = undefined; }
-      if (!embedding?.length) embedding = undefined;
-      const migration = table === "semiote" ? sourceMigration(row, hmacKey) : undefined;
+      if (changedText) {
+        try { embedding = text ? await embed(text) : undefined; } catch { embedding = undefined; }
+        if (!embedding?.length) embedding = undefined;
+        if (embedding) counts.rows_reembedded++;
+        expectedNorm = norm;
+        expectedEmbedding = embedding;
+      }
+      let migration: ReturnType<typeof sourceMigration>;
+      if (table === "semiote") {
+        try { migration = sourceMigration(row, hmacKey); }
+        catch (error) { if (!(error instanceof RedactionAssertionError)) throw error; removed(); }
+      }
       const existingTurn = migration ? (await db.query<PrivacyRow>(
         "SELECT user_id, content_hmac, key_fingerprint FROM type::record('session_turn', $id);", { id: migration.id }))[0]?.[0] : undefined;
       if (existingTurn && (existingTurn.user_id !== migration?.userId || existingTurn.content_hmac !== migration?.contentHmac
@@ -110,11 +131,12 @@ async function updateBatch(db: ScrubDb, table: PrivacyTable, page: PrivacyRow[],
       const chunks = migration ? chunkSourceTurn(migration.content) : [];
       const retainUntil = migration ? new Date(Math.max(Date.parse(migration.occurredAt), Date.now()) + 365 * 24 * 3600 * 1000).toISOString() : undefined;
       await db.queryTransaction(`
-        UPDATE type::record('${table}', $id) SET payload = $payload, text_norm = $norm, embedding = $embedding ?? NONE${table === "semiote" ? `,
+        UPDATE type::record('${table}', $id) SET payload = $payload${table === "semiote" ? `,
           source_turn_id = $linkId, source_turn_hmac = $linkHmac,
           source_turn_key_fingerprint = $linkFingerprint,
           source_turn_link_state = $linkState,
           source_turn_redaction_version = $linkVersion` : ""};
+        IF $textChanged { UPDATE type::record('${table}', $id) SET text_norm = $norm, embedding = $embedding ?? NONE; };
         IF $createTurn {
           CREATE type::record('session_turn', $turnId) CONTENT {
             user_id: $userId, client: $client, session_id: $sessionId, session_epoch: $epoch,
@@ -140,7 +162,7 @@ async function updateBatch(db: ScrubDb, table: PrivacyTable, page: PrivacyRow[],
             link_state: 'linked', non_equivalent: true
           };
         };`, {
-        id, payload, norm, embedding: embeddingForStore(embedding), createTurn: Boolean(migration && !existingTurn),
+        id, payload, norm, embedding: embeddingForStore(embedding), textChanged: changedText, createTurn: Boolean(migration && !existingTurn),
         linkId: migration?.id ?? row.source_turn_id ?? undefined,
         linkHmac: migration?.contentHmac ?? row.source_turn_hmac ?? undefined,
         linkFingerprint: migration?.keyFingerprint ?? row.source_turn_key_fingerprint ?? undefined,
@@ -158,40 +180,54 @@ async function updateBatch(db: ScrubDb, table: PrivacyTable, page: PrivacyRow[],
         chunkCount: chunks.length, truncated: migration?.truncated,
         chunks: chunks.map((content, index) => ({ id: `${migration?.id}_${index}`, content, index, norm: content.toLowerCase() })),
       });
+      if (JSON.stringify(payload) !== JSON.stringify(originalPayload) || changedText || migration) counts.rows_rewritten++;
     } else if (table === "noema") {
-      const canonical = redactFactText(String(row.canonical_text ?? ""));
-      const norm = NORM(canonical);
+      const canonical = scrubFieldValue("noema", "canonical_text", String(row.canonical_text ?? ""), removed) as string | undefined;
+      changedText = canonical !== String(row.canonical_text ?? "");
+      const norm = changedText ? NORM(canonical ?? "") : undefined;
       let embedding: number[] | undefined;
-      try { embedding = canonical ? await embed(canonical) : undefined; } catch { embedding = undefined; }
-      if (!embedding?.length) embedding = undefined;
-      const payload = row.payload && typeof row.payload === "object" ? scrubFieldValue("noema", "payload", row.payload) : row.payload;
+      if (changedText) {
+        try { embedding = canonical ? await embed(canonical) : undefined; } catch { embedding = undefined; }
+        if (!embedding?.length) embedding = undefined;
+        if (embedding) counts.rows_reembedded++;
+        expectedNorm = norm;
+        expectedEmbedding = embedding;
+      }
+      const payload = row.payload && typeof row.payload === "object" ? scrubFieldValue("noema", "payload", row.payload, removed) : row.payload;
       const canonicalObject = row.canonical && typeof row.canonical === "object" ? { ...row.canonical } : row.canonical;
       if (canonicalObject && typeof canonicalObject === "object") for (const key of ["text", "l0", "l1", "factKey"]) {
-        if (typeof canonicalObject[key] === "string") canonicalObject[key] = redactFactText(canonicalObject[key]);
+        if (typeof canonicalObject[key] === "string") canonicalObject[key] = scrubFieldValue("noema", `canonical.${key}`, canonicalObject[key], removed);
       }
       if (canonicalObject?.stableClaim && typeof canonicalObject.stableClaim === "object") {
         canonicalObject.stableClaim = { ...canonicalObject.stableClaim };
         for (const key of ["subject", "predicate", "value"]) {
-          if (typeof canonicalObject.stableClaim[key] === "string") canonicalObject.stableClaim[key] = redactFactText(canonicalObject.stableClaim[key]);
+          if (typeof canonicalObject.stableClaim[key] === "string") canonicalObject.stableClaim[key] = scrubFieldValue("noema", `canonical.stableClaim.${key}`, canonicalObject.stableClaim[key], removed);
         }
       }
       const stableClaim = row.stable_claim && typeof row.stable_claim === "object" ? { ...row.stable_claim } : row.stable_claim;
       if (stableClaim && typeof stableClaim === "object") for (const key of ["subject", "predicate", "value"]) {
-        if (typeof stableClaim[key] === "string") stableClaim[key] = redactFactText(stableClaim[key]);
+        if (typeof stableClaim[key] === "string") stableClaim[key] = scrubFieldValue("noema", `stable_claim.${key}`, stableClaim[key], removed);
       }
-      const factKey = typeof row.fact_key === "string" ? redactFactText(row.fact_key) : row.fact_key;
-      const factKeySeed = typeof row.fact_key_seed === "string" ? redactFactText(row.fact_key_seed) : row.fact_key_seed;
-      await db.queryTransaction("UPDATE type::record('noema', $id) SET canonical_text = $canonical, canonical_norm = $norm, embedding = $embedding ?? NONE, payload = $payload, canonical = $canonicalObject, stable_claim = $stableClaim, fact_key = $factKey, fact_key_seed = $factKeySeed;",
-        { id, canonical, norm, embedding: embeddingForStore(embedding), payload, canonicalObject, stableClaim, factKey, factKeySeed });
+      const factKey = typeof row.fact_key === "string" ? scrubFieldValue("noema", "fact_key", row.fact_key, removed) : row.fact_key;
+      const factKeySeed = typeof row.fact_key_seed === "string" ? scrubFieldValue("noema", "fact_key_seed", row.fact_key_seed, removed) : row.fact_key_seed;
+      await db.queryTransaction(`UPDATE type::record('noema', $id) SET canonical_text = $canonical ?? NONE, payload = $payload,
+        canonical = $canonicalObject, stable_claim = $stableClaim, fact_key = $factKey, fact_key_seed = $factKeySeed;
+        IF $textChanged { UPDATE type::record('noema', $id) SET canonical_norm = $norm, embedding = $embedding ?? NONE; };`,
+        { id, canonical, norm, embedding: embeddingForStore(embedding), textChanged: changedText, payload, canonicalObject, stableClaim, factKey, factKeySeed });
+      if (FIELDS.noema.some((field) => field !== "canonical_norm" && field !== "embedding"
+        && inspectField("noema", field, fieldValue(row, field)).wouldChange > 0)) counts.rows_rewritten++;
     } else if (table === "rejection_log") {
-      await db.queryTransaction("UPDATE type::record('rejection_log', $id) SET candidate_text = $text;", { id, text: redactFactText(String(row.candidate_text ?? "")) });
+      await db.queryTransaction("UPDATE type::record('rejection_log', $id) SET candidate_text = $text ?? NONE;", { id, text: scrubFieldValue(table, "candidate_text", row.candidate_text, removed) });
+      if (inspectField(table, "candidate_text", row.candidate_text).wouldChange) counts.rows_rewritten++;
     } else if (table === "retrieval_trace") {
       await db.queryTransaction(`UPDATE type::record('retrieval_trace', $id) SET prompt = '', answer = '',
         prepend_context = NONE, capture_receipt = $receipt, synthesis = $synthesis;`,
         { id, receipt: scrubFieldValue(table, "capture_receipt", row.capture_receipt),
           synthesis: scrubFieldValue(table, "synthesis", row.synthesis) });
+      if (FIELDS.retrieval_trace.some((field) => inspectField(table, field, fieldValue(row, field)).wouldChange)) counts.rows_rewritten++;
     } else if (table === "session_turn") {
       if (!row.content) continue;
+      counts.rows_rewritten++;
       const chunks = (await db.query<PrivacyRow>("SELECT id, content, text_norm, chunk_index FROM session_turn_chunk WHERE turn_id = $id ORDER BY chunk_index;", { id }))[0] ?? [];
       if (chunks.some((chunk) => inspectField("session_turn_chunk", "content", chunk.content).wouldChange > 0
         || inspectField("session_turn_chunk", "text_norm", chunk.text_norm).wouldChange > 0
@@ -210,10 +246,14 @@ async function updateBatch(db: ScrubDb, table: PrivacyTable, page: PrivacyRow[],
           chunks: newChunks.map((part, index) => ({ id: `${id}_${index}`, content: part, index, norm: part.toLowerCase() })) });
     } else if (table === "session_turn_chunk") {
       const content = redactSourceTurn(String(row.content ?? ""));
+      changedText = true;
+      expectedNorm = content.toLowerCase();
       await db.queryTransaction("UPDATE type::record('session_turn_chunk', $id) SET content = $content, text_norm = $norm;",
         { id, content, norm: content.toLowerCase() });
+      if (content !== row.content || content.toLowerCase() !== row.text_norm) counts.rows_rewritten++;
     }
   }
+  return { changedText, norm: expectedNorm, embedding: expectedEmbedding, counts };
 }
 
 export async function applyScrub(db: ScrubDb, options: ScrubOptions): Promise<Inventory> {
@@ -232,7 +272,7 @@ export async function applyScrub(db: ScrubDb, options: ScrubOptions): Promise<In
   if (!checkpoint) {
     if (current.hash !== options.inventoryHash) throw new Error("inventory hash changed");
     checkpoint = { version: SOURCE_REDACTION_VERSION, ...options.identity, inventoryHash: options.inventoryHash,
-      tableIndex: 0, cursor: "", vaultDone: false };
+      tableIndex: 0, cursor: "", vaultDone: false, counts: {}, renamed: [] };
     await saveCheckpoint(options.checkpointPath, checkpoint);
   } else if (checkpoint.inventoryHash !== options.inventoryHash || checkpoint.namespace !== options.identity.namespace || checkpoint.database !== options.identity.database || checkpoint.version !== SOURCE_REDACTION_VERSION) {
     throw new Error("checkpoint identity/version mismatch");
@@ -244,33 +284,31 @@ export async function applyScrub(db: ScrubDb, options: ScrubOptions): Promise<In
     while (true) {
       const page = await readPage(db, table, cursor, 1);
       if (!page.length) break;
-      await updateBatch(db, table, page, embed, options.hmacKey);
+      const batch = await updateBatch(db, table, page, embed, options.hmacKey);
       // Re-read every processed record before advancing the durable cursor.
       const ids = page.map((row) => idOf(row, table));
       const verified = (await db.query<PrivacyRow>(`SELECT * FROM ${table} WHERE record::id(id) IN $ids;`, { ids }))[0] ?? [];
       if (verified.length !== page.length) throw new Error("batch verification row count mismatch");
       for (const row of verified) for (const field of FIELDS[table]) {
         const value = fieldValue(row, field);
-        if (field === "embedding") continue;
+        if (field === "embedding" || field === "text_norm" || field === "canonical_norm") continue;
         if (field === "payload.raw_source_text" && value !== undefined && value !== null) throw new Error("batch verification source remains");
         if (table === "session_turn" && field === "content" && value) throw new Error("batch verification old turn content remains");
         const state = inspectField(table, field, value);
         if (state.wouldChange || state.assertionFailures) throw new Error("batch verification redaction failed");
       }
       for (const row of verified) {
+        if (!batch.changedText) continue;
         const source = table === "noema" ? String(row.canonical_text ?? "")
           : table === "semiote" || table === "memories" ? String(row.payload?.l2 ?? row.payload?.data ?? "")
             : table === "session_turn_chunk" ? String(row.content ?? "") : undefined;
         if (source === undefined) continue;
-        const norm = table === "session_turn_chunk" ? source.toLowerCase() : NORM(source);
+        const norm = batch.norm ?? (table === "session_turn_chunk" ? source.toLowerCase() : NORM(source));
         const storedNorm = table === "noema" ? row.canonical_norm : row.text_norm;
         if (storedNorm !== norm) throw new Error("batch verification norm mismatch");
         if (table === "session_turn_chunk") continue;
-        let expected: number[] | undefined;
-        try { expected = source ? await embed(source) : undefined; } catch { expected = undefined; }
-        if (!expected?.length) expected = undefined;
         const stored = Array.isArray(row.embedding) && row.embedding.length ? row.embedding : undefined;
-        if (JSON.stringify(stored) !== JSON.stringify(expected)) throw new Error("batch verification embedding mismatch");
+        if (JSON.stringify(stored) !== JSON.stringify(batch.embedding)) throw new Error("batch verification embedding mismatch");
       }
       if (table === "semiote") for (const row of verified) {
         if (row.source_turn_link_state !== "legacy") continue;
@@ -281,6 +319,13 @@ export async function applyScrub(db: ScrubDb, options: ScrubOptions): Promise<In
           || turn.key_fingerprint !== row.source_turn_key_fingerprint) throw new Error("batch verification source link mismatch");
       }
       cursor = ids.at(-1)!;
+      const prior = checkpoint.counts?.[table] ?? emptyCounts();
+      checkpoint.counts = { ...checkpoint.counts, [table]: {
+        rows_rewritten: prior.rows_rewritten + batch.counts.rows_rewritten,
+        rows_reembedded: prior.rows_reembedded + batch.counts.rows_reembedded,
+        removed_unredactable: prior.removed_unredactable + batch.counts.removed_unredactable,
+        files_renamed: prior.files_renamed + batch.counts.files_renamed,
+      } };
       checkpoint = { ...checkpoint, tableIndex: i, cursor };
       await saveCheckpoint(options.checkpointPath, checkpoint);
     }
@@ -294,7 +339,14 @@ export async function applyScrub(db: ScrubDb, options: ScrubOptions): Promise<In
       try { before = new TextDecoder("utf-8", { fatal: true }).decode(await readFile(file)); }
       catch { throw new Error("vault file is not UTF-8"); }
       const after = redactFactText(before);
-      const nextName = redactFactText(basename(file));
+      let nextName: string;
+      let unredactableName = false;
+      try { nextName = redactFactText(basename(file)); }
+      catch {
+        unredactableName = true;
+        const pathHash = createHash("sha256").update(relative(options.vaultRoot, file)).digest("hex");
+        nextName = `runir-redacted-${pathHash.slice(0, 12)}.md`;
+      }
       if (after !== before || nextName !== basename(file)) {
         const next = `${file}.source-layer-next`;
         const target = join(dirname(file), nextName);
@@ -309,13 +361,23 @@ export async function applyScrub(db: ScrubDb, options: ScrubOptions): Promise<In
           || inspectField("semiote", "payload.l2", nextName).wouldChange) throw new Error("vault read-back verification failed");
         await rename(next, target);
         if (target !== file) await (await import("node:fs/promises")).unlink(file);
+        const prior = checkpoint.counts?.vault ?? emptyCounts();
+        checkpoint.counts = { ...checkpoint.counts, vault: { ...prior, rows_rewritten: prior.rows_rewritten + 1,
+          files_renamed: prior.files_renamed + Number(target !== file), removed_unredactable: prior.removed_unredactable + Number(unredactableName) } };
+        if (target !== file) checkpoint.renamed = [...checkpoint.renamed ?? [], {
+          oldHash: createHash("sha256").update(relative(options.vaultRoot, file)).digest("hex"),
+          newHash: createHash("sha256").update(relative(options.vaultRoot, target)).digest("hex"),
+        }];
+        await saveCheckpoint(options.checkpointPath, checkpoint);
       }
     }
     checkpoint = { ...checkpoint, vaultDone: true };
     await saveCheckpoint(options.checkpointPath, checkpoint);
   }
-  const after = await inventory(db, options.identity, options.vaultRoot, embed);
+  const after = await inventory(db, options.identity, options.vaultRoot);
   if (!verifyInventory(after)) throw new Error("post-apply privacy verification failed");
+  const report = Object.fromEntries([...TABLES, "vault"].map((table) => [table, checkpoint.counts?.[table] ?? emptyCounts()]));
+  process.stdout.write(`${JSON.stringify({ apply_counts: report })}\n`);
   return after;
 }
 
