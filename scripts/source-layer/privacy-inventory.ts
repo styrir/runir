@@ -50,7 +50,7 @@ export function scrubTraceValue(value: unknown): unknown {
   return Object.fromEntries(Object.entries(value).filter(([key]) => TRACE_META.has(key)).map(([key, part]) => [key, part]));
 }
 
-export function scrubFieldValue(table: PrivacyTable, field: string, value: unknown): unknown {
+export function scrubFieldValue(table: PrivacyTable, field: string, value: unknown, removed?: () => void): unknown {
   const policy = policyFor(table, field);
   if (policy === "remove") return undefined;
   if (policy === "trace") {
@@ -59,11 +59,17 @@ export function scrubFieldValue(table: PrivacyTable, field: string, value: unkno
     return scrubTraceValue(value);
   }
   if (policy === "derived") return value;
-  if (typeof value === "string") return policy === "source" ? redactSourceTurn(value) : redactFactText(value);
-  if (Array.isArray(value)) return value.map((part) => scrubFieldValue(table, field, part));
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value)
+  if (typeof value === "string") {
+    try { return policy === "source" ? redactSourceTurn(value) : redactFactText(value); }
+    catch { removed?.(); return undefined; }
+  }
+  if (Array.isArray(value)) return value.map((part) => scrubFieldValue(table, field, part, removed)).filter((part) => part !== undefined);
+  if (value && typeof value === "object") {
+    const clean = Object.fromEntries(Object.entries(value)
     .filter(([key]) => key !== "raw_source_text")
-    .map(([key, part]) => [key, scrubFieldValue(table, field, part)]));
+    .map(([key, part]) => [key, scrubFieldValue(table, `${field}.${key}`, part, removed)]).filter(([, part]) => part !== undefined));
+    return Object.keys(clean).length === 0 && (field.endsWith("rawSpan") || field.endsWith("rawSpans")) ? undefined : clean;
+  }
   return value;
 }
 
@@ -103,7 +109,7 @@ export function inspectField(table: PrivacyTable, field: string, value: unknown)
       const clean = policy === "source" || (policy === "derived" && table === "session_turn_chunk") ? redactSourceTurn(item) : redactFactText(item);
       if (clean !== item) count.wouldChange = 1;
       assertNoSecrets(clean);
-    } catch { count.assertionFailures = 1; }
+    } catch { count.assertionFailures = 1; count.wouldChange = 1; }
   }
   if (policy === "trace" && JSON.stringify(scrubFieldValue(table, field, value)) !== JSON.stringify(value)) count.wouldChange = 1;
   if (table === "memories" && field === "payload" && JSON.stringify(scrubFieldValue(table, field, value)) !== JSON.stringify(value)) count.wouldChange = 1;
@@ -111,12 +117,21 @@ export function inspectField(table: PrivacyTable, field: string, value: unknown)
 }
 
 export async function inventory(db: Pick<SurrealClient, "query">, identity: { namespace: string; database: string }, vaultRoot?: string,
-  embed?: (text: string) => Promise<number[]>): Promise<Inventory> {
+  _embed?: (text: string) => Promise<number[]>): Promise<Inventory> {
   const fields: Record<string, FieldCount> = {};
   for (const table of TABLES) for (const field of FIELDS[table]) fields[`${table}.${field}`] = emptyCount();
   fields["vault.file"] = emptyCount();
   fields["vault.filename"] = emptyCount();
   const rows: Record<string, number> = { "memories.payload.parse_failures": 0, "vault.file.parse_failures": 0 };
+  let lastProgress = 0;
+  let vaultProgress = { filesWalked: 0, candidates: 0, owned: 0, skipped: 0 };
+  const progress = () => {
+    const now = Date.now();
+    if (now - lastProgress < 5000) return;
+    lastProgress = now;
+    const dbRows = TABLES.map((table) => `${table}=${rows[table] ?? 0}`).join(" ");
+    process.stderr.write(`inventory files_walked=${vaultProgress.filesWalked} candidates=${vaultProgress.candidates} owned=${vaultProgress.owned} skipped=${vaultProgress.skipped} db_rows_scanned ${dbRows}\n`);
+  };
   const hash = createHash("sha256").update(JSON.stringify([identity.namespace, identity.database, 1]));
   for (const table of TABLES) {
     let cursor = "";
@@ -125,49 +140,47 @@ export async function inventory(db: Pick<SurrealClient, "query">, identity: { na
       const page = await readPage(db, table, cursor, 100);
       if (!page.length) break;
       for (const row of page) {
+        const rowChanged = new Set<string>();
         rows[table]++;
+        let parsedPayload = row.payload;
         if (table === "memories" && typeof row.payload === "string") {
-          try { JSON.parse(row.payload); }
+          try { parsedPayload = JSON.parse(row.payload); }
           catch { rows["memories.payload.parse_failures"] = (rows["memories.payload.parse_failures"] ?? 0) + 1; }
         }
+        const inspectionRow = table === "memories" && parsedPayload !== row.payload ? { ...row, payload: parsedPayload } : row;
         cursor = String((row.id as { id?: unknown })?.id ?? row.id).replace(new RegExp(`^${table}:`), "");
         hash.update(JSON.stringify(row));
         for (const field of FIELDS[table]) {
           const key = `${table}.${field}`;
-          const next = inspectField(table, field, fieldValue(row, field));
+          const next = inspectField(table, field, fieldValue(inspectionRow, field));
           const prior = fields[key] ?? emptyCount();
           prior.present += next.present;
           prior.withText += next.withText;
           prior.wouldChange += next.wouldChange;
+          if (next.wouldChange) rowChanged.add(field);
           prior.assertionFailures += next.assertionFailures;
           for (const [kind, n] of Object.entries(next.byKind) as Array<[MarkerKind, number]>) prior.byKind[kind] = (prior.byKind[kind] ?? 0) + n;
           fields[key] = prior;
         }
-        if (embed && (table === "semiote" || table === "memories" || table === "noema")) {
-          const source = table === "noema" ? String(row.canonical_text ?? "") : String(row.payload?.l2 ?? row.payload?.data ?? "");
-          const clean = redactFactText(source);
-          let expected: number[] | undefined;
-          try { expected = clean ? await embed(clean) : undefined; } catch { expected = undefined; }
-          if (!expected?.length) expected = undefined;
-          const stored = Array.isArray(row.embedding) && row.embedding.length ? row.embedding : undefined;
-          if (JSON.stringify(stored) !== JSON.stringify(expected)) fields[`${table}.embedding`].wouldChange++;
-        }
-        const affected = table === "noema"
-          ? ["canonical_text", "canonical.text", "canonical.l0", "canonical.l1", "canonical.factKey", "canonical.stableClaim.subject", "canonical.stableClaim.predicate", "canonical.stableClaim.value", "stable_claim.subject", "stable_claim.predicate", "stable_claim.value", "fact_key", "fact_key_seed"]
-            .some((field) => inspectField("noema", field, fieldValue(row, field)).wouldChange > 0)
-          : (table === "semiote" || table === "memories")
-            && (inspectField(table, "payload.l2", row.payload?.l2 ?? row.payload?.data).wouldChange > 0
-              || Boolean(row.payload?.raw_source_text));
-        if (affected) for (const derived of ["text_norm", "canonical_norm", ...(embed ? [] : ["embedding"])]) {
+        const payload = inspectionRow.payload;
+        const source = table === "noema" ? row.canonical_text
+          : table === "semiote" || table === "memories" ? payload?.l2 ?? payload?.data : undefined;
+        const changedText = typeof source === "string" && scrubFieldValue(table, table === "noema" ? "canonical_text" : "payload.l2", source) !== source;
+        for (const derived of ["text_norm", "canonical_norm", "embedding"]) {
           const key = `${table}.${derived}`;
-          if (fields[key] && fieldValue(row, derived) !== undefined) fields[key].wouldChange++;
+          if (fields[key] && !changedText) { fields[key].wouldChange -= Number(rowChanged.has(derived)); fields[key].assertionFailures -= inspectField(table, derived, fieldValue(inspectionRow, derived)).assertionFailures; }
+          if (changedText && fields[key] && fieldValue(inspectionRow, derived) !== undefined && !rowChanged.has(derived)) {
+            fields[key].wouldChange++;
+            rowChanged.add(derived);
+          }
         }
       }
+      progress();
       if (page.length < 100) break;
     }
   }
   rows.vault_files = 0;
-  const vault = vaultRoot ? await ownedVaultFiles(db, vaultRoot) : undefined;
+  const vault = vaultRoot ? await ownedVaultFiles(db, vaultRoot, (counts) => { vaultProgress = counts; progress(); }) : undefined;
   rows.owner_files_skipped = vault?.ownerFilesSkipped ?? 0;
   for (const file of vault?.files ?? []) {
     rows.vault_files++;
@@ -196,6 +209,7 @@ export async function inventory(db: Pick<SurrealClient, "query">, identity: { na
     nameCount.assertionFailures += inspectedName.assertionFailures;
     for (const [kind, n] of Object.entries(inspectedName.byKind) as Array<[MarkerKind, number]>) nameCount.byKind[kind] = (nameCount.byKind[kind] ?? 0) + n;
     fields[nameKey] = nameCount;
+    progress();
   }
   return { version: 1, ...identity, fields, rows, hash: hash.digest("hex") };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspectField, inventory, scrubFieldValue, verifyInventory, type Inventory } from "../../scripts/source-layer/privacy-inventory.js";
@@ -100,6 +100,53 @@ describe("Slice 3 count-only policy", () => {
         vaultRoot: vault, checkpointPath: join(dir, "checkpoint.json") })).rejects.toThrow("no Rúnir-owned files");
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
+
+  it("counts each affected derived field once per row", async () => {
+    const row = { id: "semiote:one", payload: { l2: secret, raw_source_text: secret },
+      text_norm: secret, embedding: [0.5] };
+    const db = { query: async (sql: string, vars?: { cursor?: string }) =>
+      sql.includes("FROM semiote") && sql.includes("$cursor") && !vars?.cursor ? [[row]] : [[]] };
+    const result = await inventory(db, base.identity, undefined, async () => [0.1]);
+    expect(result.fields["semiote.text_norm"]).toMatchObject({ present: 1, wouldChange: 1 });
+    expect(result.fields["semiote.embedding"]).toMatchObject({ present: 1, wouldChange: 1 });
+    expect(Object.values(result.fields).every(({ present, wouldChange }) => wouldChange <= present)).toBe(true);
+  });
+
+  it("counts derived changes inside legacy JSON payloads only when fact text changes", async () => {
+    const rows = [
+      { id: "memories:one", payload: JSON.stringify({ l2: "clean fact", raw_source_text: secret }), text_norm: "kept", embedding: [0.7] },
+      { id: "memories:two", payload: JSON.stringify({ l2: `fact\nSource:\n${secret}` }), text_norm: "old", embedding: [0.8] },
+    ];
+    const db = { query: async (sql: string, vars?: { cursor?: string }) =>
+      sql.includes("FROM memories") && sql.includes("$cursor") && !vars?.cursor ? [rows] : [[]] };
+    const result = await inventory(db, base.identity);
+    expect(result.fields["memories.payload.raw_source_text"].present).toBe(1);
+    expect(result.fields["memories.text_norm"].wouldChange).toBe(1);
+    expect(result.fields["memories.embedding"].wouldChange).toBe(1);
+  });
+
+  it("walks a synthetic 10k-file vault within the CI bound", async () => {
+    const vault = await mkdtemp(join(tmpdir(), "runir277-perf-vault-"));
+    try {
+      await mkdir(join(vault, ".obsidian"));
+      await writeFile(join(vault, ".obsidian", "hidden.md"), secret);
+      await symlink(join(vault, ".obsidian"), join(vault, "linked"));
+      await mkdir(join(vault, "99 Meta"));
+      await writeFile(join(vault, "99 Meta", "export-manifest.json"), "{}");
+      const total = 10_000;
+      let next = 0;
+      await Promise.all(Array.from({ length: 32 }, async () => {
+        while (next < total) await writeFile(join(vault, `personal-${next++}.md`), "personal note");
+      }));
+      const started = performance.now();
+      const result = await ownedVaultFiles({ query: async () => [[]] }, vault);
+      const elapsedMs = performance.now() - started;
+      console.info(`synthetic 10k vault walk: ${Math.round(elapsedMs)} ms`);
+      expect(result.files).toEqual([join(vault, "99 Meta", "export-manifest.json")]);
+      expect(result.ownerFilesSkipped).toBe(total);
+      expect(elapsedMs).toBeLessThan(120_000);
+    } finally { await rm(vault, { recursive: true, force: true }); }
+  }, 150_000);
 
   it("verify catches planted legacy fields", () => {
     const result = { version: 1, namespace: "throwaway", database: "scratch", rows: {}, hash: "a",

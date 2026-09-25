@@ -5,6 +5,7 @@ import type { SurrealClient } from "../../src/storage/surreal/surreal-store.js";
 type LookupTable = "semiote" | "entities" | "noema" | "project_state";
 type Candidate = { file: string; id: string; table: LookupTable };
 export type OwnedVault = { files: string[]; ownerFilesSkipped: number };
+export type VaultProgress = { filesWalked: number; candidates: number; owned: number; skipped: number };
 // Match mapExportFolder's fixed subfolders. Only projectKey/path yields a dynamic slug.
 const EXPORT_SUBFOLDERS: Readonly<Record<string, ReadonlySet<string>>> = {
   "00 Inbox": new Set(["profile", "preferences", "entities", "events", "cases", "patterns", "uncategorized"]),
@@ -15,6 +16,7 @@ const EXPORT_SUBFOLDERS: Readonly<Record<string, ReadonlySet<string>>> = {
 
 async function* regularFiles(root: string): AsyncGenerator<string> {
   for (const entry of await readdir(root, { withFileTypes: true })) {
+    if (entry.name.startsWith(".")) continue;
     const file = join(root, entry.name);
     if (entry.isDirectory()) yield* regularFiles(file);
     else if (entry.isFile()) yield file;
@@ -62,23 +64,38 @@ async function signature(file: string): Promise<{ id: string; table: LookupTable
 }
 
 /** Classify from exporter-written paths or bounded frontmatter plus DB identity. */
-export async function ownedVaultFiles(db: Pick<SurrealClient, "query">, root: string): Promise<OwnedVault> {
+export async function ownedVaultFiles(db: Pick<SurrealClient, "query">, root: string,
+  progress?: (counts: VaultProgress) => void): Promise<OwnedVault> {
   const owned: string[] = [];
   const candidates: Candidate[] = [];
+  const markdown: string[] = [];
   let ownerFilesSkipped = 0;
+  let filesWalked = 0;
+  const report = () => progress?.({ filesWalked, candidates: candidates.length, owned: owned.length, skipped: ownerFilesSkipped });
   for await (const file of regularFiles(root)) {
-    if (exporterMeta(root, file)) { owned.push(file); continue; }
-    const found = await signature(file);
-    if (found) candidates.push({ file, ...found });
+    filesWalked++;
+    if (exporterMeta(root, file)) { owned.push(file); report(); continue; }
+    if (file.endsWith(".md")) markdown.push(file);
     else ownerFilesSkipped++;
+    report();
   }
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(32, markdown.length) }, async () => {
+    while (next < markdown.length) {
+      const file = markdown[next++];
+      const found = await signature(file);
+      if (found) candidates.push({ file, ...found });
+      else ownerFilesSkipped++;
+      report();
+    }
+  }));
   for (const table of ["semiote", "entities", "noema", "project_state"] as const) {
     const matches = candidates.filter((candidate) => candidate.table === table);
     for (let start = 0; start < matches.length; start += 500) {
       const batch = matches.slice(start, start + 500);
       const ids = [...new Set(batch.map(({ id }) => id))];
-      const found = (await db.query<{ id: unknown }>(
-        `SELECT id FROM ${table} WHERE record::id(id) IN $ids;`, { ids }))[0] ?? [];
+      const records = ids.map((id) => `${table}:⟨${id}⟩`).join(", ");
+      const found = (await db.query<{ id: unknown }>(`SELECT id FROM [${records}];`))[0] ?? [];
       const existing = new Set(found.map((row) => {
         const value = row.id as { id?: unknown };
         return String(value?.id ?? row.id).replace(new RegExp(`^${table}:`), "");
@@ -86,9 +103,11 @@ export async function ownedVaultFiles(db: Pick<SurrealClient, "query">, root: st
       for (const candidate of batch) {
         if (existing.has(candidate.id)) owned.push(candidate.file);
         else ownerFilesSkipped++;
+        report();
       }
     }
   }
   owned.sort();
+  report();
   return { files: owned, ownerFilesSkipped };
 }
