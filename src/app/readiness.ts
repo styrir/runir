@@ -25,6 +25,7 @@ import { ensureSalienceSchema } from "../capture/continuity/salience-schema.js";
 import { ensurePhase2Schema } from "../storage/surreal/phase2-store.js";
 import { ensureRunirSessionTable } from "../storage/surreal/runir-session-store.js";
 import { ensureSessionTurnSchema } from "../storage/surreal/session-turn-store.js";
+import { ensureSourceTurnLinkSchema } from "../storage/surreal/source-turn-link-store.js";
 import {
   ensureContinuityBuildStateTable,
   ensureProjectContinuityStateTable,
@@ -106,6 +107,7 @@ export async function runDeploymentPreflight(params: {
   await runCheck(checks, "runir-session", () => ensureRunirSessionTable(db), strict);
   await runCheck(checks, "session-watermarks", () => ensureSessionWatermarksTable(db), strict);
   await runCheck(checks, "session-turns", () => ensureSessionTurnSchema(db), strict);
+  await runCheck(checks, "source-turn-links", () => ensureSourceTurnLinkSchema(db), strict);
   await runCheck(checks, "entity-repair", () => ensureEntityRepairSchema(db), strict);
   await runCheck(checks, "consolidation-locks", () => ensureConsolidationLockTable(db), strict);
   await runCheck(checks, "consolidation-log", () => ensureConsolidationLogTable(db), strict);

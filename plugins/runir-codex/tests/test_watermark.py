@@ -4,7 +4,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "hooks"))
 
-from watermark import load_fallback_hash, load_watermark, save_fallback_hash, save_watermark
+from watermark import bump_epoch, load_epoch, load_fallback_hash, load_watermark, save_fallback_hash, save_watermark
 
 
 class TestLoadWatermark:
@@ -87,3 +87,14 @@ class TestFallbackHash:
         save_watermark("sess-1", 4)
         assert load_fallback_hash("sess-1") == "abc123"
         assert load_watermark("sess-1") == 4
+
+
+def test_compaction_epoch_resets_ordinal_watermark_and_survives_retry(tmp_path, monkeypatch):
+    monkeypatch.setattr("watermark.WATERMARK_DIR", str(tmp_path))
+    save_watermark("synthetic-session", 7)
+    assert load_epoch("synthetic-session") == 0
+    assert bump_epoch("synthetic-session") == 1
+    assert load_watermark("synthetic-session") == 0
+    assert load_epoch("synthetic-session") == 1
+    save_watermark("synthetic-session", 3)
+    assert load_epoch("synthetic-session") == 1

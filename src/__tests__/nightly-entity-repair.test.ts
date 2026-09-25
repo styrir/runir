@@ -114,7 +114,9 @@ describe("runNightlyEntityRepair classification", () => {
 
   it("reextracted: mention found in raw turns → extractEntities + arbitrateEntity, bounded", async () => {
     const db = baseDb([
-      { match: "FROM session_turn", rows: [{ session_id: "s9", turn_index: 2, content: "we shipped bramblefort yesterday" }] },
+      { match: "SELECT turn_id FROM session_turn_chunk", rows: [{ turn_id: "turn1" }] },
+      { match: "FROM type::record('session_turn'", rows: [{ session_id: "s9", turn_index: 2 }] },
+      { match: "SELECT content FROM session_turn_chunk", rows: [{ content: "we shipped bramblefort yesterday" }] },
     ]);
     mockExtractEntities.mockResolvedValue([{ name: "Bramblefort", kind: "concept", confidence: 0.9, context: "", aliases: [] }]);
     mockArbitrateEntity.mockResolvedValue({ entityId: "e1", outcome: "created" });
@@ -122,6 +124,10 @@ describe("runNightlyEntityRepair classification", () => {
     expect(report.items[0].class).toBe("reextracted");
     expect(mockArbitrateEntity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ name: "Bramblefort" }), "u1", "session", "s9", "entity-repair");
     expect(report.promotionRan).toBe(true);
+    expect(db.calls.find((call: any) => call.sql.includes("FROM retrieval_trace"))?.sql).toContain("created_at >= <datetime>$sinceIso");
+    const header = db.calls.find((call: any) => call.sql.includes("FROM type::record('session_turn'"));
+    expect(header?.sql).toContain("occurred_at >= time::now() - 30d");
+    expect(header?.params).not.toHaveProperty("sinceIso");
   });
 
   it("no_evidence: absent everywhere; high-frequency ones become junk suggestions", async () => {
@@ -151,7 +157,9 @@ describe("runNightlyEntityRepair classification", () => {
   it("respects maxReextractions budget", async () => {
     const db = makeDb([
       { match: "FROM retrieval_trace", rows: [{ entity_misses: [miss("alpha-thing"), miss("beta-thing")] }] },
-      { match: "FROM session_turn", rows: [{ session_id: "s1", turn_index: 0, content: "alpha-thing and beta-thing both appear" }] },
+      { match: "SELECT turn_id FROM session_turn_chunk", rows: [{ turn_id: "turn1" }] },
+      { match: "FROM type::record('session_turn'", rows: [{ session_id: "s1", turn_index: 0 }] },
+      { match: "SELECT content FROM session_turn_chunk", rows: [{ content: "alpha-thing and beta-thing both appear" }] },
     ]);
     mockExtractEntities.mockResolvedValue([]);
     const report = await runNightlyEntityRepair({ db, userId: "u1", apiKey: "k", limits: { maxReextractions: 1 } });

@@ -108,7 +108,9 @@ const PATTERN_ENTRIES: PatternEntry[] = [
   },
   {
     kind: "EMAIL",
-    regex: () => /[\w.+-]+@[\w-]+\.[\w.-]+/g,
+    // A word boundary prevents quadratic retries on long identifier/code runs
+    // with no '@', which are common in retained source turns.
+    regex: () => /\b[\w.+-]+@[\w-]+\.[\w.-]+/g,
   },
   {
     kind: "URL",

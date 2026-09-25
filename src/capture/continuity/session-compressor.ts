@@ -359,3 +359,18 @@ export function compressMessages(
 
   return [...survivingIndices].sort((a, b) => a - b).map((i) => messages[i]);
 }
+
+/** Preserve the original message index for source-turn attribution. The
+ * compressed index emitted by extraction is never a transcript ordinal. */
+export function compressMessagesWithIndices(
+  messages: CaptureMessage[], maxChars: number,
+): Array<{ message: CaptureMessage; originalIndex: number }> {
+  const compressed = compressMessages(messages, maxChars);
+  let from = 0;
+  return compressed.map((message) => {
+    const originalIndex = messages.indexOf(message, from);
+    if (originalIndex < 0) throw new Error("compressed source mapping unavailable");
+    from = originalIndex + 1;
+    return { message, originalIndex };
+  });
+}

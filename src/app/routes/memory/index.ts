@@ -1,4 +1,5 @@
 import type { Hono } from "hono";
+import { unlinkFactSource } from "../../../storage/surreal/source-turn-link-store.js";
 import { normalizeExtractedFact } from "../../../capture/extraction/capture.js";
 import { scoreHexisFit, type HexisHint } from "../../../hexis/runtime-hexis.js";
 import { findEntityByName, getSupportingMemoryIds } from "../../../entities/entity-store.js";
@@ -322,6 +323,7 @@ export function registerMemoryRoutes(app: Hono) {
       if (body.memoryId) {
         const simpleId = body.memoryId.trim().replace(/^(memories|semiote):/, "");
         if (!/^[A-Za-z0-9._-]{1,128}$/.test(simpleId)) return c.json({ error: "Invalid memoryId format" }, 400);
+        await unlinkFactSource(runtime.db, uid, simpleId);
         await deleteMemoryById(runtime.db, simpleId, uid, mode, "semiote");
         bm25StatsCache.clear();
         return c.json({ success: true, message: `Memory ${body.memoryId} ${actionVerb}` });
@@ -344,6 +346,7 @@ export function registerMemoryRoutes(app: Hono) {
         const hits = await vectorSearch(runtime.db, uid, embedding, 5, undefined, "semiote");
         if (hits.length === 0) return c.json({ success: false, message: "No matching memories found" });
         const topHit = hits[0]!;
+        await unlinkFactSource(runtime.db, uid, topHit.id);
         await deleteMemoryById(runtime.db, topHit.id, uid, mode, "semiote");
         bm25StatsCache.clear();
         return c.json({ success: true, deletedId: topHit.id, message: topHit.text.slice(0, 100) });

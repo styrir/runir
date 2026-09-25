@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scoreText, compressTexts, compressMessages } from "../capture/continuity/session-compressor.js";
+import { scoreText, compressTexts, compressMessages, compressMessagesWithIndices } from "../capture/continuity/session-compressor.js";
 import type { CaptureMessage } from "../domain/memory/types.js";
 
 // ---------------------------------------------------------------------------
@@ -242,5 +242,16 @@ describe("compressMessages", () => {
 
   it("returns empty array for empty input", () => {
     expect(compressMessages([], 1000)).toEqual([]);
+  });
+
+  it("maps a compressed source index back to its original message", () => {
+    const messages: CaptureMessage[] = [
+      { role: "user", content: "synthetic initial question" },
+      { role: "assistant", content: "synthetic filler" },
+      { role: "user", content: "synthetic correction with exact identifier ALPHA_42" },
+    ];
+    const mapped = compressMessagesWithIndices(messages, 60);
+    expect(mapped.map(({ message }) => message)).toEqual(compressMessages(messages, 60));
+    for (const entry of mapped) expect(messages[entry.originalIndex]).toBe(entry.message);
   });
 });

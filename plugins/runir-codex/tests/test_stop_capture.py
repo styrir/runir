@@ -483,3 +483,28 @@ def test_redaction_drop_advances_codex_watermark():
             "outcomes": {"create": 0, "skip": 0, "merge-update": 0, "supersede": 0}, "units": []}
     assert "error" not in body
     assert _is_successful_response(200, body) is True
+
+
+def test_parser_keeps_absolute_ordinals_before_watermark_slice(tmp_path):
+    import runir_stop_capture
+    transcript = tmp_path / "synthetic.jsonl"
+    transcript.write_text("\n".join([
+        '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"text":"synthetic one"}]}}',
+        '{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"text":"synthetic two"}]}}',
+    ]) + "\n")
+    messages = runir_stop_capture.read_messages(str(transcript))
+    assert [message["turnIndex"] for message in messages] == [0, 1]
+    assert runir_stop_capture.select_new_messages(messages, 1)[0]["turnIndex"] == 1
+
+
+def test_parser_omits_non_text_tool_blocks(tmp_path):
+    import runir_stop_capture
+    transcript = tmp_path / "synthetic-tool.jsonl"
+    transcript.write_text(json.dumps({
+        "type": "response_item",
+        "payload": {"type": "message", "role": "assistant", "content": [
+            {"type": "tool_result", "text": "synthetic tool output"},
+            {"type": "output_text", "text": "synthetic answer"},
+        ]},
+    }) + "\n")
+    assert runir_stop_capture.read_messages(str(transcript))[0]["content"] == "synthetic answer"

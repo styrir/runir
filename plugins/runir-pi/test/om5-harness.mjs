@@ -141,6 +141,44 @@ await test("soft band captures once per crossing, re-arms below", async () => {
   assert.equal(captureCount(), 2);
 });
 
+await test("forked Pi entries retain distinct native turn keys at one ordinal", async () => {
+  const rig = rigOf();
+  const { ctx } = makeCtx();
+  ctx.sessionManager.getBranch = () => [
+    { id: "synthetic-branch-a", type: "message", message: { role: "user", content: "synthetic source" } },
+  ];
+  await turnEnd(rig, ctx, 60);
+  await sleep(50);
+  const first = requests.find((request) => request.url === "/hooks/capture")?.body.messages[0];
+  assert.equal(first?.turnKey, "pi:synthetic-branch-a");
+  assert.equal(first?.turnIndex, 0);
+  ctx.sessionManager.getBranch = () => [
+    { id: "synthetic-branch-b", type: "message", message: { role: "user", content: "synthetic source" } },
+  ];
+  await turnEnd(rig, ctx, 40);
+  await turnEnd(rig, ctx, 60);
+  await sleep(50);
+  const second = requests.filter((request) => request.url === "/hooks/capture")[1]?.body.messages[0];
+  assert.equal(second?.turnKey, "pi:synthetic-branch-b");
+  assert.notEqual(first.turnKey, second.turnKey);
+  assert.equal(second.turnIndex, first.turnIndex);
+});
+
+await test("Pi source capture omits non-text tool blocks", async () => {
+  const rig = rigOf();
+  const { ctx } = makeCtx();
+  ctx.sessionManager.getBranch = () => [
+    { id: "synthetic-tool", type: "message", message: { role: "assistant", content: [
+      { type: "tool_result", content: "synthetic tool output" },
+      { type: "text", text: "synthetic answer" },
+    ] } },
+  ];
+  await turnEnd(rig, ctx, 60);
+  await sleep(50);
+  const body = requests.find((request) => request.url === "/hooks/capture")?.body;
+  assert.equal(body?.messages[0]?.content, "synthetic answer");
+});
+
 // 2. plan band prepares WITHOUT injecting
 await test("plan band prepares, never injects", async () => {
   const { ctx } = makeCtx();

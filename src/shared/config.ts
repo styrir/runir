@@ -265,3 +265,7 @@ export function resolveEmbeddingProvider(): EmbeddingProvider {
  * CONSOLIDATION_LOCK_TTL_S   Consolidation sweep lock TTL seconds (default: 300)
  */
 const _MIM20_ENV_VARS_DOCUMENTED = true;
+/** Source storage is opt-in; any value except the literal "on" stays off. */
+export function resolveSourceStoreEnabled(): boolean {
+  return process.env.RUNIR_SOURCE_STORE === "on";
+}
