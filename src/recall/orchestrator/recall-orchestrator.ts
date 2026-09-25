@@ -574,13 +574,13 @@ export async function orchestrateRecall(
       accessTrackedIds: string[],
       retrievalPath: string,
       retrievalAudit?: RetrievalAuditRecord,
-      prependContext?: string | null,
+      _prependContext?: string | null,
     ) => {
       if (selected.length === 0) return undefined;
       return createRetrievalTrace(db, {
         userId: uid,
         sessionId: body.sessionId,
-        prompt,
+        prompt: "",
         intentLabel: intent.label,
         laneLabel: policy.lane,
         retrievalPath,
@@ -593,7 +593,7 @@ export async function orchestrateRecall(
         accessTrackedIds,
         retrievalAudit,
         entityMisses: capturedEntityMisses,
-        prependContext: prependContext ?? undefined,
+        prependContext: undefined,
         items: selected.map((hit) => ({
           id: hit.id,
           score: hit.score,

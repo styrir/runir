@@ -110,7 +110,7 @@ describe("F4: fetchRecentlyEndedSessions keys on the durable last_closed_at (liv
     const results = await fetchRecentlyEndedSessions(db, USER, makeEnrollment({ repoRootFingerprint: wf }), cutoffIso, 20);
     const found = results.find((r) => r.id === reactivated.id);
     expect(found).toBeTruthy();
-    expect(found?.closedAt).toBe(closeTs); // mapped from last_closed_at
+    expect(new Date(found!.closedAt!).getTime()).toBe(new Date(closeTs).getTime()); // mapped from last_closed_at
   });
 
   it("EXCLUDES a row whose last_closed_at is OLDER than the cutoff (aged out of window)", async (ctx) => {

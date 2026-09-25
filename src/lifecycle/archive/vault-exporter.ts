@@ -6,7 +6,7 @@ import type {
   MemoryWriteSource, EntityRecord,
 } from "../../domain/memory/types.js";
 import { enrichEntityAliases } from "../../entities/entity-alias-enricher.js";
-import { redactWithMarkers, SECRET_MARKER_KINDS } from "../../testing/marker-redaction.js";
+import { redactFactText } from "../../shared/source-redaction.js";
 import { assertWithinRoot } from "./path-safety.js";
 
 /*
@@ -217,12 +217,9 @@ export type SynthesisNoteExport = {
 // Redaction-before-disk (§9.2) + recording writer + stage logging
 // ---------------------------------------------------------------------------
 
-/** §9.2 privacy gate: strip secret-shaped strings (bearer tokens, API keys,
- *  password assignments) before any exported content reaches disk. Reuses the
- *  repo's marker-redaction machinery restricted to secret kinds — a personal
- *  vault legitimately contains paths/URLs/emails, so PII kinds stay untouched. */
+/** Strip secret-shaped strings before exported content reaches disk. */
 export function redactExportText(text: string): string {
-  return redactWithMarkers(text, { kinds: SECRET_MARKER_KINDS }).text;
+  return redactFactText(text);
 }
 
 /** Deterministic bad-data rejection (path traversal in DB-controlled path
@@ -245,10 +242,11 @@ export class VaultWriter {
     // Containment gate (Codex CONFIRMED finding): DB-controlled path segments
     // (e.g. synthesis para_placement) must never escape the vault. Shared,
     // tested guard (path-safety.ts) — same logic the report writer uses.
+    const safeRelPath = redactFactText(relPath);
     const fullPath = assertWithinRoot(
       this.vaultPath,
-      relPath,
-      () => new VaultPathEscapeError(`[vault-exporter] refusing write outside vault root: ${relPath}`),
+      safeRelPath,
+      () => new VaultPathEscapeError("[vault-exporter] refusing write outside vault root"),
     );
     const rel = relative(resolve(this.vaultPath), resolve(fullPath));
     await mkdir(dirname(fullPath), { recursive: true });
@@ -406,7 +404,7 @@ export function mapRow(row: any): ExportedMemory | null {
     : String(rawId ?? "");
   const id = extractId(rawId);
   if (rawIdText.includes(":") || !UUID_RE.test(id)) {
-    console.warn(`[vault-exporter] skipping record with non-UUID id: ${rawIdText || id}`);
+    console.warn("[vault-exporter] skipping record with non-UUID id");
     return null;
   }
 
@@ -1278,26 +1276,27 @@ export async function validateExport(vaultPath: string): Promise<string[]> {
     for (const filePath of files) {
       const content = await readFile(filePath, "utf-8");
       const relPath = relative(vaultPath, filePath);
+      const safeRelPath = redactFactText(relPath);
       const fileName = basename(filePath);
 
       if (/^#\s*$/m.test(content)) {
-        const warning = `[vault-exporter] blank H1 detected in ${relPath}`;
+        const warning = `[vault-exporter] blank H1 detected in ${safeRelPath}`;
         warnings.push(warning);
         console.warn(warning);
       }
       if (UUID_RE.test(fileName.replace(/\.md$/i, ""))) {
-        const warning = `[vault-exporter] UUID-only filename detected in ${relPath}`;
+        const warning = `[vault-exporter] UUID-only filename detected in ${safeRelPath}`;
         warnings.push(warning);
         console.warn(warning);
       }
       if (fileName.startsWith("memories--")) {
-        const warning = `[vault-exporter] malformed filename detected in ${relPath}`;
+        const warning = `[vault-exporter] malformed filename detected in ${safeRelPath}`;
         warnings.push(warning);
         console.warn(warning);
       }
       const idMatch = content.match(/^id:\s*(.+)$/m);
       if (idMatch && /^(memories:|entities:)/.test(idMatch[1].trim())) {
-        const warning = `[vault-exporter] table-prefixed id detected in ${relPath}: ${idMatch[1].trim()}`;
+        const warning = `[vault-exporter] table-prefixed id detected in ${safeRelPath}: ${redactFactText(idMatch[1].trim())}`;
         warnings.push(warning);
         console.warn(warning);
       }
@@ -1383,7 +1382,7 @@ export async function runVaultExport(
         if (err instanceof VaultPathEscapeError) {
           // Deterministic bad row — skip it, keep the sweep enabled.
           synthesisNotesSkippedInvalid++;
-          console.warn(`[vault-exporter] skipping synthesis note with unsafe path (${synthesis.id}):`, err.message);
+          console.warn("[vault-exporter] skipping synthesis note with unsafe path");
           continue;
         }
         throw err;
@@ -1393,11 +1392,11 @@ export async function runVaultExport(
         synthesizedMemoryIds.add(memId);
       }
     }
-  } catch (err) {
+  } catch {
     // Synthesis is best-effort — log but don't abort export. The sweep is
     // disabled for this run so prior synthesis files are not removed.
     sweepSafe = false;
-    console.warn("[vault-exporter] synthesis pass error:", err);
+    console.warn("[vault-exporter] synthesis pass error");
   }
   logStage("synthesis", stageStart, {
     notes: synthesisNotesExported,
@@ -1455,9 +1454,9 @@ export async function runVaultExport(
   let legacySnapshotWritten = false;
   try {
     legacySnapshotWritten = await writeLegacySnapshotIfAbsent(db, vaultPath, writer);
-  } catch (err) {
+  } catch {
     // Best-effort garnish on the cutover decision — never abort the export
-    console.warn("[vault-exporter] legacy snapshot error:", err);
+    console.warn("[vault-exporter] legacy snapshot error");
   }
   logStage("legacy_snapshot", stageStart, { written: legacySnapshotWritten });
 

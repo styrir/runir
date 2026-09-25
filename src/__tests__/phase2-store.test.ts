@@ -586,7 +586,7 @@ describe("retrieval_trace persistence augmentation (A′ step 1 — Memory Impac
     );
   });
 
-  it("createRetrievalTrace persists the verbatim prependContext but not the feedback-only fields", async () => {
+  it("createRetrievalTrace keeps prompt and injection text out of DB arguments", async () => {
     const db = mockDb();
     await createRetrievalTrace(db, {
       userId: "u1",
@@ -601,7 +601,8 @@ describe("retrieval_trace persistence augmentation (A′ step 1 — Memory Impac
     expect(db.query).toHaveBeenCalledWith(
       expect.stringContaining("prepend_context: $prependContext"),
       expect.objectContaining({
-        prependContext: "## Recall\n- the capture hook writes semiote records directly",
+        prependContext: undefined,
+        prompt: "",
       }),
     );
     // create stays single-purpose: feedback-only fields are never bound at create time
@@ -609,6 +610,20 @@ describe("retrieval_trace persistence augmentation (A′ step 1 — Memory Impac
     expect(vars).not.toHaveProperty("answer");
     expect(vars).not.toHaveProperty("responseResolution");
     expect(vars).not.toHaveProperty("correctedIds");
+  });
+
+  it("keeps recall available when a discarded prompt has a second-pass secret shape", async () => {
+    const db = mockDb();
+    const id = await createRetrievalTrace(db, {
+      userId: "u1", prompt: "Authorization: Basic QUFBQUFBQUFBQUFBQUFBQQ==",
+      prependContext: "Authorization: Basic QUFBQUFBQUFBQUFBQUFBQQ==",
+      intentLabel: "fact", laneLabel: "fact", retrievalPath: "hybrid",
+      accessTrackedIds: [], items: [{ id: "semiote:synthetic", score: 0.9 }],
+    });
+    expect(id).toEqual(expect.any(String));
+    expect(db.query).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      prompt: "", prependContext: undefined, items: [{ id: "semiote:synthetic", score: 0.9 }],
+    }));
   });
 
   it("getRetrievalTrace maps the new feedback fields and tolerates pre-existing rows that lack them", async () => {
@@ -687,7 +702,7 @@ describe("retrieval_trace persistence augmentation (A′ step 1 — Memory Impac
     expect(oldRow?.id).toBe("trace-old");
   });
 
-  it("patchRetrievalTraceAnswer updates the trace with answer + feedback metadata, user-scoped", async () => {
+  it("patchRetrievalTraceAnswer stores feedback metadata without answer text", async () => {
     const db = mockDb();
     await patchRetrievalTraceAnswer(db, "trace-9", "u1", {
       answer: "Yes, it writes semiote rows.",
@@ -699,7 +714,7 @@ describe("retrieval_trace persistence augmentation (A′ step 1 — Memory Impac
       expect.objectContaining({
         id: "trace-9",
         userId: "u1",
-        answer: "Yes, it writes semiote rows.",
+        answer: "",
         responseResolution: "explicit_success",
         correctedIds: ["m2"],
       }),
@@ -718,7 +733,7 @@ describe("retrieval_trace persistence augmentation (A′ step 1 — Memory Impac
     expect(vars.correctedIds).toBeUndefined();
   });
 
-  it("patchRetrievalTraceCaptureReceipt persists the bound headless turn metadata", async () => {
+  it("patchRetrievalTraceCaptureReceipt persists only bound IDs and metadata", async () => {
     const db = mockDb();
     await patchRetrievalTraceCaptureReceipt(db, "trace-9", "u1", {
       sessionId: "sess-9",
@@ -735,13 +750,13 @@ describe("retrieval_trace persistence augmentation (A′ step 1 — Memory Impac
         userId: "u1",
         sessionId: "sess-9",
         memoryIds: ["semiote:m1", "semiote:m2"],
-        prompt: "original prompt",
-        answer: "final answer",
         client: "grok",
         path: "/repo",
       }),
     );
     const sql = (db.query as any).mock.calls[0][0] as string;
+    expect(sql).not.toContain("prompt:");
+    expect(sql).not.toContain("answer:");
     expect(sql).not.toContain("feedback_received_at");
     expect(sql).not.toMatch(/SET\s+answer\s*=/);
     expect(sql).toContain("retrievalTraceId: $id");

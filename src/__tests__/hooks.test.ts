@@ -1128,7 +1128,7 @@ describe("hook endpoints – userId resolution", () => {
   });
 
   // Test 8
-  it("/hooks/session-end propagates explicit body.userId to the watermark + raw-turn calls", async () => {
+  it("/hooks/session-end propagates explicit body.userId to the watermark without raw-turn writes", async () => {
     const app = getApp();
     const res = await app.request("/hooks/session-end", {
       method: "POST",
@@ -1148,12 +1148,7 @@ describe("hook endpoints – userId resolution", () => {
     // getLastWatermark(db, sessionKey, uid)
     expect(getLastWatermark).toHaveBeenCalledWith(expect.anything(), "s1", "agent-hermes");
 
-    // recordSessionTurns(db, { userId, sessionId, ... })
-    expect(recordSessionTurns).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ userId: "agent-hermes", sessionId: "s1" }),
-      expect.any(Function),
-    );
+    expect(recordSessionTurns).not.toHaveBeenCalled();
 
     // createWatermark(db, sessionKey, uid, totalMessageCount)
     expect(createWatermark).toHaveBeenCalledWith(expect.anything(), "s1", "agent-hermes", expect.any(Number));
@@ -1165,7 +1160,7 @@ describe("hook endpoints – userId resolution", () => {
   });
 
   // Test 9
-  it("/hooks/session-end falls back to cfg.userId for the watermark + raw-turn calls", async () => {
+  it("/hooks/session-end falls back to cfg.userId for the watermark without raw-turn writes", async () => {
     const app = getApp();
     const res = await app.request("/hooks/session-end", {
       method: "POST",
@@ -1183,11 +1178,7 @@ describe("hook endpoints – userId resolution", () => {
 
     expect(getLastWatermark).toHaveBeenCalledWith(expect.anything(), "s1", "default-user");
 
-    expect(recordSessionTurns).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ userId: "default-user", sessionId: "s1" }),
-      expect.any(Function),
-    );
+    expect(recordSessionTurns).not.toHaveBeenCalled();
 
     expect(createWatermark).toHaveBeenCalledWith(expect.anything(), "s1", "default-user", expect.any(Number));
 
@@ -1275,6 +1266,37 @@ describe("/memory/store continuity metadata", () => {
       embedDocument: vi.fn().mockResolvedValue(new Array(768).fill(0)),
       fingerprint: vi.fn().mockReturnValue("mock-fingerprint"),
     });
+  });
+
+  it("redacts fact text and removes client source fields before arbitration", async () => {
+    const canary = "Bearer AAAAAAAAAAAAAAAAAAAAAAAA";
+    const res = await getApp().request("/memory/store", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "agent-hermes", text: `safe fact ${canary}`,
+        metadata: { raw_source_text: canary, l0: canary, l1: canary,
+          nested: { rawSpan: { text: canary }, spans: [{ text: canary }], note: `safe note ${canary}` } } }),
+    });
+    expect(res.status).toBe(200);
+    const write = (arbitrateWrite as any).mock.calls[0][0];
+    expect(JSON.stringify(write)).not.toContain(canary);
+    expect(write.text).toContain("[BEARER_TOKEN_1]");
+    expect(write.metadata).not.toHaveProperty("raw_source_text");
+    expect(write.metadata.l0).not.toBe(canary);
+    expect(write.metadata.l1).not.toBe(canary);
+    expect(write.metadata.nested).not.toHaveProperty("rawSpan");
+    expect(write.metadata.nested).not.toHaveProperty("spans");
+  });
+
+  it("returns the counted capture drop contract before arbitration on redaction assertion", async () => {
+    const res = await getApp().request("/memory/store", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "agent-hermes", text: "Authorization: Basic QUFBQUFBQUFBQUFBQUFBQQ==" }),
+    });
+    const body = await res.json() as Record<string, unknown>;
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ skipped: false, reason: "redaction_assertion_failed", factsFound: 0, units: [] });
+    expect(body).not.toHaveProperty("error");
+    expect(arbitrateWrite).not.toHaveBeenCalled();
   });
 
   it("persists derived continuity role, validity, and active task ids for current status writes", async () => {
@@ -1637,7 +1659,7 @@ describe("/hooks/session-end no-LLM contract (Rúnir-y5on/Rúnir-sq3s)", () => {
     });
   });
 
-  it("records raw turns + advances the watermark and fires NO extraction/LLM seam", async () => {
+  it("advances the watermark without raw turn writes or extraction", async () => {
     const app = getApp();
     const res = await app.request("/hooks/session-end", {
       method: "POST",
@@ -1654,18 +1676,13 @@ describe("/hooks/session-end no-LLM contract (Rúnir-y5on/Rúnir-sq3s)", () => {
 
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json).toMatchObject({ skipped: false, rawTurnsRecorded: 2, extraction: "disabled" });
+    expect(json).toMatchObject({ skipped: false, rawTurnsRecorded: 0, extraction: "disabled" });
     // The extraction-derived response fields are gone for good.
     expect(json.topicsFound).toBeUndefined();
     expect(json.factsFound).toBeUndefined();
     expect(json.outcomes).toBeUndefined();
 
-    expect(recordSessionTurns).toHaveBeenCalledTimes(1);
-    const turnBatch = (recordSessionTurns as any).mock.calls[0][1];
-    expect(turnBatch.turns).toEqual([
-      { turnIndex: 0, role: "user", content: "first user turn" },
-      { turnIndex: 1, role: "assistant", content: "first assistant turn" },
-    ]);
+    expect(recordSessionTurns).not.toHaveBeenCalled();
     expect(createWatermark).toHaveBeenCalledWith(expect.anything(), "s-no-llm", "agent-hermes", 2);
 
     // The five removed LLM passes + their write seams must never fire.
@@ -1733,14 +1750,8 @@ describe("/hooks/session-end no-LLM contract (Rúnir-y5on/Rúnir-sq3s)", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ skipped: false, rawTurnsRecorded: 2, extraction: "disabled" });
-    // watermark=3, batchStart=0 → overlap trim 3 → only m4/m5 recorded at
-    // ABSOLUTE indices 3 and 4.
-    const turnBatch = (recordSessionTurns as any).mock.calls[0][1];
-    expect(turnBatch.turns).toEqual([
-      { turnIndex: 3, role: "assistant", content: "m4" },
-      { turnIndex: 4, role: "user", content: "m5" },
-    ]);
+    expect(await res.json()).toMatchObject({ skipped: false, rawTurnsRecorded: 0, extraction: "disabled" });
+    expect(recordSessionTurns).not.toHaveBeenCalled();
     expect(createWatermark).toHaveBeenCalledWith(expect.anything(), "s-no-llm-resume", "agent-hermes", 5);
   });
 });

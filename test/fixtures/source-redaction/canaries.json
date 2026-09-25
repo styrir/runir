@@ -1,0 +1,34 @@
+{
+  "secrets": [
+    "Bearer AAAAAAAAAAAAAAAAAAAAAAAA",
+    "sk-proj-AAAAAAAAAAAAAAAAAAAAAAAA",
+    "AKIAAAAAAAAAAAAAAAAA",
+    "sk-AAAAAAAAAAAAAAAAAAAAAAAA",
+    "password=hunter2long",
+    "ghp_AAAAAAAAAAAAAAAAAAAAAAAA",
+    "-----BEGIN PRIVATE KEY-----",
+    "-----BEGIN PRIVATE KEY-----\nQUFBQUFBQUFBQUFBQUFBQQ==\n-----END PRIVATE KEY-----",
+    "https://bot:AAAAAAAAAAAA@example.test/admin",
+    "postgresql://service:AAAAAAAAAAAA@db.example.test/main",
+    "api_key=AAAAAAAAAAAAAAAAAAAA",
+    "client_secret=\"AAAAAAAAAAAAAAAAAAAA\"",
+    "password=\"synthetic phrase\""
+  ],
+  "sourcePii": [
+    "person@example.test",
+    "555-123-4567",
+    "+1 555 123 4567",
+    "123-45-6789",
+    "/Users/fictionaluser/project/src/index.ts",
+    "192.0.2.10",
+    "2001:db8::1",
+    "::1"
+  ],
+  "safe": [
+    "const answer = await client.query(\"SELECT 1\")",
+    "src/routes/hooks/index.ts",
+    "Ada Lovelace works on Rúnir",
+    "https://docs.example.test/api/v1/guide"
+  ],
+  "pairedEmail": "person@example.test"
+}

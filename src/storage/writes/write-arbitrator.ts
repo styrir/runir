@@ -993,13 +993,16 @@ async function resolveJudgeDecision(
   } else {
     try {
       outcome = await judge.judge(candidate.l2, incomingText);
-    } catch (err) {
+    } catch {
       // Handle contract: never throw. Defense-in-depth if a stub does.
       outcome = {
         status: "transport_error",
-        detail: err instanceof Error ? err.message : String(err),
+        detail: "provider_error",
       };
     }
+  }
+  if (outcome.status === "transport_error" || outcome.status === "invalid_response") {
+    outcome = { ...outcome, detail: "provider_error" };
   }
 
   // Build ledger/provenance helpers for the F2-confirm path only (cue path has no
@@ -1582,9 +1585,8 @@ export async function arbitrateWrite(
         incomingTierMeta: incomingTier,
         incomingValidAtMeta: incomingValidAt,
       });
-    } catch (err) {
+    } catch {
       _atomicComputationFailed = true;
-      const msg = err instanceof Error ? err.message : String(err);
       const frame =
         input.atomicFrameSource ??
         ({
@@ -1600,7 +1602,7 @@ export async function arbitrateWrite(
           ...(input.shadowCorrelationId != null
             ? { replayStepId: input.shadowCorrelationId }
             : {}),
-          errorDetail: msg.slice(0, 500),
+          errorDetail: "computation_failed",
         });
       } catch (attemptErr) {
         // PIN-1 step 3: failed-attempt write also fails → surface, zero applied side effects.
@@ -1806,11 +1808,10 @@ export async function arbitrateWrite(
     }
     try {
       await logSupersessionJudgeLedger(input.db, payload);
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
+    } catch {
       // Module-owned: works with or without a judge handle (P1#3).
       // Handle.getCounters() reads this same module counter for /health.
-      noteLedgerWriteFailure(detail);
+      noteLedgerWriteFailure("ledger_write_failed");
     }
   }
 

@@ -1,0 +1,10 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Synthetic source-redaction canaries only"
+paths = [
+  '''^test/fixtures/source-redaction/''',
+  '''^src/__tests__/source-redaction-live-sql\.test\.ts$''',
+  '''^src/__tests__/hooks-capture-integration\.test\.ts$''',
+]

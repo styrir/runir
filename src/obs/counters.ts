@@ -149,7 +149,7 @@ export function committedIndexedDrift(
 
 // ── Unified pipeline-drop counter (Rúnir-imaf.9) ─────────────────────────────
 
-export type PipelineDropStage = "extract" | "segment" | "entity" | "staleness" | "session-end";
+export type PipelineDropStage = "capture" | "extract" | "segment" | "entity" | "staleness" | "session-end" | "memory-store";
 export type PipelineDropScope = "batch" | "element";
 
 const PIPELINE_LABEL_SAFE = /^[^\s=]+$/;
