@@ -10,6 +10,8 @@ import {
   THINK_MAX_EVIDENCE_ITEMS,
   THINK_RETRIEVAL_TOP_K,
 } from "../recall/orchestrator/think-synthesis.js";
+import { createRetrievalTrace } from "../storage/surreal/phase2-store.js";
+import type { SurrealClient } from "../storage/surreal/surreal-store.js";
 
 function appWith(overrides: Partial<ThinkRouteDeps> = {}) {
   const app = new Hono();
@@ -36,6 +38,21 @@ function request(app: Hono, body: unknown) {
 }
 
 describe("Think route contract", () => {
+  it("returns recall when the discarded question has a secret shape", async () => {
+    const query = vi.fn(async () => [[]]);
+    const app = appWith({ recall: async ({ question }) => {
+      const retrievalTraceId = await createRetrievalTrace({ query } as unknown as SurrealClient, {
+        userId: "owner", prompt: question, intentLabel: "fact", laneLabel: "fact",
+        retrievalPath: "hybrid", accessTrackedIds: [], items: [],
+      });
+      return { body: { selected: [], retrievalTraceId } };
+    } });
+    const response = await request(app, { userId: "owner", question: "Authorization: Basic QUFBQUFBQUFBQUFBQUFBQQ==" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ retrievalTraceId: expect.any(String), evidenceCount: 0 });
+    expect(query).toHaveBeenCalledOnce();
+  });
+
   it("requires an explicit user and a question", async () => {
     expect((await request(appWith(), { question: "x" })).status).toBe(400);
     expect((await request(appWith(), { userId: "owner" })).status).toBe(400);
@@ -138,6 +155,13 @@ describe("Think route contract", () => {
     });
     expect(fetchFn).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(persistSynthesis).toHaveBeenCalledOnce());
+    expect(persistSynthesis).toHaveBeenCalledWith({
+      retrievalTraceId: "trace-cap",
+      metadata: { traceId: "trace-cap", model: "openai/gpt-5.6-luna",
+        questionLength: "What is first?".length, answerLength: expect.any(Number), redactionVersion: 1 },
+    });
+    expect(JSON.stringify(persistSynthesis.mock.calls)).not.toContain("What is first?");
+    expect(JSON.stringify(persistSynthesis.mock.calls)).not.toContain("Evidence 0");
   });
 });
 

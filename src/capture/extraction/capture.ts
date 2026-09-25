@@ -852,7 +852,7 @@ export async function extractMemories(
       console.warn(`memory-hybrid: extractMemories fetch aborted (${effectiveTimeout}ms timeout)`);
       recordExtractDrop("timeout", model);
     } else {
-      console.warn(`memory-hybrid: extractMemories fetch error: ${String(err)}`);
+      console.warn("memory-hybrid: extractMemories fetch error");
       recordExtractDrop("fetch_error", model);
     }
     return [];
@@ -862,7 +862,7 @@ export async function extractMemories(
     clearTimeout(timeout);
     if (process.env.RUNIR_EXTRACT_DEBUG === "1") {
       process.stderr.write(
-        `[extract-debug] non-OK response status=${response.status} ${response.statusText}\n`,
+        `[extract-debug] non-OK response status=${response.status}\n`,
       );
     }
     recordExtractDrop("http_not_ok", model, {
@@ -888,7 +888,7 @@ export async function extractMemories(
       recordExtractDrop("timeout", model);
     } else {
       console.warn(
-        `memory-hybrid: extractMemories response.json() failed, discarding batch: ${err instanceof Error ? err.message : String(err)}`,
+        "memory-hybrid: extractMemories response.json() failed, discarding batch",
       );
       recordExtractDrop("http_json_error", model);
     }
@@ -912,7 +912,7 @@ export async function extractMemories(
   recordCeilingHit("extract", data, model);
   if (process.env.RUNIR_EXTRACT_DEBUG === "1") {
     process.stderr.write(
-      `[extract-debug] model_response (${text.length} chars): ${text.slice(0, 500).replace(/\n/g, "\\n")}\n`,
+      `[extract-debug] model_response chars=${text.length}\n`,
     );
   }
   // Isolate JSON parsing so a malformed LLM response is logged (not silently
@@ -934,10 +934,10 @@ export async function extractMemories(
       recordCounter("extract_batch_repaired", 1, { labels: { reason: "json_repaired", model: COUNTER_LABEL_SAFE.test(model) ? model : "unknown" } });
     }
     markTiming("parse_model_json");
-  } catch (err) {
+  } catch {
     markTiming("parse_model_json");
     console.warn(
-      `memory-hybrid: extractMemories JSON.parse failed, discarding batch: ${err instanceof Error ? err.message : String(err)} (response head: ${text.slice(0, 120).replace(/\n/g, "\\n")})`,
+      "memory-hybrid: extractMemories JSON.parse failed, discarding batch",
     );
     recordExtractDrop("parse_error", model, finishReason ? { finish_reason: finishReason } : undefined);
     return [];
@@ -950,7 +950,7 @@ export async function extractMemories(
     // surface it on the counter seam + an always-on warn so the batch loss is
     // observable (Rúnir-sm9k.3, iter-3 hardening).
     console.warn(
-      `memory-hybrid: extractMemories parsed JSON but root.facts is not an array, discarding batch (head: ${JSON.stringify(parsed).slice(0, 120)})`,
+      "memory-hybrid: extractMemories parsed JSON but root.facts is not an array, discarding batch",
     );
     recordExtractDrop("bad_root_shape", model, finishReason ? { finish_reason: finishReason } : undefined);
     return [];
@@ -1097,35 +1097,6 @@ export async function extractMemories(
       if (typeof raw.l0 === "string") raw.l0 = resolveRelativeTemporalPhrases(raw.l0, ts).text;
       if (typeof raw.l1 === "string") raw.l1 = resolveRelativeTemporalPhrases(raw.l1, ts).text;
     }
-    // Post-stamp enrichment: when a fact's raw_source_text carries a code
-    // marker (fence, diff hunk, stack trace) but the LLM-paraphrased l2 does
-    // not, append the verbatim source as a quoted block. This is server-side
-    // deterministic enrichment — independent of LLM cooperation. It lets
-    // downstream consumers and scorers that read `content` (not just
-    // raw_source_text) see fences/identifiers. The architectural insight:
-    // verbatim-first memory systems (MemPalace, Hindsight, OMEGA) score
-    // 90-100% on LoCoMo/LongMemEval, vs paraphrase-first systems plateauing
-    // at 65-75%. We're not flipping the architecture — we're letting both
-    // shapes co-exist in `content` so the consumer doesn't have to choose.
-    // G003: extended to gate Python tracebacks too — `Traceback` line and
-    // indented `  File "..."` frames were previously missed, so unfenced
-    // Python tracebacks bypassed the enrichment loop entirely.
-    const CODE_MARKER = /```|^---\s|^\+\+\+\s|^@@\s|^\s+at\s+\w+|^\s*File\s+"|^Traceback\b|\x1b\[/m;
-    for (const raw of rawFacts) {
-      const rst = raw.raw_source_text;
-      if (!rst || rst.length === 0) continue;
-      if (CODE_MARKER.test(rst) && !CODE_MARKER.test(raw.l2)) {
-        // Trim raw_source_text to a tight excerpt around the code marker (max
-        // 800 chars) so we don't bloat memory units with full transcripts.
-        const rawExcerpt = rst.length > 800 ? rst.slice(0, 800) + "…" : rst;
-        // G003: when RUNIR_VERBATIM_CODE_SHADOW=1, wrap unfenced stack
-        // traces / ANSI blocks / partial code in markdown fences before
-        // appending to content. No-op when env is unset.
-        const excerpt = buildFenceWrappedCodeExcerpt(rawExcerpt);
-        raw.l2 = `${raw.l2}\n\nSource:\n${excerpt}`;
-      }
-    }
-
     for (const raw of rawFacts) {
       const beforeClaims = Array.isArray(raw.atomicClaims) ? raw.atomicClaims.length : 0;
       repairListShapedFact(raw);
@@ -1146,7 +1117,7 @@ export async function extractMemories(
     for (const raw of rawFacts) {
       const min = Math.max(CONFIDENCE_THRESHOLD, perCategoryThreshold(raw.category));
       if (raw.confidence < min) {
-        console.warn(`memory-hybrid: discarded low-confidence fact (${raw.confidence} < ${min}, category=${raw.category}): ${raw.l2.slice(0, 80)}`);
+        console.warn("memory-hybrid: discarded low-confidence fact");
         onReject?.(raw, "low-confidence");
         continue;
       }
@@ -1154,23 +1125,23 @@ export async function extractMemories(
       // skipped, not allowed to discard the whole batch (Rúnir-sm9k.3).
       try {
         passed.push(normalizeExtractedFact(raw));
-      } catch (err) {
+      } catch {
         console.warn(
-          `memory-hybrid: skipped malformed fact during normalization (category=${raw.category}): ${err instanceof Error ? err.message : String(err)}`,
+          `memory-hybrid: skipped malformed fact during normalization`,
         );
         onReject?.(raw, "normalize-throw");
       }
     }
     markTiming("normalize_facts");
     return passed;
-  } catch (err) {
+  } catch {
     // Net for an unexpected throw in the post-parse stages: log instead of
     // silently discarding the batch (Rúnir-sm9k.3). Returns whatever was
     // normalized before the throw — empty if it happened in a pre-normalize
     // stage (stamping/enrichment/list-repair, which run before `passed` is
     // filled), partial if in the confidence/normalize loop.
     console.warn(
-      `memory-hybrid: extractMemories post-parse processing failed after ${passed.length} facts: ${err instanceof Error ? err.message : String(err)}`,
+      `memory-hybrid: extractMemories post-parse processing failed after ${passed.length} facts`,
     );
     // Count the degradation: a throw here (e.g. a non-object fact element like
     // {"facts":[null]} that blows up stamping before `passed` is filled) is an
@@ -1261,7 +1232,7 @@ export async function segmentAndSummarize(
       logger?.(`memory-hybrid: segmentAndSummarize fetch aborted (${effectiveTimeout}ms timeout)`);
       recordSegmentDrop("timeout", model);
     } else {
-      logger?.(`memory-hybrid: segmentAndSummarize fetch error: ${String(err)}`);
+      logger?.("memory-hybrid: segmentAndSummarize fetch error");
       recordSegmentDrop("fetch_error", model);
     }
     return { topics: [] };
@@ -1269,7 +1240,7 @@ export async function segmentAndSummarize(
 
   if (!response.ok) {
     clearTimeout(timeout);
-    logger?.(`memory-hybrid: segmentAndSummarize HTTP ${response.status} ${response.statusText}`);
+    logger?.(`memory-hybrid: segmentAndSummarize HTTP ${response.status}`);
     recordSegmentDrop("http_not_ok", model);
     return { topics: [] };
   }
@@ -1290,7 +1261,7 @@ export async function segmentAndSummarize(
       logger?.(`memory-hybrid: segmentAndSummarize body read aborted (${effectiveTimeout}ms timeout)`);
       recordSegmentDrop("timeout", model);
     } else {
-      logger?.(`memory-hybrid: segmentAndSummarize response.text() failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger?.("memory-hybrid: segmentAndSummarize response.text() failed");
       recordSegmentDrop("http_read_error", model);
     }
     return { topics: [] };
@@ -1300,7 +1271,7 @@ export async function segmentAndSummarize(
   try {
     data = JSON.parse(rawText);
   } catch {
-    logger?.(`memory-hybrid: segmentAndSummarize JSON parse failure: ${rawText.slice(0, 200)}`);
+    logger?.("memory-hybrid: segmentAndSummarize JSON parse failure");
     recordSegmentDrop("http_json_error", model);
     return { topics: [] };
   }
@@ -1352,7 +1323,7 @@ export async function segmentAndSummarize(
     }
     return { topics: validTopics };
   } catch {
-    logger?.(`memory-hybrid: segmentAndSummarize content JSON parse failure: ${text.slice(0, 200)}`);
+    logger?.("memory-hybrid: segmentAndSummarize content JSON parse failure");
     recordSegmentDrop("content_parse_error", model);
     return { topics: [] };
   }

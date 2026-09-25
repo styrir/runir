@@ -20,6 +20,7 @@ import {
 } from "../../noema/claim-contract.js";
 import type { RetrievalAuditRecord } from "../../recall/policy/policy-types.js";
 import { embeddingForStore, extractId, type SurrealClient } from "./surreal-store.js";
+import { redactFact, redactFactText } from "../../shared/source-redaction.js";
 
 export type RetrievalFootprintIdentitySnapshot = {
   userId: string;
@@ -84,9 +85,9 @@ export type RetrievalTraceRecord = {
    *  no_linked_memories / linked_memories_filtered). Persisted ALWAYS (not debug-gated)
    *  — this is the demand signal the nightly entity-repair job aggregates (Rúnir-b40x.2). */
   entityMisses?: Array<{ mention: string; normalized: string; reason: string }>;
-  /** Verbatim text injected into the model on this turn (recall receipt). Set at create time. */
+  /** Legacy trace field; new writes leave it empty. */
   prependContext?: string;
-  /** Model answer for this turn. Set later, at /hooks/feedback time. */
+  /** Legacy trace field; new feedback writes leave it empty. */
   answer?: string;
   /** Feedback resolution label (e.g. explicit_success). Set at feedback time. */
   responseResolution?: string;
@@ -511,6 +512,7 @@ export async function createRetrievalTrace(
   db: SurrealClient,
   trace: Omit<RetrievalTraceRecord, "id" | "createdAt">,
 ): Promise<string> {
+  trace = redactFact({ ...trace, prompt: "", prependContext: undefined });
   const id = randomUUID();
   const createdAt = new Date().toISOString();
   await db.query(
@@ -538,7 +540,7 @@ export async function createRetrievalTrace(
       id,
       userId: trace.userId,
       sessionId: trace.sessionId ?? undefined,
-      prompt: trace.prompt,
+      prompt: "",
       intentLabel: trace.intentLabel,
       laneLabel: trace.laneLabel,
       retrievalPath: trace.retrievalPath,
@@ -551,7 +553,7 @@ export async function createRetrievalTrace(
       accessTrackedIds: trace.accessTrackedIds,
       retrievalAudit: trace.retrievalAudit ?? undefined,
       entityMisses: trace.entityMisses?.length ? trace.entityMisses : undefined,
-      prependContext: trace.prependContext ?? undefined,
+      prependContext: undefined,
       items: trace.items,
       createdAt,
     },
@@ -635,8 +637,8 @@ export async function patchRetrievalTraceAnswer(
     {
       id,
       userId,
-      answer: patch.answer,
-      responseResolution: patch.responseResolution ?? undefined,
+      answer: "",
+      responseResolution: patch.responseResolution ? redactFactText(patch.responseResolution) : undefined,
       correctedIds: patch.correctedIds ?? undefined,
     },
   );
@@ -658,8 +660,6 @@ export async function patchRetrievalTraceCaptureReceipt(
          retrievalTraceId: $id,
          sessionId: $sessionId,
          memoryIds: $memoryIds,
-         prompt: $prompt,
-         answer: $answer,
          client: $client,
          path: $path,
          receivedAt: time::now()
@@ -670,10 +670,8 @@ export async function patchRetrievalTraceCaptureReceipt(
       userId,
       sessionId: receipt.sessionId,
       memoryIds: receipt.memoryIds,
-      prompt: receipt.prompt,
-      answer: receipt.answer,
-      client: receipt.client ?? undefined,
-      path: receipt.path ?? undefined,
+      client: receipt.client ? redactFactText(receipt.client) : undefined,
+      path: receipt.path ? redactFactText(receipt.path) : undefined,
     },
   );
 }
@@ -705,7 +703,7 @@ export async function patchRetrievalTraceRating(
       id,
       userId,
       rating: patch.rating,
-      note: patch.note ?? undefined,
+      note: patch.note ? redactFactText(patch.note) : undefined,
     },
   );
 }
@@ -1275,7 +1273,7 @@ export async function promoteSemioteToNoema(
   embedText?: (text: string) => Promise<number[]>,
 ): Promise<{ promoted: boolean; id: string | null; embeddingWritten: boolean }> {
   const payload = row?.payload ?? {};
-  const canonicalText = String(payload.l2 ?? payload.data ?? "").trim();
+  const canonicalText = redactFactText(String(payload.l2 ?? payload.data ?? "")).trim();
   const userId = String(row?.user_id ?? payload.userId ?? "").trim();
   if (!canonicalText || !userId) {
     return { promoted: false, id: null, embeddingWritten: false };
@@ -1292,9 +1290,10 @@ export async function promoteSemioteToNoema(
   }
 
   const scope = typeof row?.scope === "string" ? row.scope : payload.scope;
-  const path = typeof row?.path === "string" ? row.path : payload.path;
+  const rawPath = typeof row?.path === "string" ? row.path : payload.path;
+  const path = typeof rawPath === "string" ? redactFactText(rawPath) : rawPath;
   const memoryRole = typeof row?.memory_role === "string" ? row.memory_role : payload.memoryRole;
-  const factKey = typeof payload.factKey === "string" ? payload.factKey : undefined;
+  const factKey = typeof payload.factKey === "string" ? redactFactText(payload.factKey) : undefined;
   const claimContract = deriveNoemaClaimContract({
     userId,
     scope,
@@ -1303,9 +1302,9 @@ export async function promoteSemioteToNoema(
     factKey,
     canonicalText,
     category: typeof payload.category === "string" ? payload.category : undefined,
-    continuitySubjectKey: typeof payload.continuitySubjectKey === "string" ? payload.continuitySubjectKey : undefined,
-    claimSubject: typeof payload.claimSubject === "string" ? payload.claimSubject : undefined,
-    claimPredicate: typeof payload.claimPredicate === "string" ? payload.claimPredicate : undefined,
+    continuitySubjectKey: typeof payload.continuitySubjectKey === "string" ? redactFactText(payload.continuitySubjectKey) : undefined,
+    claimSubject: typeof payload.claimSubject === "string" ? redactFactText(payload.claimSubject) : undefined,
+    claimPredicate: typeof payload.claimPredicate === "string" ? redactFactText(payload.claimPredicate) : undefined,
     status: payload.noemaStatus,
   });
   const normalizedId = extractId(row?.id ?? "").replace(/^semiote:/, "");
@@ -1340,9 +1339,9 @@ export async function promoteSemioteToNoema(
     lastEvaluatedAt: typeof row?.last_evaluated_at === "string" ? row.last_evaluated_at : payload.lastEvaluatedAt,
   });
 
-  // Compute embedding from canonical_text when embedText is provided.
-  // Graceful fallback: on failure, keep the semiote row embedding (may be empty []).
-  let computedEmbedding: number[] = Array.isArray(row?.embedding) ? row.embedding : [];
+  // A source-derived vector cannot be reused when the canonical text changes.
+  let computedEmbedding: number[] = canonicalText === String(payload.l2 ?? payload.data ?? "").trim()
+    && Array.isArray(row?.embedding) ? row.embedding : [];
   let embeddingWritten = false;
   if (embedText) {
     try {
@@ -1351,12 +1350,12 @@ export async function promoteSemioteToNoema(
         computedEmbedding = embedResult;
         embeddingWritten = true;
       } else {
-        // Provider returned empty vector (degraded Ollama etc.); keep row.embedding fallback.
-        console.warn(`[promoteSemioteToNoema] embedText returned empty vector for noema "${canonicalText.slice(0, 60)}…"; using fallback embedding`);
+        // Provider returned an empty vector; use only a safe existing vector.
+        console.warn("[promoteSemioteToNoema] embedText returned empty vector; using fallback embedding");
       }
-    } catch (err) {
-      // Log and fall back to semiote embedding; caller sees embeddingWritten=false.
-      console.warn(`[promoteSemioteToNoema] embedText failed for noema "${canonicalText.slice(0, 60)}…": ${String(err)}`);
+    } catch {
+      // Report count-only degradation; caller sees embeddingWritten=false.
+      console.warn("[promoteSemioteToNoema] embedText failed; using fallback embedding");
     }
   }
 
@@ -1393,8 +1392,8 @@ export async function promoteSemioteToNoema(
       id: noemaId,
       canonical: {
         text: canonicalText,
-        l0: payload.l0 ?? null,
-        l1: payload.l1 ?? null,
+        l0: typeof payload.l0 === "string" ? redactFactText(payload.l0) : null,
+        l1: typeof payload.l1 === "string" ? redactFactText(payload.l1) : null,
         factKey: factKey ?? null,
         claimKey: claimContract.claimKey,
         revisionHash: claimContract.revisionHash,

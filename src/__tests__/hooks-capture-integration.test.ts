@@ -256,6 +256,7 @@ vi.mock("../storage/surreal/phase2-store.js", () => ({
 // Import mocked modules for assertions
 // ---------------------------------------------------------------------------
 import { extractMemories } from "../capture/extraction/capture.js";
+import { logRejection } from "../storage/surreal/surreal-store.js";
 import { arbitrateWrite } from "../storage/writes/write-arbitrator.js";
 import { resolveCaptureApiKey } from "../shared/config.js";
 import { getPrimaryMemoryRowsByIds, getRetrievalFootprintFromTrace, getRetrievalTrace, listRetrievalTraces, patchRetrievalTraceCaptureReceipt, patchSemioteProvenance, retrievalFootprintIdentityMatches, upsertSemioteRelation } from "../storage/surreal/phase2-store.js";
@@ -306,6 +307,80 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
     expect(arbitrateWrite).toHaveBeenCalledTimes(2);
     expect(json.factsFound).toBe(2);
     expect(json.outcomes.create).toBe(2);
+  });
+
+  it("POST /hooks/capture drops malformed extraction before fact writes with watermark-safe body", async () => {
+    (extractMemories as Mock).mockResolvedValueOnce([{ l2: null, confidence: 0.9 }]);
+    const app = getApp();
+    const res = await app.request("/hooks/capture", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: [{ role: "user", content: "synthetic source" }] }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ skipped: false, reason: "redaction_assertion_failed", factsFound: 0, units: [] });
+    expect(body).not.toHaveProperty("error");
+    expect(arbitrateWrite).not.toHaveBeenCalled();
+  });
+
+  it("POST /hooks/capture drops an assertion-failing source before extraction", async () => {
+    const res = await getApp().request("/hooks/capture", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: [{ role: "user", content: "Authorization: Basic QUFBQUFBQUFBQUFBQUFBQQ==" }] }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ skipped: false, reason: "redaction_assertion_failed", factsFound: 0, units: [] });
+    expect(body).not.toHaveProperty("error");
+    expect(extractMemories).not.toHaveBeenCalled();
+    expect(arbitrateWrite).not.toHaveBeenCalled();
+  });
+
+  it("POST /hooks/capture keeps synthetic secret canaries out of writer arguments and JSON", async () => {
+    const canary = "Bearer AAAAAAAAAAAAAAAAAAAAAAAA";
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    (extractMemories as Mock).mockResolvedValueOnce([{
+      l2: `The safe fact includes ${canary}`, l0: `Fact ${canary}`, l1: `- Fact ${canary}`,
+      confidence: 0.9, category: "cases", tier: "working", tags: [],
+      raw_source_text: `Source ${canary}`,
+      rawSpan: { text: `Span ${canary}`, kind: "exact_answer" },
+    }]);
+    const res = await getApp().request("/hooks/capture", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ captureDebug: true, messages: [{ role: "user", content: `Source ${canary}` }] }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(JSON.stringify(body).includes(canary)).toBe(false);
+    expect(body.units[0]).not.toHaveProperty("raw_source_text");
+    expect(JSON.stringify((arbitrateWrite as Mock).mock.calls).includes(canary)).toBe(false);
+    expect(JSON.stringify((arbitrateWrite as Mock).mock.calls)).not.toContain("raw_source_text");
+    expect(JSON.stringify(warnings.mock.calls).includes(canary)).toBe(false);
+    warnings.mockRestore();
+  });
+
+  it("POST /hooks/capture keeps rejection candidates and catch errors out of public text", async () => {
+    const canary = "Bearer AAAAAAAAAAAAAAAAAAAAAAAA";
+    (extractMemories as Mock).mockImplementationOnce(async (_messages: unknown, _prompt: unknown, _key: unknown,
+      _timestamp: unknown, onReject: (fact: { l2: string; confidence: number }, reason: string) => void) => {
+      onReject({ l2: `Rejected ${canary}`, confidence: 0.1 }, "low-confidence");
+      return [];
+    });
+    const app = getApp();
+    const rejection = await app.request("/hooks/capture", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: [{ role: "user", content: "synthetic source" }] }),
+    });
+    expect(rejection.status).toBe(200);
+    expect(JSON.stringify((logRejection as Mock).mock.calls).includes(canary)).toBe(false);
+    (extractMemories as Mock).mockRejectedValueOnce(new Error(canary));
+    const failure = await app.request("/hooks/capture", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: [{ role: "user", content: "synthetic source" }] }),
+    });
+    expect(failure.status).toBe(500);
+    expect(await failure.json()).toMatchObject({ error: "capture failed" });
   });
 
   // G004: body.sessionTimestamp must thread through to extractMemories' 4th arg

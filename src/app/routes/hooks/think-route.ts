@@ -1,5 +1,6 @@
 import type { Hono } from "hono";
 import { jsonrepair } from "jsonrepair";
+import { SOURCE_REDACTION_VERSION } from "../../../shared/source-redaction.js";
 import {
   buildThinkPrompt,
   buildThinkChatRequest,
@@ -28,7 +29,7 @@ export type ThinkRouteDeps = {
   resolveTimeoutMs: () => number;
   persistSynthesis: (args: {
     retrievalTraceId: string;
-    synthesis: ThinkSynthesis & { question: string; model: string };
+    metadata: { traceId: string; model: string; questionLength: number; answerLength: number; redactionVersion: number };
   }) => Promise<unknown>;
   fetchFn?: typeof fetch;
   resolveModel?: () => string;
@@ -154,7 +155,13 @@ export function registerThinkRoute(app: Hono, deps: ThinkRouteDeps): void {
     if (retrievalTraceId) {
       void deps.persistSynthesis({
         retrievalTraceId,
-        synthesis: { question, ...synthesis, model },
+        metadata: {
+          traceId: retrievalTraceId,
+          model,
+          questionLength: question.length,
+          answerLength: synthesis.answer?.length ?? 0,
+          redactionVersion: SOURCE_REDACTION_VERSION,
+        },
       }).catch((error: unknown) =>
         deps.warn?.(`memory-hybrid: think synthesis persist failed: ${String(error).slice(0, 120)}`));
     }

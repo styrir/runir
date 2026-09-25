@@ -500,7 +500,7 @@ describe("recall selected[] contract", () => {
     expect(mocks.resolveActiveHexis).not.toHaveBeenCalled();
   });
 
-  it("preserves legacy session/Hexis resolution before a no-normalizable-messages skip", async () => {
+  it("skips non-normalizable messages before session or Hexis writes", async () => {
     const order: string[] = [];
     mocks.resolveUserId.mockReturnValue("owner");
     mocks.resolveCanonicalContextIdentity.mockReturnValue(CANONICAL_IDENTITY);
@@ -536,8 +536,8 @@ describe("recall selected[] contract", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ skipped: true, reason: "no normalizable messages" });
-    expect(order).toEqual(["session", "hexis", "normalize"]);
-    expect(mocks.resolveActiveHexis).toHaveBeenCalled();
+    expect(order).toEqual(["normalize"]);
+    expect(mocks.resolveActiveHexis).not.toHaveBeenCalled();
     expect(mocks.accrueUsefulnessFromCapture).not.toHaveBeenCalled();
     expect(mocks.buildCaptureContextPacket).not.toHaveBeenCalled();
   });

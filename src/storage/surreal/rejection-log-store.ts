@@ -1,4 +1,5 @@
 import type { SurrealClient } from "./surreal-client.js";
+import { redactFactText } from "../../shared/source-redaction.js";
 
 export async function ensureRejectionLogTable(db: SurrealClient): Promise<void> {
   await db.query("DEFINE TABLE IF NOT EXISTS rejection_log SCHEMAFULL;");
@@ -17,8 +18,9 @@ export async function logRejection(db: SurrealClient, params: {
   sessionId?: string;
   userId: string;
 }): Promise<void> {
+  const candidateText = redactFactText(params.candidateText);
   await db.query(
     `CREATE rejection_log SET reason=$reason, candidate_text=$text, confidence=$conf, session_id=$sid, user_id=$uid, rejected_at=time::now();`,
-    { reason: params.reason, text: params.candidateText.slice(0, 200), conf: params.confidence, sid: params.sessionId, uid: params.userId }
+    { reason: params.reason, text: candidateText.slice(0, 200), conf: params.confidence, sid: params.sessionId, uid: params.userId }
   ).catch(() => {}); // fire-and-forget, never block capture on rejection logging
 }

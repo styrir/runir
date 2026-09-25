@@ -1,5 +1,5 @@
 import type { Hono } from "hono";
-import { recordSessionTurns } from "../../../storage/surreal/session-turn-store.js";
+import { redactFact, redactFactText, redactSourceTurn } from "../../../shared/source-redaction.js";
 import { resolveLlmBaseUrl, resolveLlmTimeoutMs } from "../../../shared/config.js";
 import type { EntityMention, ExtractedFact, MemoryRole, RawExtractedFact } from "../../../domain/memory/types.js";
 import {
@@ -190,7 +190,7 @@ async function validateCaptureTraceReceipt(args: {
   const trace = await getRetrievalTrace(runtime.db, args.retrievalTraceId, args.userId);
   if (!trace) throw new CaptureReceiptRequestError("capture receipt retrieval trace not found", 404);
   if (trace.sessionId !== args.sessionId) throw new CaptureReceiptRequestError("capture receipt sessionId mismatch", 409);
-  if (trace.prompt !== prompt) throw new CaptureReceiptRequestError("capture receipt prompt mismatch", 409);
+  if (trace.prompt && trace.prompt !== prompt) throw new CaptureReceiptRequestError("capture receipt prompt mismatch", 409);
   const traceMemoryIds = trace.items.map((item) => item.id);
   if (!sameMemoryIds(traceMemoryIds, args.memoryIds)) {
     throw new CaptureReceiptRequestError("capture receipt memoryIds mismatch", 409);
@@ -273,7 +273,7 @@ function fireUsefulnessAccrual(args: {
     userId: args.userId,
     sessionId: args.sessionId,
     messages: args.messages,
-  }).catch((err) => console.warn("runir-capture: usefulness auto-accrual wiring failed:", err));
+  }).catch(() => console.warn("runir-capture: usefulness auto-accrual wiring failed"));
 }
 
 type EntityFactRecordPair = { text: string; confidence: number; replacementMemoryId: string };
@@ -295,14 +295,15 @@ async function linkExtractedEntitiesToFacts(args: {
   try {
     if (!args.apiKey) throw new Error("entity extraction skipped: no capture API key");
     const { extractEntities } = await import("../../../entities/entity-extractor.js");
-    entityMentions = await extractEntities(args.formatted, args.apiKey, args.sessionTimestamp, cfg.extractTimeoutMs);
+    entityMentions = (await extractEntities(args.formatted, args.apiKey, args.sessionTimestamp, cfg.extractTimeoutMs))
+      .map((mention) => ({ ...redactFact(mention), context: redactSourceTurn(mention.context) }));
     debugLogger.entityExtraction({
       session: args.sessionKey,
       count: entityMentions.length,
-      names: entityMentions.map((m) => m.name).join(","),
+      names: "redacted",
     });
-  } catch (err) {
-    console.warn("runir-service: entity extraction failed (non-fatal):", err);
+  } catch {
+    console.warn("runir-service: entity extraction failed (non-fatal)");
   }
 
   if (entityMentions.length === 0) {
@@ -316,7 +317,7 @@ async function linkExtractedEntitiesToFacts(args: {
     for (const mention of entityMentions) {
       try {
         const result = await arbitrateEntity(runtime.db, mention, args.userId, "session", args.sessionKey, args.sourceProject);
-        debugLogger.entityOutcome({ session: args.sessionKey, name: mention.name, outcome: result.outcome });
+        debugLogger.entityOutcome({ session: args.sessionKey, name: "redacted", outcome: result.outcome });
 
         for (const pair of args.factRecordPairs) {
           if (!entityMentionOverlapsWithFact(mention, pair.text)) continue;
@@ -329,13 +330,13 @@ async function linkExtractedEntitiesToFacts(args: {
           }, "semiote");
           links += 1;
         }
-      } catch (mentionErr) {
-        console.warn("runir-service: entity arbitration failed for mention:", mention.name, mentionErr);
-        debugLogger.entityOutcome({ session: args.sessionKey, name: mention.name, outcome: "error", err: String(mentionErr) });
+      } catch {
+        console.warn("runir-service: entity arbitration failed for mention");
+        debugLogger.entityOutcome({ session: args.sessionKey, name: "redacted", outcome: "error", err: "entity_error" });
       }
     }
-  } catch (entityErr) {
-    console.warn("runir-service: entity wiring failed (non-fatal):", entityErr);
+  } catch {
+    console.warn("runir-service: entity wiring failed (non-fatal)");
   }
 
   return { mentions: entityMentions.length, links };
@@ -890,10 +891,10 @@ export function registerHookRoutes(app: Hono) {
     resolveApiKey: () => resolveCaptureApiKey(cfg),
     resolveBaseUrl: () => resolveLlmBaseUrl(),
     resolveTimeoutMs: () => resolveLlmTimeoutMs(),
-    persistSynthesis: ({ retrievalTraceId, synthesis }) =>
+    persistSynthesis: ({ retrievalTraceId, metadata }) =>
       runtime.db.query(
         `UPDATE type::record('retrieval_trace', $traceId) SET synthesis = $synthesis;`,
-        { traceId: retrievalTraceId, synthesis },
+        { traceId: retrievalTraceId, synthesis: metadata },
       ),
     warn: (message) => console.warn(message),
   });
@@ -908,7 +909,7 @@ export function registerHookRoutes(app: Hono) {
     try { uid = resolveUserId(body.userId, cfg); } catch { return c.json({ error: "unauthorized" }, 400); }
 
     const retrievalTraceId = typeof body.retrievalTraceId === "string" ? body.retrievalTraceId : "";
-    const answer = typeof body.answer === "string" ? body.answer : "";
+      const answer = typeof body.answer === "string" ? body.answer : "";
     if (!retrievalTraceId || !answer.trim()) {
       return c.json({ error: "retrievalTraceId and answer are required" }, 400);
     }
@@ -1069,6 +1070,13 @@ export function registerHookRoutes(app: Hono) {
     const isCaptureDebug = process.env.RUNIR_DEBUG === "1" || body.hexisDebug === true || body.captureDebug === true;
     const includeCaptureTimings = isCaptureDebug || body.captureTimingDebug === true;
     const debugTimings = () => (includeCaptureTimings ? { _debug: { timings: timer.snapshot() } } : {});
+    const redactionDrop = () => {
+      recordPipelineDrop("capture", "batch", "redaction_assertion_failed", cfg.extractModel ?? "unknown");
+      console.warn("runir-capture: redaction_assertion_failed");
+      return c.json({ skipped: false, reason: "redaction_assertion_failed", factsFound: 0,
+        outcomes: { create: 0, skip: 0, "merge-update": 0, supersede: 0 }, units: [],
+        rejections: { suppressed: 0, rejected_short: 0, rejected_noise: 0 } });
+    };
     const messages = body.messages ?? [];
     let uid: string;
     try { uid = resolveUserId(body.userId, cfg); } catch { return c.json({ error: "unauthorized" }, 400); }
@@ -1090,15 +1098,16 @@ export function registerHookRoutes(app: Hono) {
       const captureReceiptRequested = body.captureReceipt === true;
       let runirSession: RunirSessionRecord | undefined;
       let activeHexis: HexisState | null | undefined;
+      const formatted = normalizeCaptureMessages(messages);
+      if (formatted.length === 0) return c.json({ skipped: true, reason: "no normalizable messages", ...debugTimings() });
+      let safeFormatted: typeof formatted;
+      try { safeFormatted = formatted.map((message) => ({ ...message, content: redactSourceTurn(message.content) })); }
+      catch { return redactionDrop(); }
       if (!captureReceiptRequested) {
-        // Preserve legacy behavior even when normalization later yields no
-        // eligible messages: the request still heartbeats session/Hexis state.
         runirSession = await resolveBodyRunirSession(body, uid, contextIdentity, capturePath, body.sessionId);
         activeHexis = await resolveBodyHexisContext(body, uid, capturePath, body.sessionId);
         timer.mark("resolve_session_hexis");
       }
-      const formatted = normalizeCaptureMessages(messages);
-      if (formatted.length === 0) return c.json({ skipped: true, reason: "no normalizable messages", ...debugTimings() });
       const retrievalTraceId = typeof body.retrievalTraceId === "string" && body.retrievalTraceId.trim()
         ? (captureReceiptRequested ? body.retrievalTraceId : body.retrievalTraceId.trim())
         : undefined;
@@ -1111,7 +1120,7 @@ export function registerHookRoutes(app: Hono) {
       // Preserve the legacy path's original session/Hexis-before-accrual/context
       // ordering. Receipt mode defers these persistent resolvers until binding.
       if (!captureReceiptRequested) {
-        fireUsefulnessAccrual({ userId: uid, sessionId: body.sessionId, messages: formatted });
+        fireUsefulnessAccrual({ userId: uid, sessionId: body.sessionId, messages: safeFormatted });
         timer.mark("normalize_and_schedule_usefulness");
       }
       const captureContextPacket = await buildCaptureContextPacket({
@@ -1138,7 +1147,7 @@ export function registerHookRoutes(app: Hono) {
         });
         // Validation must precede every mutating capture side effect. Keep the
         // established fire-and-forget accrual behavior once the receipt binds.
-        fireUsefulnessAccrual({ userId: uid, sessionId: body.sessionId, messages: formatted });
+        fireUsefulnessAccrual({ userId: uid, sessionId: body.sessionId, messages: safeFormatted });
         timer.mark("validate_receipt_and_schedule_usefulness");
       }
 
@@ -1155,8 +1164,8 @@ export function registerHookRoutes(app: Hono) {
 
       const salience = await scoreSessionSalience(
         runtime.db,
-        formatted,
-        formatted.map((m) => m.content).join("\n"),
+        safeFormatted,
+        safeFormatted.map((m) => m.content).join("\n"),
         { userId: uid, scope: "user", sessionKey: body.sessionId ?? "default", provider },
       );
       debugLogger.salience({
@@ -1183,7 +1192,7 @@ export function registerHookRoutes(app: Hono) {
 
       if (!salience.hardOverride && salience.score < 0.25 && noiseBank.initialized) {
         try {
-          const fullText = formatted.map((m) => m.content).join("\n");
+          const fullText = safeFormatted.map((m) => m.content).join("\n");
           const inputEmbedding = await provider.embedDocument(fullText);
           if (noiseBank.isNoise(inputEmbedding)) {
             timer.mark("noise_bank_filter");
@@ -1193,14 +1202,12 @@ export function registerHookRoutes(app: Hono) {
         timer.mark("noise_bank_filter");
       }
 
+      const pendingRejections: Array<{ reason: string; candidateText: string; confidence: number }> = [];
       const onReject = (raw: { l2: string; confidence: number }, reason: string) => {
-        logRejection(runtime.db, {
-          reason,
-          candidateText: raw.l2,
-          confidence: raw.confidence,
-          sessionId: body.sessionId,
-          userId: uid,
-        }).catch(() => {});
+        let candidateText: string;
+        try { candidateText = redactFactText(raw.l2); }
+        catch { recordPipelineDrop("capture", "element", "redaction_assertion_failed", cfg.extractModel ?? "unknown"); return; }
+        pendingRejections.push({ reason, candidateText, confidence: raw.confidence });
       };
       const extractedRawFacts = captureFixtureFacts ?? await extractMemories(
         compressed,
@@ -1215,7 +1222,12 @@ export function registerHookRoutes(app: Hono) {
         },
       );
       timer.mark("extract_memories");
-      const rawFacts = extractedRawFacts.map((fact) => normalizeExtractedFact(fact));
+      let rawFacts: ExtractedFact[];
+      try { rawFacts = extractedRawFacts.map((fact) => normalizeExtractedFact(redactFact(fact))); }
+      catch { return redactionDrop(); }
+      for (const rejection of pendingRejections) {
+        void logRejection(runtime.db, { ...rejection, sessionId: body.sessionId, userId: uid });
+      }
 
       const outcomes: Record<string, number> = { create: 0, skip: 0, "merge-update": 0, supersede: 0 };
       const rejections: { suppressed: number; rejected_short: number; rejected_noise: number } = {
@@ -1231,7 +1243,7 @@ export function registerHookRoutes(app: Hono) {
         }
         if (noiseBank.initialized && !salience.hardOverride && salience.score < 0.25) {
           try {
-            const fullText = formatted.map((m) => m.content).join("\n");
+            const fullText = safeFormatted.map((m) => m.content).join("\n");
             const inputEmbedding = await provider.embedDocument(fullText);
             noiseBank.learn(inputEmbedding);
           } catch {}
@@ -1284,7 +1296,7 @@ export function registerHookRoutes(app: Hono) {
         }
         if (isNoisyFact(fact.l2)) {
           rejections.rejected_noise += 1;
-          console.warn(`memory-hybrid: noise filter rejected fact: ${fact.l2.slice(0, 80)}`);
+          console.warn("memory-hybrid: noise filter rejected fact");
           logRejection(runtime.db, {
             reason: "noise-filter",
             candidateText: fact.l2,
@@ -1394,13 +1406,13 @@ export function registerHookRoutes(app: Hono) {
         });
         if (warmedProjectState) {
           upsertProjectState(runtime.db, warmedProjectState)
-            .catch((err) => console.warn("runir-service: capture warming upsertProjectState failed:", err));
+            .catch(() => console.warn("runir-service: capture warming upsertProjectState failed"));
         }
       }
       timer.mark("project_state_warming");
 
       const entityLinkArgs = {
-        formatted,
+        formatted: safeFormatted,
         apiKey,
         sessionKey: body.sessionId ?? "default",
         userId: uid,
@@ -1418,22 +1430,11 @@ export function registerHookRoutes(app: Hono) {
       if (isCaptureDebug) {
         captureEntityLinks = await linkExtractedEntitiesToFacts(entityLinkArgs);
       } else {
-        void linkExtractedEntitiesToFacts(entityLinkArgs).catch((err) =>
-          console.warn("runir-service: capture entity linking failed (background):", err),
+        void linkExtractedEntitiesToFacts(entityLinkArgs).catch(() =>
+          console.warn("runir-service: capture entity linking failed (background)"),
         );
       }
       timer.mark(isCaptureDebug ? "entity_linking" : "schedule_entity_linking");
-      // [PRODUCTION-CODE TOUCH — flagged for review]
-      // echoRawFacts: when `body.echoRawFacts === true` AND `RUNIR_DEBUG === "1"` AND
-      // NOT fixture-mode (recording needs real extraction, fixture-mode would inject
-      // pre-recorded facts), echo the real extractor output in the response so the
-      // parity cassette recorder (scripts/parity/record-real-capture.ts Phase A) can
-      // collect one canonical RawExtractedFact[] per capture turn without a second
-      // LLM call. Production (RUNIR_DEBUG unset) never evaluates this branch.
-      const echoRawFacts =
-        !isHarnessFixtureMode() &&
-        process.env.RUNIR_DEBUG === "1" &&
-        body.echoRawFacts === true;
       const units = perFactResults.map((r) => ({
         id: r.memoryId,
         content: r.fact.l2,
@@ -1441,7 +1442,6 @@ export function registerHookRoutes(app: Hono) {
         confidence: r.fact.confidence,
         category: r.fact.category,
         timestamp: r.timestamp,
-        ...(r.fact.raw_source_text !== undefined ? { raw_source_text: r.fact.raw_source_text } : {}),
       }));
       if (validatedCaptureReceipt) {
         await persistCaptureTraceReceipt(uid, validatedCaptureReceipt);
@@ -1454,7 +1454,6 @@ export function registerHookRoutes(app: Hono) {
         outcomes,
         units,
         rejections,
-        ...(echoRawFacts ? { rawFacts: extractedRawFacts } : {}),
         ...(includeCaptureTimings ? {
           _debug: {
             timings: timer.snapshot(),
@@ -1478,7 +1477,7 @@ export function registerHookRoutes(app: Hono) {
       if (err instanceof CaptureReceiptRequestError) {
         return c.json({ error: err.message, ...debugTimings() }, err.status);
       }
-      return c.json({ error: String(err), ...debugTimings() }, 500);
+      return c.json({ error: "capture failed", ...debugTimings() }, 500);
     }
   });
 
@@ -1487,8 +1486,8 @@ export function registerHookRoutes(app: Hono) {
   // — a session may never cleanly end (crash/kill/resume), so end-of-session
   // LLM work was both unreliable and redundant with the per-turn capture path.
   // This handler does exactly: body parse + auth + watermark (skip/trim/
-  // advance) + raw-turn recording (the nightly deep-sweep feed) + runir_session
-  // close. ZERO LLM calls. The retroactive staleness pass relocated to the
+  // advance) + runir_session close. Slice 1 disables raw turn recording.
+  // ZERO LLM calls. The retroactive staleness pass relocated to the
   // scheduled maintenance path (runConsolidationForScope, stored-memory mode);
   // session enrichment was DROPPED from all automatic paths.
   app.post("/hooks/session-end", async (c) => {
@@ -1510,12 +1509,15 @@ export function registerHookRoutes(app: Hono) {
     const sessionKey: string = body.sessionId ?? "default";
     const sessionPath = resolveAttrField(body.path, "RUNIR_SCOPE_PATH");
     const sessionClient = resolveAttrField(body.client, "RUNIR_SCOPE_CLIENT");
-    const sessionTerminationReason =
+    const rawTerminationReason =
       typeof body.terminationReason === "string"
         ? body.terminationReason
         : typeof body.reason === "string"
           ? body.reason
           : undefined;
+    let sessionTerminationReason: string | undefined;
+    try { sessionTerminationReason = rawTerminationReason ? redactFactText(rawTerminationReason) : undefined; }
+    catch { sessionTerminationReason = "redacted"; }
     const messageOffset: number | undefined =
       typeof body.messageOffset === "number" ? body.messageOffset : undefined;
     const batchStart: number = messageOffset !== undefined ? messageOffset - messages.length : 0;
@@ -1574,25 +1576,7 @@ export function registerHookRoutes(app: Hono) {
         toProcess: messagesToProcess.length,
       });
 
-      // Raw turn retention (Rúnir-b40x.3): the nightly deep sweep reassembles
-      // full session text from these rows. RAW content (pre-normalize, pre-
-      // compress) at ABSOLUTE indices: messagesToProcess[i] sits at
-      // batchStart + (messages.length - messagesToProcess.length) + i — the
-      // second term is the watermark overlap trim. Fire-and-forget: turn
-      // retention must never fail or delay session-end.
-      const trimOffset = messages.length - messagesToProcess.length;
-      const rawTurns = messagesToProcess
-        .map((m: { role?: string; content?: string }, i: number) => ({
-          turnIndex: batchStart + trimOffset + i,
-          role: typeof m.role === "string" ? m.role : "unknown",
-          content: typeof m.content === "string" ? m.content : "",
-        }))
-        .filter((t: { content: string }) => t.content.length > 0);
-      void recordSessionTurns(
-        runtime.db,
-        { userId: uid, sessionId: sessionKey, client: sessionClient, turns: rawTurns },
-        (msg) => console.warn(`memory-hybrid: ${msg}`),
-      ).catch((err) => console.warn(`memory-hybrid: session-turn batch failed: ${String(err).slice(0, 160)}`));
+      // Session-end raw turn insertion is disabled until Slice 2.
 
       const formatted = normalizeCaptureMessages(messagesToProcess, messagesToProcess.length);
       if (formatted.length === 0) return c.json({ skipped: true, reason: "no normalizable messages" });
@@ -1614,7 +1598,7 @@ export function registerHookRoutes(app: Hono) {
       // informational. Stay 2xx.
       return c.json({
         skipped: false,
-        rawTurnsRecorded: rawTurns.length,
+        rawTurnsRecorded: 0,
         extraction: "disabled",
         ...(process.env.RUNIR_DEBUG === "1" || body.hexisDebug === true ? {
           _debug: {
@@ -1627,7 +1611,7 @@ export function registerHookRoutes(app: Hono) {
           },
         } : {}),
       });
-    } catch (err) {
+    } catch {
       // Fail open: session-end is best-effort continuity bookkeeping, not a
       // critical write path. An unhandled throw anywhere in the pipeline
       // (watermark read/write, runir_session resolve/close) used to 500,
@@ -1635,11 +1619,11 @@ export function registerHookRoutes(app: Hono) {
       // loses data vs the old 500 — the client does not retry session-end
       // either way. Two failure regions: (1) BEFORE createWatermark — the
       // watermark stays put, so the tail is reprocessed on the next flush;
-      // (2) AFTER createWatermark (runir_session close) — the raw turns are
-      // already recorded + the watermark advanced, so reason "pipeline_error"
+      // (2) AFTER createWatermark (runir_session close) — the watermark advanced,
+      // so reason "pipeline_error"
       // is reported even though the write succeeded. Log + count either way,
       // then degrade to a clean 200 skip.
-      console.error(`runir-service: session-end pipeline error (session=${sessionKey}):`, err);
+      console.error("runir-service: session-end pipeline error");
       recordPipelineDrop("session-end", "batch", "pipeline_error", cfg.extractModel ?? "unknown");
       return c.json({ skipped: true, reason: "pipeline_error" });
     }

@@ -741,12 +741,13 @@ describe("judge-throw containment", () => {
 
   it("a judge function that THROWS is contained as transport_error keep-both", async () => {
     const judge = makeHandle(async () => {
-      throw new Error("boom from judge");
+      throw new Error("Bearer AAAAAAAAAAAAAAAAAAAAAAAA");
     });
     const r = await arb({ judge });
     expect(r.outcome).toBe("create");
     expect(r.reason).toMatch(/transport_error/);
-    expect(r.reason).toMatch(/boom from judge/);
+    expect(r.reason).toMatch(/provider_error/);
+    expect(r.reason.includes("Bearer AAAAAAAAAAAAAAAAAAAAAAAA")).toBe(false);
     expect(supersedeMemory).not.toHaveBeenCalled();
     expect(mockLedger).toHaveBeenCalledOnce();
     expect(mockLedger.mock.calls[0][1].result).toBe("transport_error");

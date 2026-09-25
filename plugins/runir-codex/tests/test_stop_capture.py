@@ -474,3 +474,12 @@ class TestIncrementalCapture:
 
         from watermark import load_watermark
         assert load_watermark("sess-8") == 0
+
+
+def test_redaction_drop_advances_codex_watermark():
+    from runir_stop_capture import _is_successful_response
+
+    body = {"skipped": False, "reason": "redaction_assertion_failed", "factsFound": 0,
+            "outcomes": {"create": 0, "skip": 0, "merge-update": 0, "supersede": 0}, "units": []}
+    assert "error" not in body
+    assert _is_successful_response(200, body) is True

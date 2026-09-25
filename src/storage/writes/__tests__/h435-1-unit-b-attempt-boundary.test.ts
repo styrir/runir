@@ -346,7 +346,7 @@ describe("B-1 attempt-row ordering + failure ladder", () => {
   it("B-1(iii) isolated computation throw → computation_failed attempt; dual failure throws", async () => {
     // (b) force computeAtomicIsolatedEvaluation to throw
     vi.spyOn(atomicShadow, "computeAtomicIsolatedEvaluation").mockImplementation(() => {
-      throw new Error("isolated boom");
+      throw new Error("Bearer AAAAAAAAAAAAAAAAAAAAAAAA");
     });
     (findSimilarMemories as Mock).mockResolvedValue([safetyActivationCandidate()]);
     const embedding = makeVec(0);
@@ -369,7 +369,8 @@ describe("B-1 attempt-row ordering + failure ladder", () => {
     });
     expect(mockAttempt).toHaveBeenCalled();
     expect(mockAttempt.mock.calls[0][1].activationClass).toBe("computation_failed");
-    expect(mockAttempt.mock.calls[0][1].errorDetail).toMatch(/isolated boom/);
+    expect(mockAttempt.mock.calls[0][1].errorDetail).toBe("computation_failed");
+    expect(JSON.stringify(mockAttempt.mock.calls).includes("Bearer AAAAAAAAAAAAAAAAAAAAAAAA")).toBe(false);
     expect(r.outcome).toBe("create"); // applied still runs
     expect(upsertMemory).toHaveBeenCalled();
 

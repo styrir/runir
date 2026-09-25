@@ -324,7 +324,6 @@ export function factMetadata(
     hasPath: !!path,
     ...(path !== undefined ? { path } : {}),
     ...(client !== undefined ? { client } : {}),
-    ...(fact.raw_source_text !== undefined ? { raw_source_text: fact.raw_source_text } : {}),
     ...(fact.rawSpan !== undefined ? { rawSpan: fact.rawSpan } : {}),
     ...(fact.rawSpans !== undefined ? { rawSpans: fact.rawSpans } : {}),
     ...(fact.atomicFact !== undefined ? { atomicFact: fact.atomicFact } : {}),

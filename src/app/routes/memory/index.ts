@@ -9,6 +9,8 @@ import { runHybridQueryWithEvidenceTable, runHybridQueryWithEvidenceTableAndEnti
 import { resolveRankingProfile } from "../../../recall/policy/ranking-profile.js";
 import { resolveAttrField, resolveScopeFilter, resolveWriteScope } from "../../../recall/query/scope-predicate.js";
 import type { RawExtractedFact } from "../../../domain/memory/types.js";
+import { redactFact, RedactionAssertionError } from "../../../shared/source-redaction.js";
+import { recordPipelineDrop } from "../../../obs/counters.js";
 import {
   ACTIVE_MEMORY_FILTER,
   deleteMemoryById,
@@ -35,6 +37,17 @@ import {
   runtime,
   writeWithArbitration,
 } from "../../runtime.js";
+
+const CLIENT_SOURCE_FIELDS = new Set(["raw_source_text", "l0", "l1", "rawSpan", "rawSpans", "span", "spans"]);
+
+function stripClientSourceFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripClientSourceFields);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).filter(([key]) => !CLIENT_SOURCE_FIELDS.has(key))
+      .map(([key, entry]) => [key, stripClientSourceFields(entry)]));
+  }
+  return value;
+}
 
 export function registerMemoryRoutes(app: Hono) {
   app.post("/memory/search", async (c) => {
@@ -179,9 +192,9 @@ export function registerMemoryRoutes(app: Hono) {
         l2: body.text,
         confidence: body.confidence ?? 0.7,
       };
-      const fact = normalizeExtractedFact(raw);
+      const fact = normalizeExtractedFact(redactFact(raw));
       const requestMetadata = typeof body.metadata === "object" && body.metadata !== null && !Array.isArray(body.metadata)
-        ? { ...(body.metadata as Record<string, unknown>) }
+        ? redactFact(stripClientSourceFields(body.metadata) as Record<string, unknown>)
         : {};
       // Rúnir-pn1l Q4 U0 (2026-07-07): clients must not supply referent-identity proof
       // keys — `noemaClaimKey` and `atomicFact` are the write-arbitration inputs that
@@ -241,6 +254,12 @@ export function registerMemoryRoutes(app: Hono) {
         outcome: result.outcome,
       });
     } catch (err) {
+      if (err instanceof RedactionAssertionError) {
+        recordPipelineDrop("memory-store", "batch", "redaction_assertion_failed", cfg.extractModel ?? "unknown");
+        return c.json({ skipped: false, reason: "redaction_assertion_failed", factsFound: 0,
+          outcomes: { create: 0, skip: 0, "merge-update": 0, supersede: 0 }, units: [],
+          rejections: { suppressed: 0, rejected_short: 0, rejected_noise: 0 } });
+      }
       return c.json({ error: `Store failed: ${String(err)}` }, 500);
     }
   });
