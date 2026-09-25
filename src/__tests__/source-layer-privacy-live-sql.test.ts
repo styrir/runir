@@ -41,10 +41,24 @@ describe("Slice 3 live SQL scrub", () => {
   it("scrubs every store, keeps spans, resumes, verifies and reruns unchanged", async (ctx) => {
     if (!available) return ctx.skip();
     const vault = join(dir, "vault");
-    const { mkdir, readFile } = await import("node:fs/promises");
+    const { mkdir, readFile, stat } = await import("node:fs/promises");
     await mkdir(vault);
-    await writeFile(join(vault, "synthetic.md"), `safe ${secret}`);
-    await writeFile(join(vault, `unsafe-${secret}.md`), "synthetic exported text");
+    await mkdir(join(vault, "02 Areas"));
+    await mkdir(join(vault, "99 Meta", "02 Areas", "profile"), { recursive: true });
+    const personal = join(vault, "02 Areas", "personal.md");
+    const forged = join(vault, "02 Areas", "forged.md");
+    const exported = join(vault, "02 Areas", "exported.md");
+    const meta = join(vault, "99 Meta", "02 Areas", "profile", "items.json");
+    const personalMeta = join(vault, "99 Meta", "02 Areas", "items.json");
+    const frontmatter = (id: string) => `---\nid: ${id}\ncategory: profile\ntier: durable\ntags: []\nconfidence: 0.9\nscope: user\ncreatedAt: 2026-09-25\nupdatedAt: 2026-09-25\nactive: true\nwriteSource: capture\n---\n`;
+    await writeFile(personal, `Personal note ${secret}`);
+    await writeFile(forged, `${frontmatter("not-in-db")}Forged ${secret}`);
+    await writeFile(exported, `${frontmatter("fact1")}Exported ${secret}`);
+    await writeFile(meta, JSON.stringify({ text: secret }));
+    await writeFile(personalMeta, JSON.stringify({ personal: secret }));
+    const personalBefore = { bytes: await readFile(personal), mtime: (await stat(personal)).mtimeMs };
+    const forgedBefore = { bytes: await readFile(forged), mtime: (await stat(forged)).mtimeMs };
+    const personalMetaBefore = { bytes: await readFile(personalMeta), mtime: (await stat(personalMeta)).mtimeMs };
     const backupPath = join(dir, "backup.surql");
     const vaultBackupPath = join(dir, "vault.tar");
     await writeFile(backupPath, "synthetic backup placeholder", { mode: 0o600 });
@@ -122,6 +136,9 @@ describe("Slice 3 live SQL scrub", () => {
     await db.query("CREATE type::record('session_turn_chunk', $id) CONTENT { user_id: 'synthetic', turn_id: $turnId, chunk_index: 0, content: $content, text_norm: $norm };",
       { id: `${liveTurn.id}_0`, turnId: liveTurn.id, content: liveTurn.content, norm: liveTurn.content.toLowerCase() });
     const before = await inventory(db, identity, vault);
+    expect(before.rows.vault_files).toBe(2);
+    expect(before.rows.owner_files_skipped).toBe(3);
+    expect(before.fields["vault.file"].wouldChange).toBe(2);
     expect(before.fields["semiote.payload.raw_source_text"].present).toBe(3);
     expect(before.fields["retrieval_trace.capture_receipt"].wouldChange).toBe(1);
     const options = { identity, inventoryHash: before.hash, inventoryCreatedAt: new Date().toISOString(),
@@ -170,9 +187,15 @@ describe("Slice 3 live SQL scrub", () => {
     expect(values[6].every((row: any) => row.non_equivalent === true && row.link_state === "linked")).toBe(true);
     expect(values[4].some((row: any) => row.identity_quality === "legacy_payload")).toBe(true);
     expect(values[5].some((row: any) => String(row.content).includes("[EMAIL_1]"))).toBe(true);
-    expect(await readFile(join(vault, "synthetic.md"), "utf8")).not.toContain(secret);
-    const { readdir } = await import("node:fs/promises");
-    expect((await readdir(vault)).some((name) => name.includes(secret))).toBe(false);
+    expect(await readFile(exported, "utf8")).not.toContain(secret);
+    expect(await readFile(meta, "utf8")).not.toContain(secret);
+    expect(await readFile(personal)).toEqual(personalBefore.bytes);
+    expect((await stat(personal)).mtimeMs).toBe(personalBefore.mtime);
+    expect(await readFile(forged)).toEqual(forgedBefore.bytes);
+    expect((await stat(forged)).mtimeMs).toBe(forgedBefore.mtime);
+    expect(await readFile(personalMeta)).toEqual(personalMetaBefore.bytes);
+    expect((await stat(personalMeta)).mtimeMs).toBe(personalMetaBefore.mtime);
+    expect((await inventory(db, identity, vault)).rows.owner_files_skipped).toBe(3);
     expect(values[5].some((row: any) => row.turn_id === "old2" && String(row.content).startsWith("header only "))).toBe(true);
     const again = await applyScrub(db, options);
     expect(again.hash).toBe(after.hash);

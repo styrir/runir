@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { inspectField, scrubFieldValue, verifyInventory, type Inventory } from "../../scripts/source-layer/privacy-inventory.js";
+import { inspectField, inventory, scrubFieldValue, verifyInventory, type Inventory } from "../../scripts/source-layer/privacy-inventory.js";
 import { applyScrub, validateApplyOptions, validateBackup } from "../../scripts/source-layer/scrub.js";
+import { ownedVaultFiles } from "../../scripts/source-layer/vault-ownership.js";
 
 const secret = "Bearer AAAAAAAAAAAAAAAAAAAAAAAA";
 const base = { identity: { namespace: "throwaway", database: "scratch" }, inventoryHash: "a".repeat(64),
@@ -11,6 +12,33 @@ const base = { identity: { namespace: "throwaway", database: "scratch" }, invent
   checkpointPath: "/tmp/synthetic-checkpoint", hmacKey: "synthetic-key", confirmed: true };
 
 describe("Slice 3 count-only policy", () => {
+  it("owns only exporter-written 99 Meta names and folder shapes", async () => {
+    const vault = await mkdtemp(join(tmpdir(), "runir277-meta-vault-"));
+    const owned = [
+      "99 Meta/export-manifest.json", "99 Meta/legacy-memories-snapshot.json",
+      "99 Meta/00 Inbox/cases/items.json", "99 Meta/01 Projects/my-project/items.json",
+      "99 Meta/02 Areas/profile/items.json", "99 Meta/03 Resources/patterns/items.json",
+      "99 Meta/04 Archives/superseded/items.json",
+    ];
+    const personal = [
+      "99 Meta/02 Areas/items.json", "99 Meta/02 Areas/personal/items.json",
+      "99 Meta/02 Areas/profile/deep/items.json", "99 Meta/00 Inbox/personal/items.json",
+      "99 Meta/01 Projects/Not A Slug/items.json", "99 Meta/05 Daily Notes/day/items.json",
+      "99 Meta/06 Entities/person/items.json", "99 Meta/07 Continuity/project/items.json",
+      "99 Meta/08 Maps/map/items.json", "99 Meta/personal.json",
+    ];
+    try {
+      for (const path of [...owned, ...personal]) {
+        const file = join(vault, path);
+        await mkdir(join(file, ".."), { recursive: true });
+        await writeFile(file, secret);
+      }
+      const result = await ownedVaultFiles({ query: async () => [[]] }, vault);
+      expect(result.files).toEqual(owned.map((path) => join(vault, path)).sort());
+      expect(result.ownerFilesSkipped).toBe(personal.length);
+    } finally { await rm(vault, { recursive: true, force: true }); }
+  });
+
   it("counts fact secrets while retaining fact email and redacted spans", () => {
     const fact = `alice@example.com ${secret}`;
     const count = inspectField("semiote", "payload.rawSpan", { text: fact });
@@ -50,6 +78,27 @@ describe("Slice 3 count-only policy", () => {
     await expect(applyScrub({ query: async () => { queried = true; return []; }, queryTransaction: async () => {} },
       { ...base, backupPath: "/tmp/runir277-synthetic-missing-backup-never-create" })).rejects.toThrow();
     expect(queried).toBe(false);
+  });
+
+  it("counts only owner files and refuses empty owned vaults", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "runir277-owner-vault-"));
+    const vault = join(dir, "vault");
+    const backupPath = join(dir, "backup.surql");
+    const vaultBackupPath = join(dir, "vault.tar");
+    try {
+      await mkdir(join(vault, "02 Areas"), { recursive: true });
+      await writeFile(join(vault, "02 Areas", "personal.md"), secret);
+      await writeFile(join(vault, "02 Areas", "forged.md"), `---\nid: missing\ncategory: profile\ntier: durable\ntags: []\nconfidence: 1\nscope: user\ncreatedAt: now\nupdatedAt: now\nactive: true\nwriteSource: capture\n---\n${secret}`);
+      await writeFile(backupPath, "synthetic", { mode: 0o600 });
+      await writeFile(vaultBackupPath, "synthetic", { mode: 0o600 });
+      const db = { query: async () => [[]], queryTransaction: async () => undefined };
+      const result = await inventory(db, base.identity, vault);
+      expect(result.rows).toMatchObject({ vault_files: 0, owner_files_skipped: 2 });
+      expect(result.fields["vault.file"].wouldChange).toBe(0);
+      expect(verifyInventory(result)).toBe(true);
+      await expect(applyScrub(db, { ...base, inventoryHash: result.hash, backupPath, vaultBackupPath,
+        vaultRoot: vault, checkpointPath: join(dir, "checkpoint.json") })).rejects.toThrow("no Rúnir-owned files");
+    } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
   it("verify catches planted legacy fields", () => {

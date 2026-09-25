@@ -7,7 +7,8 @@ import { SOURCE_REDACTION_VERSION, redactFactText, redactSourceTurn } from "../.
 import { chunkSourceTurn, prepareSourceTurn, sourceKeyFingerprint } from "../../src/capture/source-turn-identity.js";
 import type { SurrealClient } from "../../src/storage/surreal/surreal-store.js";
 import { embeddingForStore } from "../../src/storage/surreal/memory-crud-store.js";
-import { FIELDS, TABLES, fieldValue, inspectField, inventory, readPage, scrubFieldValue, vaultFiles, verifyInventory, type Inventory, type PrivacyRow, type PrivacyTable } from "./privacy-inventory.js";
+import { FIELDS, TABLES, fieldValue, inspectField, inventory, readPage, scrubFieldValue, verifyInventory, type Inventory, type PrivacyRow, type PrivacyTable } from "./privacy-inventory.js";
+import { ownedVaultFiles } from "./vault-ownership.js";
 
 export type ScrubDb = Pick<SurrealClient, "query" | "queryTransaction">;
 export type Embed = (text: string) => Promise<number[]>;
@@ -19,6 +20,7 @@ export type ScrubOptions = {
   vaultBackupPath?: string;
   checkpointPath: string;
   vaultRoot?: string;
+  allowEmptyVault?: boolean;
   hmacKey: string;
   embed?: Embed;
   batchSize?: number;
@@ -223,6 +225,8 @@ export async function applyScrub(db: ScrubDb, options: ScrubOptions): Promise<In
   const configuredKey = sourceKeyFingerprint(options.hmacKey);
   if (existingKeyRows.some((row) => row.key_fingerprint !== configuredKey)) throw new Error("source HMAC key fingerprint mismatch");
   const current = await inventory(db, options.identity, options.vaultRoot);
+  process.stdout.write(`${JSON.stringify({ vault_files_owned: current.rows.vault_files, owner_files_skipped: current.rows.owner_files_skipped })}\n`);
+  if (options.vaultRoot && current.rows.vault_files === 0 && !options.allowEmptyVault) throw new Error("vault has no Rúnir-owned files; --allow-empty-vault required");
   if (current.rows["memories.payload.parse_failures"] > 0) throw new Error("legacy payload parse failure");
   let checkpoint = await loadCheckpoint(options.checkpointPath);
   if (!checkpoint) {
@@ -284,7 +288,8 @@ export async function applyScrub(db: ScrubDb, options: ScrubOptions): Promise<In
     await saveCheckpoint(options.checkpointPath, checkpoint);
   }
   if (options.vaultRoot && !checkpoint.vaultDone) {
-    for await (const file of vaultFiles(options.vaultRoot)) {
+    const vault = await ownedVaultFiles(db, options.vaultRoot);
+    for (const file of vault.files) {
       let before: string;
       try { before = new TextDecoder("utf-8", { fatal: true }).decode(await readFile(file)); }
       catch { throw new Error("vault file is not UTF-8"); }

@@ -55,6 +55,7 @@ async function main(): Promise<void> {
       inventoryCreatedAt: saved.createdAt, backupPath, vaultBackupPath: flag(args, "--vault-backup"),
       checkpointPath: resolve(flag(args, "--checkpoint") ?? ".styrir/pipelines/source-layer/scrub-checkpoint.json"),
       vaultRoot, hmacKey: process.env.RUNIR_SOURCE_HMAC_KEY ?? "",
+      allowEmptyVault: args.includes("--allow-empty-vault"),
       batchSize: Number(flag(args, "--batch-size") ?? "1"), confirmed: true });
     process.stdout.write(`${JSON.stringify({ fields: result.fields, rows: result.rows, passed: true })}\n`);
   } finally { await db.close(); }
