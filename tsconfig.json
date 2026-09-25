@@ -17,6 +17,7 @@
     "scripts/runir-codex-hook-contract.ts",
     "scripts/judge-benchmark.ts",
     "scripts/judge-benchmark/import-legacy.ts",
+    "scripts/judge-benchmark/failure-signals.ts",
     "tools/review-studio/**/*.ts"
   ],
   "exclude": [
