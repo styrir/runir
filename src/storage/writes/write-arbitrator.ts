@@ -117,6 +117,8 @@ import {
   cueGateEnabled,
   judgeGateEnabled,
   f2JudgeConfirmEnabled,
+  f2RequireValueChangeEnabled,
+  mergeKeepBothOnFusionEnabled,
   mergeKeepBothGuardEnabled,
   additiveSkipGuardEnabled,
   supersedeShadowEnabled,
@@ -234,6 +236,7 @@ function findSupersedeTarget(
   // Rúnir-pn1l.13.4 (U5): memoized referent verdict per candidate (computed once by
   // resolveDecision and consumed by every band). The F1/F2 authority now flows through it.
   referentOf: (candidate: SimilarCandidate) => ReferentVerdict,
+  f2RequireValueChange: boolean,
   // Rúnir-pn1l Q4 U2: optional injected clock threaded to `withinHours`. Omitted ⇒
   // `withinHours` reads its own `Date.now()` (byte-identical prod path).
   withinHoursNowMs?: number,
@@ -300,7 +303,8 @@ function findSupersedeTarget(
       (marker || cueGate) && !conflictingSubjects(candidate.tags, incomingTags);
     let signal: string | null = null;
     let referentProof: string | undefined;
-    if (wouldSupersedeTexts(candidate.l2, text)) {
+    const textValueChange = wouldSupersedeTexts(candidate.l2, text);
+    if (textValueChange && (referent.verdict === "proven" || !f2RequireValueChange)) {
       // Rúnir-pn1l.13.4 (U5, R1): F1 nominate-only. Architect rule (GH#8 2026-07-05):
       // deterministic_text (text similarity) may NOMINATE, but may never RETIRE without an
       // independently-proven referent identity. `proven` → retire; `unproven` → record a
@@ -335,7 +339,13 @@ function findSupersedeTarget(
       // Layer 2 judge that can read the text relationship. (Codex round-2)
       signal = "extractor_correction:named_value";
     }
-    if (!signal) continue;
+    if (!signal) {
+      if (textValueChange && referent.verdict !== "proven") {
+        blockedNomination ??= "deterministic_text:unproven";
+        blockedNominationSnapshot ??= snapshotCandidate(candidate, "blocked_nomination");
+      }
+      continue;
+    }
     if (best === null || candidate.similarity > best.candidate.similarity) {
       best = { candidate, signal, referentProof };
     }
@@ -391,6 +401,8 @@ export function resolveDecision(
   // `laneClockMs = input.nowMs ?? Date.now()`; never arbitrationNowMs=0, never an
   // independent wall clock inside the guard unit.
   laneClockMs = 0,
+  f2RequireValueChange = false,
+  mergeKeepBothOnFusion = false,
 ): ArbitrationDecision {
   const normalizedText = normalizeText(text);
 
@@ -466,9 +478,23 @@ export function resolveDecision(
     config,
     cueGateParam,
     referentOf,
+    f2RequireValueChange,
     withinHoursNowMs,
   );
   if (corrected) {
+    if (
+      f2RequireValueChange &&
+      isF2SupersedeSignal(corrected.signal) &&
+      referentOf(corrected.candidate).verdict !== "proven" &&
+      !wouldSupersedeTexts(corrected.candidate.l2, text)
+    ) {
+      return {
+        outcome: "create",
+        reason: `kept both (F2 value-change guard: unproven referent and no text value change; signal ${corrected.signal}, cosine ${corrected.candidate.similarity.toFixed(3)})`,
+        band: "correction-supersede",
+        shadowCandidateSnapshot: snapshotCandidate(corrected.candidate),
+      };
+    }
     // Rúnir-pn1l.13.7 D1/D2: when f2JudgeConfirm is ON and the selected target is F2
     // (no referentProof — F1 carries proof), ALWAYS escalate BEFORE the durability/
     // temporal guard block. Guards run EXACTLY ONCE inside resolveJudgeDecision.
@@ -756,6 +782,15 @@ export function resolveDecision(
         candidate,
         reason: "existing memory already contains incoming detail",
         band: "merge-band",
+      };
+    }
+
+    if (mergeKeepBothOnFusion && !normalizedText.includes(candidateNorm)) {
+      return {
+        outcome: "create",
+        reason: `kept both (merge fusion guard: neither text contains the other; cosine ${candidate.similarity.toFixed(3)})`,
+        band: "merge-band",
+        shadowCandidateSnapshot: snapshotCandidate(candidate),
       };
     }
 
@@ -1297,6 +1332,8 @@ export async function arbitrateWrite(
   const judgeEnabled = judgeGateEnabled() && input.judge !== undefined;
   // Rúnir-pn1l.13.7 D1: dark flag; resolved once, threaded as pure param.
   const liveF2JudgeConfirm = f2JudgeConfirmEnabled();
+  const liveF2RequireValueChange = f2RequireValueChangeEnabled();
+  const liveMergeKeepBothOnFusion = mergeKeepBothOnFusionEnabled();
   const keepBothGuardEnabled = mergeKeepBothGuardEnabled();
   // Rúnir-pn1l.10: additive-aware skip guard. Default-OFF; resolved once here and passed
   // as a pure param to resolveDecision (mirrors the keepBothGuardEnabled pattern).
@@ -1358,6 +1395,8 @@ export async function arbitrateWrite(
     liveAtomicAuthority,
     // Rúnir-h435.1 PIN-6: lane clock for the unconditional atomic guard unit.
     laneClockMs,
+    liveF2RequireValueChange,
+    liveMergeKeepBothOnFusion,
   );
 
   if (decision.outcome === "judge") {
@@ -1535,6 +1574,8 @@ export async function arbitrateWrite(
         cueGateParam: liveCueGate,
         incomingKeys: incomingKeysResolved,
         f2JudgeConfirm: liveF2JudgeConfirm,
+        f2RequireValueChange: liveF2RequireValueChange,
+        mergeKeepBothOnFusion: liveMergeKeepBothOnFusion,
         laneClockMs,
         appliedDecision: decision,
         incomingAtomicFact: input.metadata?.atomicFact,
@@ -1709,6 +1750,8 @@ export async function arbitrateWrite(
         // Rúnir-h435.1 PIN-5: applied-lane atomicIdentityProof for series segmentation
         // (new-contract rows carry this key; pre-slice-1 rows lack it).
         atomicIdentityProof: liveAtomicAuthority,
+        f2RequireValueChange: liveF2RequireValueChange,
+        mergeKeepBothOnFusion: liveMergeKeepBothOnFusion,
       },
       wouldMatchedId: _shadowWould.candidate?.id ?? null,
       wouldCosine: _shadowWould.candidate?.similarity ?? null,

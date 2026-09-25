@@ -60,6 +60,8 @@ export type LiveFlags = {
   f2JudgeConfirm?: boolean;
   /** Rúnir-h435.1 PIN-5 — applied-lane RUNIR_ATOMICFACT_IDENTITY_PROOF (series segmentation). */
   atomicIdentityProof?: boolean;
+  f2RequireValueChange?: boolean;
+  mergeKeepBothOnFusion?: boolean;
 };
 
 export type SupersedeShadowParams = {
@@ -191,4 +193,3 @@ export async function logSupersedeShadow(db: SurrealClient, params: SupersedeSha
   await db.query(`CREATE supersede_shadow SET ${sets.join(", ")};`, vars)
     .catch(() => {}); // fire-and-forget, never block capture on shadow logging
 }
-

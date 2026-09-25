@@ -19,6 +19,7 @@
     "scripts/judge-benchmark/import-legacy.ts",
     "scripts/judge-benchmark/failure-signals.ts",
     "scripts/judge-benchmark/failure-groups.ts",
+    "scripts/judge-benchmark/live-replay.ts",
     "tools/review-studio/**/*.ts"
   ],
   "exclude": [
