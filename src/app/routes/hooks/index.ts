@@ -93,6 +93,12 @@ import {
 } from "../../runtime.js";
 
 const sourceTurnSpool = new SourceTurnSpool();
+
+/** Fixture-only access for tombstone/append-fault gates; never exposed as an HTTP route. */
+export function sourceTurnSpoolForTesting(): SourceTurnSpool {
+  if (process.env.RUNIR_TEST_MODE !== "1") throw new Error("source spool test seam unavailable");
+  return sourceTurnSpool;
+}
 const sourceStoreEnabled = () => process.env.RUNIR_SOURCE_STORE === "on";
 function recordSourceKeyRefusal(error: SourceKeyMismatchError, model: string): void {
   recordPipelineDrop("capture", "element", "source_key_mismatch", model);
@@ -100,6 +106,16 @@ function recordSourceKeyRefusal(error: SourceKeyMismatchError, model: string): v
 }
 let sourceDrainInFlight = false;
 let sourceDrainTimer: ReturnType<typeof setInterval> | undefined;
+export async function stopSourceDrainForTesting(): Promise<void> {
+  if (process.env.RUNIR_TEST_MODE !== "1") throw new Error("source spool test seam unavailable");
+  if (sourceDrainTimer) clearInterval(sourceDrainTimer);
+  sourceDrainTimer = undefined;
+  const deadline = Date.now() + 10_000;
+  while (sourceDrainInFlight) {
+    if (Date.now() >= deadline) throw new Error("source drain did not stop");
+    await new Promise((done) => setTimeout(done, 25));
+  }
+}
 function scheduleSourceDrain(): void {
   if (sourceDrainInFlight) return;
   sourceDrainInFlight = true;

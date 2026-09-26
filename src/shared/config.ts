@@ -228,6 +228,16 @@ export function resolveCaptureApiKey(cfg: HybridConfig): string {
  * Backward-compat fallbacks: EMBEDDER_MODEL, EMBEDDER_BASE_URL
  */
 export function resolveEmbeddingProvider(): EmbeddingProvider {
+  // Isolated measurement runs install this before importing the application.
+  // The seam is unavailable outside fixture mode and cannot call the network.
+  if (process.env.RUNIR_TEST_MODE === "1" && process.env.RUNIR_TEST_FAKE_EMBEDDINGS === "1") {
+    const embed = async (text: string): Promise<number[]> => {
+      const vector = Array(768).fill(0) as number[];
+      for (let i = 0; i < text.length; i++) vector[text.charCodeAt(i) % vector.length]! += 1;
+      return vector;
+    };
+    return { embedQuery: embed, embedDocument: embed, fingerprint: () => "synthetic:fixture:768:none", dimensions: 768 };
+  }
   const providerName = (process.env.EMBEDDINGS_PROVIDER ?? "ollama").toLowerCase();
   const model = normalizeEmbeddingModelName(
     process.env.EMBEDDINGS_MODEL ?? process.env.EMBEDDER_MODEL,
