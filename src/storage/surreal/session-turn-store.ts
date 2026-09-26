@@ -3,7 +3,8 @@
 // separately approved Slice 3 scrub. All reads and writes constrain user ID.
 
 import type { SurrealClient } from "./surreal-store";
-import { chunkSourceTurn, type SourceTurn } from "../../capture/source-turn-identity.js";
+import { chunkSourceTurn, isProvenSourceTurn, type SourceTurn } from "../../capture/source-turn-identity.js";
+import { redactSourceTurn } from "../../shared/source-redaction.js";
 
 export type SessionTurnInput = {
   userId: string;
@@ -86,9 +87,29 @@ export class SourceKeyMismatchError extends Error {
   }
 }
 
+// A Surreal client is bound to one namespace/database. Rotation or restore must
+// stop this process before any other writer changes that database.
+const verifiedKeys = new WeakMap<SurrealClient, { fingerprint: string; ready: Promise<void> }>();
+let fingerprintScans = 0;
+export function sourceFingerprintScanCount(): number { return fingerprintScans; }
+
 /** Fail source writes closed. Old raw rows have no content_hmac and are outside this guard.
  * Key rotation/reconciliation of legacy IDs and links is a separate operator tool. */
 export async function assertSourceKeyFingerprint(db: SurrealClient, configured: string): Promise<void> {
+  const latched = verifiedKeys.get(db);
+  if (latched) {
+    if (latched.fingerprint !== configured) throw new SourceKeyMismatchError(configured, latched.fingerprint);
+    await latched.ready;
+    return;
+  }
+  const ready = scanSourceKeyFingerprint(db, configured);
+  verifiedKeys.set(db, { fingerprint: configured, ready });
+  try { await ready; }
+  catch (error) { verifiedKeys.delete(db); throw error; }
+}
+
+async function scanSourceKeyFingerprint(db: SurrealClient, configured: string): Promise<void> {
+  fingerprintScans++;
   const rows = await db.query<any>(
     "SELECT VALUE key_fingerprint FROM session_turn WHERE content_hmac != NONE GROUP BY key_fingerprint;",
   );
@@ -112,6 +133,9 @@ export async function assertSourceKeyFingerprint(db: SurrealClient, configured: 
 /** The only retained-turn writer. Header content is always empty. */
 export async function upsertSourceTurn(db: SurrealClient, turn: SourceTurn): Promise<"created" | "seen"> {
   await assertSourceKeyFingerprint(db, turn.keyFingerprint);
+  if (!isProvenSourceTurn(turn) && redactSourceTurn(turn.content) !== turn.content) {
+    throw new Error("unredacted source turn");
+  }
   const existing = await db.query<any>(
     "SELECT user_id, content_hmac, key_fingerprint FROM type::record('session_turn', $id);", { id: turn.id },
   );

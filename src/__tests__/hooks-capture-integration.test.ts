@@ -577,7 +577,7 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
       String(sql).includes("source_turn_link_state") && params?.state === "unavailable")).toBe(true);
   });
 
-  it("refuses source writes on an HMAC fingerprint mismatch but still accepts capture", async () => {
+  it("refuses a changed HMAC key from the process latch without rescanning but still accepts capture", async () => {
     vi.stubEnv("RUNIR_SOURCE_STORE", "on");
     vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "different-synthetic-key");
     (runtime.db.query as Mock).mockImplementation(async (sql: string) =>
@@ -596,7 +596,8 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
       expect(res.status).toBe(200);
       expect((await res.json()).error).toBeUndefined();
       expect(sourceAppend).not.toHaveBeenCalled();
-      expect(errorLog).toHaveBeenCalledWith(expect.stringMatching(/key fingerprint mismatch configured=[0-9a-f]{16} recorded=0000000000000000/));
+      expect(errorLog).toHaveBeenCalledWith(expect.stringMatching(/key fingerprint mismatch configured=[0-9a-f]{16} recorded=[0-9a-f]{16}/));
+      expect((runtime.db.query as Mock).mock.calls.some(([sql]) => String(sql).includes("GROUP BY key_fingerprint"))).toBe(false);
       expect((runtime.db.query as Mock).mock.calls.some(([sql, params]) =>
         String(sql).includes("source_turn_link_state") && params?.state === "unavailable")).toBe(true);
     } finally {

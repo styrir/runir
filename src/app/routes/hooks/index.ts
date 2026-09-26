@@ -1,5 +1,5 @@
 import type { Hono } from "hono";
-import { redactFact, redactFactText, redactSourceTurn } from "../../../shared/source-redaction.js";
+import { redactFact, redactFactText, redactSourceTurn, redactSourceTurnWithProof } from "../../../shared/source-redaction.js";
 import { resolveLlmBaseUrl, resolveLlmTimeoutMs } from "../../../shared/config.js";
 import { prepareSourceTurn, sourceKeyFingerprint, type SourceTurn } from "../../../capture/source-turn-identity.js";
 import { SourceTurnSpool } from "../../../capture/source-turn-spool.js";
@@ -93,6 +93,11 @@ import {
 } from "../../runtime.js";
 
 const sourceTurnSpool = new SourceTurnSpool();
+const sourceStoreTimings: Array<{ fingerprintMs: number; prepareMs: number; appendMs: number }> = [];
+export function takeSourceStoreTimingsForTesting(): Array<{ fingerprintMs: number; prepareMs: number; appendMs: number }> {
+  if (process.env.RUNIR_TEST_MODE !== "1") throw new Error("source timing test seam unavailable");
+  return sourceStoreTimings.splice(0);
+}
 
 /** Fixture-only access for tombstone/append-fault gates; never exposed as an HTTP route. */
 export function sourceTurnSpoolForTesting(): SourceTurnSpool {
@@ -106,8 +111,10 @@ function recordSourceKeyRefusal(error: SourceKeyMismatchError, model: string): v
 }
 let sourceDrainInFlight = false;
 let sourceDrainTimer: ReturnType<typeof setInterval> | undefined;
+let sourceDrainStoppedForTesting = false;
 export async function stopSourceDrainForTesting(): Promise<void> {
   if (process.env.RUNIR_TEST_MODE !== "1") throw new Error("source spool test seam unavailable");
+  sourceDrainStoppedForTesting = true;
   if (sourceDrainTimer) clearInterval(sourceDrainTimer);
   sourceDrainTimer = undefined;
   const deadline = Date.now() + 10_000;
@@ -116,7 +123,16 @@ export async function stopSourceDrainForTesting(): Promise<void> {
     await new Promise((done) => setTimeout(done, 25));
   }
 }
+export function startSourceDrainForTesting(): void {
+  if (process.env.RUNIR_TEST_MODE !== "1") throw new Error("source spool test seam unavailable");
+  sourceDrainStoppedForTesting = false;
+  if (!sourceDrainTimer) {
+    sourceDrainTimer = setInterval(scheduleSourceDrain, 5_000);
+    sourceDrainTimer.unref();
+  }
+}
 function scheduleSourceDrain(): void {
+  if (sourceDrainStoppedForTesting && process.env.RUNIR_TEST_MODE === "1") return;
   if (sourceDrainInFlight) return;
   sourceDrainInFlight = true;
   setImmediate(() => {
@@ -1159,7 +1175,12 @@ export function registerHookRoutes(app: Hono) {
       const formatted = normalizeCaptureMessages(messages);
       if (formatted.length === 0) return c.json({ skipped: true, reason: "no normalizable messages", ...debugTimings() });
       let safeFormatted: typeof formatted;
-      try { safeFormatted = formatted.map((message) => ({ ...message, content: redactSourceTurn(message.content) })); }
+      const sourceProofs = new Map<number, ReturnType<typeof redactSourceTurnWithProof>["proof"]>();
+      try { safeFormatted = formatted.map((message, index) => {
+        const redacted = redactSourceTurnWithProof(message.content);
+        sourceProofs.set(index, redacted.proof);
+        return { ...message, content: redacted.text };
+      }); }
       catch { return redactionDrop(); }
       if (!captureReceiptRequested) {
         runirSession = await resolveBodyRunirSession(body, uid, contextIdentity, capturePath, body.sessionId);
@@ -1226,6 +1247,7 @@ export function registerHookRoutes(app: Hono) {
       if (sourceStoreEnabled()) {
         let keyAllowed = false;
         const hmacKey = process.env.RUNIR_SOURCE_HMAC_KEY ?? "";
+        const fingerprintStart = performance.now();
         try {
           await assertSourceKeyFingerprint(runtime.db, sourceKeyFingerprint(hmacKey));
           keyAllowed = true;
@@ -1234,6 +1256,7 @@ export function registerHookRoutes(app: Hono) {
           else recordPipelineDrop("capture", "element", "source_spool_unavailable", cfg.extractModel ?? "unknown");
         }
         if (keyAllowed) {
+        const prepareStart = performance.now();
         const rawEligible = (Array.isArray(messages) ? messages : [])
           .filter((message: unknown) => normalizeCaptureMessages([message]).length === 1) as Array<Record<string, unknown>>;
         const prepared: Array<{ index: number; turn: SourceTurn }> = [];
@@ -1254,6 +1277,7 @@ export function registerHookRoutes(app: Hono) {
               turnIndex: Number.isSafeInteger(raw.turnIndex) ? raw.turnIndex as number : undefined,
               role: message.role as "user" | "assistant",
               content: message.content,
+              redactionProof: sourceProofs.get(index),
               occurredAt: typeof raw.timestamp === "string" && !Number.isNaN(Date.parse(raw.timestamp))
                 ? new Date(raw.timestamp).toISOString() : new Date().toISOString(),
               scope: "user",
@@ -1265,7 +1289,13 @@ export function registerHookRoutes(app: Hono) {
             recordPipelineDrop("capture", "element", "source_spool_unavailable", cfg.extractModel ?? "unknown");
           }
         }
+        const prepareMs = performance.now() - prepareStart;
+        const appendStart = performance.now();
         const accepted = await sourceTurnSpool.appendBatch(prepared.map((entry) => entry.turn));
+        if (process.env.RUNIR_TEST_MODE === "1") sourceStoreTimings.push({
+          fingerprintMs: prepareStart - fingerprintStart, prepareMs,
+          appendMs: performance.now() - appendStart,
+        });
         for (let i = 0; i < prepared.length; i++) {
           const { index, turn } = prepared[i]!;
           const available = accepted[i] ?? false;
