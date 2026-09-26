@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { randomUUID } from "node:crypto";
 import { SurrealClient } from "../storage/surreal/surreal-store.js";
 
 // Real-DB proof for the queryTransaction helper (Rúnir-n7ze.1 / ADOPT-NOW #4.0).
-// Isolated by a unique per-file database on the shared "main" namespace; the
-// whole DB is dropped in afterAll. Self-skips (ctx.skip) when no SurrealDB is
+// Isolated by a unique throwaway namespace; the whole namespace is dropped in
+// afterAll. Self-skips (ctx.skip) when no SurrealDB is
 // reachable so it reports a SKIP rather than a false pass.
 
 const TEST_DB = "txn_helper_repro_test";
+const TEST_NS = `txn_helper_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
 const TABLE = "txn_probe";
 
 function makeDb(): SurrealClient {
@@ -14,7 +16,7 @@ function makeDb(): SurrealClient {
     url: process.env.SURREAL_URL ?? "http://localhost:8000",
     username: process.env.SURREAL_USER ?? "root",
     password: process.env.SURREAL_PASS ?? "root",
-    namespace: process.env.SURREAL_NS ?? "main",
+    namespace: TEST_NS,
     database: TEST_DB,
   });
 }
@@ -37,7 +39,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (dbAvailable) {
-    await db.query(`REMOVE DATABASE ${TEST_DB};`).catch(() => {});
+    await db.query(`REMOVE NAMESPACE ${TEST_NS};`).catch(() => {});
   }
 });
 
@@ -90,6 +92,20 @@ describe("SurrealClient.queryTransaction — atomic BEGIN/COMMIT (Rúnir-n7ze.1)
     expect((caught as Error).cause).toBeDefined();
   }, 20000);
 
+  it("keeps a planted server value out of the outer error message", async (ctx) => {
+    if (!dbAvailable) ctx.skip();
+    const planted = "PRIVATE_VALUE_9c4e21";
+    let caught: unknown;
+    try { await db.queryTransaction(`THROW "${planted}";`); }
+    catch (error) { caught = error; }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toMatch(/statement index \d+/);
+    expect((caught as Error).message).not.toContain(planted);
+    expect(String(caught)).not.toContain(planted);
+    expect((caught as Error).cause).toBeInstanceOf(Error);
+    expect(((caught as Error).cause as Error).message).toContain(planted);
+  }, 20000);
+
   it("does NOT false-positive a rollback on result DATA containing status:'ERR'", async (ctx) => {
     if (!dbAvailable) ctx.skip();
     await db.query(`DELETE ${TABLE};`);
@@ -115,13 +131,13 @@ describe("SurrealClient.queryTransaction — no reconnect-retry (idempotency saf
     const client = Object.create(SurrealClient.prototype) as SurrealClient;
     (client as unknown as { ready: Promise<void> }).ready = Promise.resolve();
     (client as unknown as {
-      surreal: { query: () => Promise<unknown[]> };
+      surreal: { query: () => { responses: () => Promise<unknown[]> } };
     }).surreal = {
-      query: async () => {
+      query: () => ({ responses: async () => {
         queryCalls += 1;
         // The exact substring query() reconnect-retries on.
         throw new Error("ConnectionUnavailable");
-      },
+      } }),
     };
     (client as unknown as { reconnect: () => Promise<void> }).reconnect =
       async () => {

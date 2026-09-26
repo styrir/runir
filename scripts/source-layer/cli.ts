@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { SurrealClient } from "../../src/storage/surreal/surreal-store.js";
 import { inventory, verifyInventory, type Inventory } from "./privacy-inventory.js";
-import { applyScrub, validateBackup } from "./scrub.js";
+import { applyScrub, formatScrubFailure, validateBackup } from "./scrub.js";
 import { resolveEmbeddingProvider } from "../../src/shared/config.js";
 
 function flag(args: string[], name: string): string | undefined {
@@ -56,9 +56,9 @@ async function main(): Promise<void> {
       checkpointPath: resolve(flag(args, "--checkpoint") ?? ".styrir/pipelines/source-layer/scrub-checkpoint.json"),
       vaultRoot, hmacKey: process.env.RUNIR_SOURCE_HMAC_KEY ?? "",
       allowEmptyVault: args.includes("--allow-empty-vault"),
-      batchSize: Number(flag(args, "--batch-size") ?? "1"), confirmed: true });
+      batchSize: Number(flag(args, "--batch-size") ?? "100"), confirmed: true });
     process.stdout.write(`${JSON.stringify({ fields: result.fields, rows: result.rows, passed: true })}\n`);
   } finally { await db.close(); }
 }
 
-main().catch(() => { process.stderr.write("source-layer command failed; no source text was logged\n"); process.exitCode = 1; });
+main().catch((error: unknown) => { process.stderr.write(`${formatScrubFailure(error)}\n`); process.exitCode = 1; });

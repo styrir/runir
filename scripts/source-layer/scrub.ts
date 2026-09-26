@@ -12,6 +12,45 @@ import { ownedVaultFiles } from "./vault-ownership.js";
 
 export type ScrubDb = Pick<SurrealClient, "query" | "queryTransaction">;
 export type Embed = (text: string) => Promise<number[]>;
+const fixedApplyErrors = new Set([
+  "unknown command", "SURREAL_NS and SURREAL_DB required", "--vault is required",
+  "apply requires --backup", "apply requires --vault-backup", "inventory target mismatch",
+  "apply requires --confirm", "apply requires an inventory hash", "inventory is not fresh",
+  "backup and checkpoint paths required", "vault backup required", "source HMAC key required",
+  "backup must be outside repository and .styrir", "backup must be a private file (mode 0600)",
+  "batch size must be 1..100", "source HMAC key fingerprint mismatch", "inventory hash changed",
+  "checkpoint identity/version mismatch", "post-apply privacy verification failed",
+  "source turn collision", "legacy payload parse failed", "legacy payload shape invalid",
+  "legacy source user missing", "legacy payload parse failure",
+  "vault has no Rúnir-owned files; --allow-empty-vault required",
+  "existing turn chunks must verify clean before header removal",
+  "batch verification row count mismatch",
+  "batch verification source remains", "batch verification old turn content remains",
+  "batch verification redaction failed", "batch verification norm mismatch",
+  "batch verification embedding mismatch", "batch verification source link mismatch",
+  "vault file is not UTF-8", "redacted vault filename collision", "vault read-back verification failed",
+]);
+
+export function formatScrubFailure(error: unknown): string {
+  if (error instanceof Error && fixedApplyErrors.has(error.message)) return error.message;
+  let root = error;
+  while (root instanceof Error && root.cause instanceof Error) root = root.cause;
+  const name = root instanceof Error && /^[A-Za-z][A-Za-z0-9]*$/.test(root.name) ? root.name : "Error";
+  const message = root instanceof Error ? root.message : String(root);
+  const schemaNames = message
+    .replace(/\bfield [`'"]([A-Za-z_][A-Za-z0-9_.]*)[`'"] of [`'"]([A-Za-z_][A-Za-z0-9_]*)[`'"]/g,
+      "field $1 of $2")
+    .replace(/\bExpected [`'"]([A-Za-z_][A-Za-z0-9_<>|]*)[`'"]/g, "Expected $1");
+  const masked = schemaNames
+    .replace(/(?<![A-Za-z0-9])'[^']*'|"[^"]*"|`[^`]*`/gs, "[quoted]")
+    .replace(/\b[A-Za-z_][A-Za-z0-9_]*:(?:⟨[^⟩]*⟩|`[^`]*`|[^\s,;)}\]]+)/g, "[record]")
+    .replace(/\b(?:0x)?[a-fA-F0-9]{16,}\b/g, "[hex]")
+    .replace(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g, "[value]")
+    .replace(/[\r\n]+/g, " ");
+  const index = error instanceof Error && "statementIndex" in error && typeof error.statementIndex === "number" && Number.isInteger(error.statementIndex)
+    ? ` statement index ${error.statementIndex}` : "";
+  return `${name}${index}: ${masked.slice(0, 500)}`;
+}
 export type ScrubOptions = {
   identity: { namespace: string; database: string };
   inventoryHash: string;
@@ -95,14 +134,16 @@ function sourceMigration(row: PrivacyRow, hmacKey: string) {
       && (!row.source_turn_id || row.source_turn_hmac === turn.contentHmac) };
 }
 
-type BatchResult = { changedText: boolean; norm?: string; embedding?: number[]; counts: TableCounts };
+type RowResult = { changedText: boolean; norm?: string; embedding?: number[] };
+type BatchResult = { rows: Map<string, RowResult>; counts: TableCounts };
 async function updateBatch(db: ScrubDb, table: PrivacyTable, page: PrivacyRow[], embed: Embed, hmacKey: string): Promise<BatchResult> {
   const counts = emptyCounts();
-  let changedText = false;
-  let expectedNorm: string | undefined;
-  let expectedEmbedding: number[] | undefined;
+  const rows = new Map<string, RowResult>();
   for (const row of page) {
     const id = idOf(row, table);
+    let changedText = false;
+    let expectedNorm: string | undefined;
+    let expectedEmbedding: number[] | undefined;
     const removed = () => { counts.removed_unredactable++; };
     if (table === "semiote" || table === "memories") {
       const payload = factPayload(row, removed);
@@ -130,7 +171,7 @@ async function updateBatch(db: ScrubDb, table: PrivacyTable, page: PrivacyRow[],
         || existingTurn.key_fingerprint !== migration?.keyFingerprint)) throw new Error("source turn collision");
       const chunks = migration ? chunkSourceTurn(migration.content) : [];
       const retainUntil = migration ? new Date(Math.max(Date.parse(migration.occurredAt), Date.now()) + 365 * 24 * 3600 * 1000).toISOString() : undefined;
-      await db.queryTransaction(`
+      if (typeof row.payload === "string" || JSON.stringify(payload) !== JSON.stringify(originalPayload) || migration) await db.queryTransaction(`
         UPDATE type::record('${table}', $id) SET payload = $payload${table === "semiote" ? `,
           source_turn_id = $linkId, source_turn_hmac = $linkHmac,
           source_turn_key_fingerprint = $linkFingerprint,
@@ -175,12 +216,12 @@ async function updateBatch(db: ScrubDb, table: PrivacyTable, page: PrivacyRow[],
         hmac: migration?.contentHmac, fingerprint: migration?.keyFingerprint, version: SOURCE_REDACTION_VERSION,
         occurredAt: migration?.occurredAt, scope: migration?.scope,
         teamId: migration?.teamId, projectKey: migration?.projectKey, path: migration?.path,
-        retention: migration?.proven ? "linked" : "unlinked", retainUntil: migration?.proven ? undefined : retainUntil,
+        retention: migration?.proven ? "linked" : "unlinked", retainUntil: migration && !migration.proven && retainUntil ? new Date(retainUntil) : undefined,
         contentLength: migration?.content.length, originalBytes: migration?.originalBytes,
         chunkCount: chunks.length, truncated: migration?.truncated,
         chunks: chunks.map((content, index) => ({ id: `${migration?.id}_${index}`, content, index, norm: content.toLowerCase() })),
       });
-      if (JSON.stringify(payload) !== JSON.stringify(originalPayload) || changedText || migration) counts.rows_rewritten++;
+      if (typeof row.payload === "string" || JSON.stringify(payload) !== JSON.stringify(originalPayload) || changedText || migration) counts.rows_rewritten++;
     } else if (table === "noema") {
       const canonical = scrubFieldValue("noema", "canonical_text", String(row.canonical_text ?? ""), removed) as string | undefined;
       changedText = canonical !== String(row.canonical_text ?? "");
@@ -210,17 +251,20 @@ async function updateBatch(db: ScrubDb, table: PrivacyTable, page: PrivacyRow[],
       }
       const factKey = typeof row.fact_key === "string" ? scrubFieldValue("noema", "fact_key", row.fact_key, removed) : row.fact_key;
       const factKeySeed = typeof row.fact_key_seed === "string" ? scrubFieldValue("noema", "fact_key_seed", row.fact_key_seed, removed) : row.fact_key_seed;
-      await db.queryTransaction(`UPDATE type::record('noema', $id) SET canonical_text = $canonical ?? NONE, payload = $payload,
+      if (changedText || JSON.stringify([payload, canonicalObject, stableClaim, factKey, factKeySeed])
+        !== JSON.stringify([row.payload, row.canonical, row.stable_claim, row.fact_key, row.fact_key_seed])) await db.queryTransaction(`UPDATE type::record('noema', $id) SET canonical_text = $canonical ?? NONE, payload = $payload,
         canonical = $canonicalObject, stable_claim = $stableClaim, fact_key = $factKey, fact_key_seed = $factKeySeed;
         IF $textChanged { UPDATE type::record('noema', $id) SET canonical_norm = $norm, embedding = $embedding ?? NONE; };`,
         { id, canonical, norm, embedding: embeddingForStore(embedding), textChanged: changedText, payload, canonicalObject, stableClaim, factKey, factKeySeed });
       if (FIELDS.noema.some((field) => field !== "canonical_norm" && field !== "embedding"
         && inspectField("noema", field, fieldValue(row, field)).wouldChange > 0)) counts.rows_rewritten++;
     } else if (table === "rejection_log") {
-      await db.queryTransaction("UPDATE type::record('rejection_log', $id) SET candidate_text = $text ?? NONE;", { id, text: scrubFieldValue(table, "candidate_text", row.candidate_text, removed) });
-      if (inspectField(table, "candidate_text", row.candidate_text).wouldChange) counts.rows_rewritten++;
+      if (inspectField(table, "candidate_text", row.candidate_text).wouldChange) {
+        await db.queryTransaction("UPDATE type::record('rejection_log', $id) SET candidate_text = $text ?? NONE;", { id, text: scrubFieldValue(table, "candidate_text", row.candidate_text, removed) });
+        counts.rows_rewritten++;
+      }
     } else if (table === "retrieval_trace") {
-      await db.queryTransaction(`UPDATE type::record('retrieval_trace', $id) SET prompt = '', answer = '',
+      if (FIELDS.retrieval_trace.some((field) => inspectField(table, field, fieldValue(row, field)).wouldChange)) await db.queryTransaction(`UPDATE type::record('retrieval_trace', $id) SET prompt = '', answer = '',
         prepend_context = NONE, capture_receipt = $receipt, synthesis = $synthesis;`,
         { id, receipt: scrubFieldValue(table, "capture_receipt", row.capture_receipt),
           synthesis: scrubFieldValue(table, "synthesis", row.synthesis) });
@@ -248,12 +292,14 @@ async function updateBatch(db: ScrubDb, table: PrivacyTable, page: PrivacyRow[],
       const content = redactSourceTurn(String(row.content ?? ""));
       changedText = true;
       expectedNorm = content.toLowerCase();
-      await db.queryTransaction("UPDATE type::record('session_turn_chunk', $id) SET content = $content, text_norm = $norm;",
+      if (content !== row.content || content.toLowerCase() !== row.text_norm) await db.queryTransaction(
+        "UPDATE type::record('session_turn_chunk', $id) SET content = $content, text_norm = $norm;",
         { id, content, norm: content.toLowerCase() });
       if (content !== row.content || content.toLowerCase() !== row.text_norm) counts.rows_rewritten++;
     }
+    rows.set(id, { changedText, norm: expectedNorm, embedding: expectedEmbedding });
   }
-  return { changedText, norm: expectedNorm, embedding: expectedEmbedding, counts };
+  return { rows, counts };
 }
 
 export async function applyScrub(db: ScrubDb, options: ScrubOptions): Promise<Inventory> {
@@ -282,7 +328,7 @@ export async function applyScrub(db: ScrubDb, options: ScrubOptions): Promise<In
     const table = TABLES[i];
     let cursor = i === checkpoint.tableIndex ? checkpoint.cursor : "";
     while (true) {
-      const page = await readPage(db, table, cursor, 1);
+      const page = await readPage(db, table, cursor, options.batchSize ?? 100);
       if (!page.length) break;
       const batch = await updateBatch(db, table, page, embed, options.hmacKey);
       // Re-read every processed record before advancing the durable cursor.
@@ -298,17 +344,18 @@ export async function applyScrub(db: ScrubDb, options: ScrubOptions): Promise<In
         if (state.wouldChange || state.assertionFailures) throw new Error("batch verification redaction failed");
       }
       for (const row of verified) {
-        if (!batch.changedText) continue;
+        const expected = batch.rows.get(idOf(row, table));
+        if (!expected?.changedText) continue;
         const source = table === "noema" ? String(row.canonical_text ?? "")
           : table === "semiote" || table === "memories" ? String(row.payload?.l2 ?? row.payload?.data ?? "")
             : table === "session_turn_chunk" ? String(row.content ?? "") : undefined;
         if (source === undefined) continue;
-        const norm = batch.norm ?? (table === "session_turn_chunk" ? source.toLowerCase() : NORM(source));
+        const norm = expected.norm ?? (table === "session_turn_chunk" ? source.toLowerCase() : NORM(source));
         const storedNorm = table === "noema" ? row.canonical_norm : row.text_norm;
         if (storedNorm !== norm) throw new Error("batch verification norm mismatch");
         if (table === "session_turn_chunk") continue;
         const stored = Array.isArray(row.embedding) && row.embedding.length ? row.embedding : undefined;
-        if (JSON.stringify(stored) !== JSON.stringify(batch.embedding)) throw new Error("batch verification embedding mismatch");
+        if (JSON.stringify(stored) !== JSON.stringify(expected.embedding)) throw new Error("batch verification embedding mismatch");
       }
       if (table === "semiote") for (const row of verified) {
         if (row.source_turn_link_state !== "legacy") continue;
