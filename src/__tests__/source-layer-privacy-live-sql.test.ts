@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SurrealClient } from "../storage/surreal/surreal-store.js";
+import { ensurePhase2Schema } from "../storage/surreal/phase2-store.js";
+import { ensureSessionTurnSchema } from "../storage/surreal/session-turn-store.js";
+import { ensureSourceTurnLinkSchema } from "../storage/surreal/source-turn-link-store.js";
 import { scoreExactQaCandidate } from "../domain/memory/exact-qa.js";
 import { prepareSourceTurn } from "../capture/source-turn-identity.js";
 import { inventory, verifyInventory } from "../../scripts/source-layer/privacy-inventory.js";
@@ -39,6 +42,65 @@ afterAll(async () => {
 });
 
 describe("Slice 3 live SQL scrub", () => {
+  it("migrates an unproven source turn with datetime retention under production indexes, then replays unchanged", async (ctx) => {
+    if (!available) return ctx.skip();
+    const database = `schema${suffix}`;
+    const indexed = new SurrealClient({ url: process.env.SURREAL_URL ?? "http://127.0.0.1:8000",
+      username: process.env.SURREAL_USER ?? "root", password: process.env.SURREAL_PASS ?? "root",
+      namespace: identity.namespace, database });
+    const target = { namespace: identity.namespace, database };
+    const backupPath = join(dir, "indexed-backup.surql");
+    await writeFile(backupPath, "synthetic", { mode: 0o600 });
+    try {
+      await ensurePhase2Schema(indexed);
+      await ensureSessionTurnSchema(indexed);
+      await ensureSourceTurnLinkSchema(indexed);
+      await indexed.query(`CREATE type::record('semiote', 'indexed') CONTENT {
+        user_id: $userId, session_id: 'synthetic-session', created_at: time::now(), updated_at: time::now(),
+        payload: { l0: 'synthetic heading', l1: 'synthetic summary', l2: 'synthetic fact',
+          raw_source_text: 'synthetic source', rawSpan: { text: 'synthetic source' } },
+        embedding: $embedding, text_norm: 'synthetic fact'
+      };`, { userId: "u".repeat(67), embedding: Array(768).fill(0.01) });
+      // The pre-fix bound ISO string reproduces the real statement-3 abort.
+      await expect(indexed.queryTransaction(`
+        UPDATE type::record('semiote', 'indexed') SET source_turn_link_state = 'temporary';
+        IF false { UPDATE type::record('semiote', 'indexed') SET text_norm = 'temporary'; };
+        IF true { CREATE type::record('session_turn', 'bad-retention') CONTENT {
+          user_id: $userId, session_id: 'synthetic-session', role: 'user', content: '',
+          created_at: time::now(), retain_until: $retainUntil
+        }; };`, { userId: "u".repeat(67), retainUntil: new Date(Date.now() + 365 * 86400_000).toISOString() }))
+        .rejects.toMatchObject({ statementIndex: 3 });
+      expect((await indexed.query("SELECT * FROM type::record('session_turn', 'bad-retention');"))[0]).toHaveLength(0);
+      const before = await inventory(indexed, target);
+      const opts = { identity: target, inventoryHash: before.hash, inventoryCreatedAt: new Date().toISOString(),
+        backupPath, checkpointPath: join(dir, "indexed-checkpoint.json"), hmacKey: "synthetic-hmac-key",
+        confirmed: true, embed: async () => Array(768).fill(0.01) };
+      const after = await applyScrub(indexed, opts);
+      expect(verifyInventory(after)).toBe(true);
+      const turn = (await indexed.query<{ retention_class: string; retain_until?: unknown }>(
+        "SELECT retention_class, retain_until FROM session_turn;"))[0][0];
+      expect(turn.retention_class).toBe("unlinked");
+      expect(turn.retain_until).toBeDefined();
+      const replay = await applyScrub(indexed, { ...opts, inventoryHash: after.hash,
+        inventoryCreatedAt: new Date().toISOString(), checkpointPath: join(dir, "indexed-replay.json") });
+      expect(replay.hash).toBe(after.hash);
+    } finally {
+      await indexed.query(`REMOVE DATABASE ${database};`).catch(() => undefined);
+      await indexed.close();
+    }
+  });
+
+  it("reports the root statement of a synthetic failed transaction", async (ctx) => {
+    if (!available) return ctx.skip();
+    await db.query("DEFINE TABLE scrub_tx_probe SCHEMALESS; DEFINE FIELD required ON TABLE scrub_tx_probe TYPE string; CREATE type::record('scrub_tx_probe', 'row') SET required = 'synthetic';");
+    try {
+      await expect(db.queryTransaction(`UPDATE type::record('scrub_tx_probe', 'row') SET required = 'temporary';
+        UPDATE type::record('scrub_tx_probe', 'row') SET required = NONE;`)).rejects.toMatchObject({ statementIndex: 2 });
+      const row = (await db.query<{ required: string }>("SELECT required FROM type::record('scrub_tx_probe', 'row');"))[0][0];
+      expect(row.required).toBe("synthetic");
+    } finally { await db.query("REMOVE TABLE scrub_tx_probe;"); }
+  });
+
   it("resolves signed Markdown IDs through record point lookups", async (ctx) => {
     if (!available) return ctx.skip();
     const { mkdir } = await import("node:fs/promises");
@@ -282,6 +344,19 @@ describe("Slice 3 live SQL scrub", () => {
     expect(values[5].some((row: any) => row.turn_id === "old2" && String(row.content).startsWith("header only "))).toBe(true);
     const again = await applyScrub(db, options);
     expect(again.hash).toBe(after.hash);
+    // A fresh checkpoint must verify already-migrated rows without issuing
+    // no-op transactions or changing the inventory hash.
+    let replayTransactions = 0;
+    const replayDb: ScrubDb = { query: db.query.bind(db), queryTransaction: async (sql, vars) => {
+      replayTransactions++;
+      return db.queryTransaction(sql, vars);
+    } };
+    const replay = await applyScrub(replayDb, { ...options, inventoryHash: again.hash,
+      inventoryCreatedAt: new Date().toISOString(), checkpointPath: join(dir, "replay-checkpoint.json") });
+    expect(replay.hash).toBe(again.hash);
+    expect(replayTransactions).toBe(0);
+    const replayCheckpoint = JSON.parse(await readFile(join(dir, "replay-checkpoint.json"), "utf8"));
+    expect(Object.values(replayCheckpoint.counts).every((counts: any) => counts.rows_rewritten === 0 && counts.rows_reembedded === 0)).toBe(true);
     await db.query("UPDATE type::record('rejection_log', 'reject1') SET candidate_text = $text;", { text: secret });
     expect(verifyInventory(await inventory(db, identity, vault))).toBe(false);
     await db.query("UPDATE type::record('noema', 'claim1') SET canonical.text = $text, canonical.stableClaim.subject = $text, canonical.stableClaim.predicate = $text, canonical.stableClaim.value = $text, stable_claim.predicate = $text, stable_claim.value = $text, canonical.factKey = $text, fact_key = $text, fact_key_seed = $text, canonical_norm = $text, embedding = [0.9, 0.9];",

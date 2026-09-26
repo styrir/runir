@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspectField, inventory, scrubFieldValue, verifyInventory, type Inventory } from "../../scripts/source-layer/privacy-inventory.js";
-import { applyScrub, validateApplyOptions, validateBackup } from "../../scripts/source-layer/scrub.js";
+import { applyScrub, formatScrubFailure, validateApplyOptions, validateBackup } from "../../scripts/source-layer/scrub.js";
 import { ownedVaultFiles } from "../../scripts/source-layer/vault-ownership.js";
 
 const secret = "Bearer AAAAAAAAAAAAAAAAAAAAAAAA";
@@ -12,6 +12,18 @@ const base = { identity: { namespace: "throwaway", database: "scratch" }, invent
   checkpointPath: "/tmp/synthetic-checkpoint", hmacKey: "synthetic-key", confirmed: true };
 
 describe("Slice 3 count-only policy", () => {
+  it("masks database values, record IDs, and hex in apply errors", () => {
+    const root = new Error("record semiote:private-id has value 'private text' and hash aabbccddeeff00112233445566778899");
+    root.name = "InternalError";
+    const wrapper = Object.assign(new Error("transaction failed", { cause: root }), { statementIndex: 2 });
+    expect(formatScrubFailure(wrapper)).toBe("InternalError statement index 2: record [record] has value [quoted] and hash [hex]");
+    expect(formatScrubFailure(new Error("Couldn't coerce field `retain_until`: found '2027-09-25T19:03:35.232Z'")))
+      .toBe("Error: Couldn't coerce field [quoted]: found [quoted]");
+    expect(formatScrubFailure(new Error("Couldn't coerce value for field `retain_until` of `session_turn`: Expected `none` but found `2027-09-25T19:03:35.232Z`")))
+      .toBe("Error: Couldn't coerce value for field retain_until of session_turn: Expected none but found [quoted]");
+    expect(formatScrubFailure(new Error("source turn collision"))).toBe("source turn collision");
+  });
+
   it("owns only exporter-written 99 Meta names and folder shapes", async () => {
     const vault = await mkdtemp(join(tmpdir(), "runir277-meta-vault-"));
     const owned = [

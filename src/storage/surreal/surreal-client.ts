@@ -176,16 +176,10 @@ export class SurrealClient {
    * caller supplies a statement `body` plus bound `vars`; the body is wrapped
    * in `BEGIN TRANSACTION; … COMMIT TRANSACTION;` and sent as one request.
    *
-   * Failure detection: with surrealdb@2.0.3, awaiting `surreal.query()` runs the
-   * driver's `collect()`, which THROWS on the first failed statement
-   * (`if (chunk.error) throw chunk.error` — surrealdb.mjs:3257; an `ERR` status
-   * becomes `chunk.error` at :6594). A failed transaction therefore surfaces as
-   * a rejected promise, never as a resolved result carrying a `status:"ERR"`
-   * envelope — so the rejected await is the COMPLETE failure signal. We
-   * deliberately do NOT scan resolved statement results for a `status` field:
-   * those are user result VALUES (rows/objects), not RPC envelopes, and a value
-   * that happens to contain `status:"ERR"` must not be mistaken for a rollback.
-   * Re-verify this await-throws contract if the SDK is bumped.
+   * Failure detection uses the SDK's per-statement `responses()` envelopes.
+   * `collect()` throws the first error, which can be a generic aborted-statement
+   * error that hides the actual failing statement. Never interpret a user row's
+   * `status` property as a transaction result.
    *
    * The COMMIT result is never parsed for control flow, and the method returns
    * `void` so callers cannot read partial transaction output. A thrown error
@@ -200,12 +194,25 @@ export class SurrealClient {
     await this.ready;
     const tx = `BEGIN TRANSACTION;\n${body}\nCOMMIT TRANSACTION;`;
     try {
-      // Raw driver call — bypasses query()'s reconnect-retry-once on purpose.
-      await this.surreal.query(tx, vars);
+      // responses() retains every statement failure. collect()/await throws on
+      // the first response, which can be a generic aborted-transaction error
+      // preceding the statement that actually caused the rollback.
+      const responses = await this.surreal.query(tx, vars).responses();
+      const failures = responses.flatMap((response, index) => response?.success === false
+        ? [{ index, error: response.error }] : []);
+      if (failures.length) {
+        const root = failures.find(({ error }) => !/not executed due to a failed transaction/i.test(error.message)) ?? failures[0];
+        const failure = new Error(
+          `transaction failed (rolled back, or in-doubt if the connection dropped after COMMIT); statement index ${root.index}`,
+          { cause: root.error },
+        );
+        Object.assign(failure, { statementIndex: root.index });
+        throw failure;
+      }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      if (err instanceof Error && "statementIndex" in err) throw err;
       throw new Error(
-        `transaction failed (rolled back, or in-doubt if the connection dropped after COMMIT): ${msg}`,
+        "transaction failed (rolled back, or in-doubt if the connection dropped after COMMIT)",
         { cause: err },
       );
     }
@@ -236,5 +243,3 @@ export function extractId(rawId: unknown): string {
   }
   return String(rawId).replace(/^[^:]+:/, "");
 }
-
-
