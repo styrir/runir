@@ -1,8 +1,9 @@
 import { createReadStream } from "node:fs";
 import { mkdir, open, stat, truncate } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { SourceTurn } from "./source-turn-identity.js";
+import { isProvenSourceTurn, type SourceTurn } from "./source-turn-identity.js";
 import { redactSourceTurn } from "../shared/source-redaction.js";
 
 type SpoolEntry = { op: "put"; turn: SourceTurn; queuedAt?: string } | { op: "done" | "forget"; id: string };
@@ -28,13 +29,19 @@ export class SourceTurnSpool {
   private readonly forgotten = new Set<string>();
   private readonly inFlight = new Map<string, Promise<unknown>>();
   private serial: Promise<unknown> = Promise.resolve();
+  private appendQueue: Array<{ turns: SourceTurn[]; resolve: (accepted: boolean[]) => void }> = [];
+  private appendWriter: Promise<void> | undefined;
+  private syncs = 0;
   private initialized = false;
   private readonly counts = { appended: 0, replayed: 0, appendFailures: 0, persistFailures: 0, conflicts: 0 };
 
   constructor(directory = process.env.RUNIR_SOURCE_SPOOL_DIR
-    ?? join(homedir(), "Library", "Application Support", "Runir", "source-spool")) {
+    ?? join(homedir(), "Library", "Application Support", "Runir", "source-spool"),
+    private readonly syncFile: (handle: FileHandle) => Promise<void> = (handle) => handle.sync()) {
     this.file = join(directory, "turns.jsonl");
   }
+
+  syncCount(): number { return this.syncs; }
 
   private sequence<T>(work: () => Promise<T>): Promise<T> {
     const next = this.serial.then(work, work);
@@ -48,13 +55,17 @@ export class SourceTurnSpool {
     try {
       let offset = (await handle.stat()).size;
       const positions: Array<{ offset: number; length: number }> = [];
+      const chunks: string[] = [];
       for (const line of lines) {
         const length = Buffer.byteLength(line);
         positions.push({ offset, length });
         offset += length;
-        await handle.writeFile(line, "utf8");
+        chunks.push(line);
       }
-      await handle.sync();
+      if (!chunks.length) return positions;
+      await handle.writeFile(chunks.join(""), "utf8");
+      await this.syncFile(handle);
+      this.syncs++;
       synced = true;
       return positions;
     } finally {
@@ -62,10 +73,6 @@ export class SourceTurnSpool {
       if (synced) await handle.close().catch(() => undefined);
       else await handle.close();
     }
-  }
-
-  private async appendEntry(entry: SpoolEntry): Promise<void> {
-    await this.appendLines([`${JSON.stringify(entry)}\n`]);
   }
 
   async initialize(): Promise<void> {
@@ -115,41 +122,68 @@ export class SourceTurnSpool {
   async appendBatch(turns: SourceTurn[]): Promise<boolean[]> {
     try {
       for (const turn of turns) {
-        if (redactSourceTurn(turn.content) !== turn.content) throw new Error("unredacted source turn");
+        if (!isProvenSourceTurn(turn) && redactSourceTurn(turn.content) !== turn.content) throw new Error("unredacted source turn");
       }
       await this.initialize();
-      return await this.sequence(async () => {
-        const accepted = turns.map((turn) => {
-          if (this.forgotten.has(turn.id)) return false;
-          const prior = this.pending.get(turn.id);
-          if (prior && prior.hmac !== turn.contentHmac) {
-            this.counts.conflicts++;
-            return false;
-          }
-          return true;
-        });
-        const fresh = turns.filter((turn, index) => accepted[index] && !this.pending.has(turn.id));
-        if (fresh.length) {
-          const queuedAt = new Date().toISOString();
-          const lines = (function* () {
-            for (const turn of fresh) yield `${JSON.stringify({ op: "put", turn, queuedAt })}\n`;
-          })();
-          const positions = await this.appendLines(lines);
-          // Everything below is in-memory bookkeeping after fsync, so accepted
-          // turns cannot be reported as failed once the journal owns them.
-          fresh.forEach((turn, index) => {
-            this.pending.set(turn.id, {
-              ...positions[index], queuedAt, bytes: Buffer.byteLength(turn.content),
-              userId: turn.userId, sessionId: turn.sessionId, hmac: turn.contentHmac,
-            });
-            this.counts.appended++;
-          });
-        }
-        return accepted;
+      return await new Promise<boolean[]>((resolve) => {
+        this.appendQueue.push({ turns, resolve });
+        this.startAppendWriter();
       });
     } catch {
       this.counts.appendFailures += turns.length;
       return turns.map(() => false);
+    }
+  }
+
+  private startAppendWriter(): void {
+    if (this.appendWriter) return;
+    const writer = this.flushAppends();
+    this.appendWriter = writer;
+    void writer.finally(() => {
+      this.appendWriter = undefined;
+      if (this.appendQueue.length) this.startAppendWriter();
+    });
+  }
+
+  private async flushAppends(): Promise<void> {
+    // Allow simultaneous requests to join the same buffer. Requests arriving
+    // during an in-flight sync are handled by the next iteration.
+    await Promise.resolve();
+    while (this.appendQueue.length) {
+      const batch = this.appendQueue.splice(0);
+      try {
+        await this.sequence(async () => {
+          const staged = new Map<string, SourceTurn>();
+          const accepted = batch.map(({ turns }) => turns.map((turn) => {
+            if (this.forgotten.has(turn.id)) return false;
+            const priorHmac = this.pending.get(turn.id)?.hmac ?? staged.get(turn.id)?.contentHmac;
+            if (priorHmac && priorHmac !== turn.contentHmac) {
+              this.counts.conflicts++;
+              return false;
+            }
+            if (!priorHmac) staged.set(turn.id, turn);
+            return true;
+          }));
+          const fresh = [...staged.values()];
+          if (fresh.length) {
+            const queuedAt = new Date().toISOString();
+            const positions = await this.appendLines(fresh.map((turn) => `${JSON.stringify({ op: "put", turn, queuedAt })}\n`));
+            fresh.forEach((turn, index) => {
+              this.pending.set(turn.id, {
+                ...positions[index], queuedAt, bytes: Buffer.byteLength(turn.content),
+                userId: turn.userId, sessionId: turn.sessionId, hmac: turn.contentHmac,
+              });
+              this.counts.appended++;
+            });
+          }
+          batch.forEach((request, index) => request.resolve(accepted[index]!));
+        });
+      } catch {
+        for (const request of batch) {
+          this.counts.appendFailures += request.turns.length;
+          request.resolve(request.turns.map(() => false));
+        }
+      }
     }
   }
 
@@ -174,6 +208,8 @@ export class SourceTurnSpool {
     const window = [...this.pending.entries()];
     let processed = 0;
     let bytes = 0;
+    const done: string[] = [];
+    const releases: Array<() => void> = [];
     for (const [id, entry] of window) {
       if (processed >= Math.min(maxTurns, 1_000) || bytes + entry.bytes > 64 * 1024 * 1024) break;
       processed++;
@@ -189,29 +225,32 @@ export class SourceTurnSpool {
       try {
         const turn = await this.readTurn(entry);
         await write(turn);
-        await this.sequence(async () => {
-          if (!this.pending.has(id) || this.forgotten.has(id)) return;
-          await this.appendEntry({ op: "done", id });
-          this.pending.delete(id);
-        });
+        done.push(id);
       } catch (error) {
         this.counts.persistFailures++;
         if (error instanceof Error && error.name === "SourceTurnConflictError") this.counts.conflicts++;
       } finally {
-        resolve();
-        this.inFlight.delete(id);
+        releases.push(() => { resolve(); this.inFlight.delete(id); });
       }
     }
+    try {
+      await this.sequence(async () => {
+        const eligible = done.filter((id) => this.pending.has(id) && !this.forgotten.has(id));
+        if (eligible.length) {
+          await this.appendLines(eligible.map((id) => `${JSON.stringify({ op: "done", id })}\n`));
+          eligible.forEach((id) => this.pending.delete(id));
+        }
+      });
+    } catch { this.counts.persistFailures += done.length; }
+    finally { releases.forEach((release) => release()); }
   }
 
   async forget(ids: string[]): Promise<void> {
     await this.initialize();
+    await this.appendWriter;
     const writes = await this.sequence(async () => {
-      for (const id of ids) {
-        this.forgotten.add(id);
-        await this.appendEntry({ op: "forget", id });
-        this.pending.delete(id);
-      }
+      if (ids.length) await this.appendLines(ids.map((id) => `${JSON.stringify({ op: "forget", id })}\n`));
+      for (const id of ids) { this.forgotten.add(id); this.pending.delete(id); }
       return ids.map((id) => this.inFlight.get(id));
     });
     await Promise.all(writes.map((writing) => writing?.catch(() => undefined)));

@@ -63,10 +63,10 @@ try {
     throw new Error("runtime target mismatch");
   const { runDeploymentPreflight } = await import("../../src/app/readiness.js");
   const { runVaultExport } = await import("../../src/lifecycle/archive/vault-exporter.js");
-  const { sourceTurnSpoolForTesting, stopSourceDrainForTesting } = await import("../../src/app/routes/hooks/index.js");
+  const { sourceTurnSpoolForTesting, stopSourceDrainForTesting, startSourceDrainForTesting, takeSourceStoreTimingsForTesting } = await import("../../src/app/routes/hooks/index.js");
   stopDrainForCleanup = stopSourceDrainForTesting;
   const { forgetSourceSession, forgetSourceUser, markFactSourceLink, reconcileSourceTurnLinks } = await import("../../src/storage/surreal/source-turn-link-store.js");
-  const { upsertSourceTurn } = await import("../../src/storage/surreal/session-turn-store.js");
+  const { upsertSourceTurn, sourceFingerprintScanCount } = await import("../../src/storage/surreal/session-turn-store.js");
   const { prepareSourceTurn } = await import("../../src/capture/source-turn-identity.js");
   const { getLastWatermark } = await import("../../src/storage/surreal/session-watermark-store.js");
   const db = runtime.db;
@@ -202,12 +202,20 @@ try {
   original.stderr.call(process.stderr, "source-layer stage: performance gates\n");
   results.push(perfGate("perf.linked_lookup", lookupMs, 100));
   const captureMs = { off: [] as number[], on: [] as number[] };
+  takeSourceStoreTimingsForTesting();
+  const stepMs = { fingerprint: [] as number[], prepare: [] as number[], append: [] as number[] };
+  const syncPerRequest: number[] = [];
+  const scansPerRequest: number[] = [];
   const cpuBefore = process.cpuUsage();
   const captureDelta: number[] = [];
-  for (let sample = 0; sample < 31; sample++) {
+  // 30 pairs made p95 the second-largest sample and flipped the gate run to run.
+  const capturePairs = Number(process.env.SOURCE_LAYER_MEASURE_PAIRS ?? 200);
+  for (let sample = 0; sample <= capturePairs; sample++) {
     const pair: { off?: number; on?: number } = {};
     for (const mode of (sample % 2 === 0 ? ["off", "on"] : ["on", "off"]) as Array<"off" | "on">) {
       process.env.RUNIR_SOURCE_STORE = mode;
+      const syncBefore = singletonForReplay.syncCount();
+      const scansBefore = sourceFingerprintScanCount();
       const start = performance.now();
       const response = await post("/hooks/capture", { userId: "synthetic-perf", client: "codex",
         sessionId: `synthetic-perf-${mode}-${sample}`, disableHexis: true, messages: CAPTURE_20X4K,
@@ -215,22 +223,49 @@ try {
       const body = await response.json() as { skipped?: boolean; factsFound?: number };
       if (response.status !== 200 || body.skipped !== false || !body.factsFound) throw new Error("synthetic capture performance request failed");
       if (sample) { pair[mode] = performance.now() - start; captureMs[mode].push(pair[mode]); }
+      if (sample && mode === "on") {
+        const timings = takeSourceStoreTimingsForTesting();
+        const latest = timings.at(-1);
+        if (latest) {
+          stepMs.fingerprint.push(latest.fingerprintMs);
+          stepMs.prepare.push(latest.prepareMs);
+          stepMs.append.push(latest.appendMs);
+        }
+        syncPerRequest.push(singletonForReplay.syncCount() - syncBefore);
+        scansPerRequest.push(sourceFingerprintScanCount() - scansBefore);
+      }
     }
     if (sample) captureDelta.push(pair.on! - pair.off!);
     if (sample % 10 === 0) original.stderr.call(process.stderr, `source-layer performance pairs: ${sample}\n`);
   }
   process.env.RUNIR_SOURCE_STORE = "on";
   const cpu = process.cpuUsage(cpuBefore);
+  startSourceDrainForTesting();
+  const productionDrainMs: number[] = [];
+  for (let sample = 0; sample < 10; sample++) {
+    const start = performance.now();
+    const response = await post("/hooks/capture", { userId: "synthetic-perf-drain", client: "codex",
+      sessionId: `synthetic-perf-drain-${sample}`, disableHexis: true, messages: CAPTURE_20X4K,
+      captureFixtureFacts: [{ l2: `Synthetic drain benchmark fact ${sample} is stable.`, confidence: 0.99, source_turn_index: 0 }] });
+    const body = await response.json() as { skipped?: boolean; factsFound?: number };
+    if (response.status !== 200 || body.skipped !== false || !body.factsFound) throw new Error("production-drain performance request failed");
+    productionDrainMs.push(performance.now() - start);
+  }
+  await stopSourceDrainForTesting();
   const offP95 = perfGate("perf.capture_off", captureMs.off);
   const onP95 = perfGate("perf.capture_on", captureMs.on);
   const pairedStats = perfGate("perf.capture_added", captureDelta, 20);
   const addedP95 = pairedStats.metrics?.p95Ms ?? 0;
   results.push(offP95, onP95, { id: "perf.capture_added", family: "perf", status: addedP95 < 20 ? "pass" : "fail",
-    counts: { samplesPerMode: 30, pairs: captureDelta.length, concurrency: 1 }, metrics: {
+    counts: { samplesPerMode: capturePairs, pairs: captureDelta.length, concurrency: 1,
+      syncsPerRequest: syncPerRequest.reduce((a, b) => a + b, 0) / syncPerRequest.length,
+      fingerprintScansPerRequest: scansPerRequest.reduce((a, b) => a + b, 0) / scansPerRequest.length }, metrics: {
       addedP95Ms: Number(addedP95.toFixed(3)), medianDeltaMs: pairedStats.metrics?.p50Ms ?? null, targetMs: 20,
       offP50Ms: offP95.metrics?.p50Ms ?? null, offP95Ms: offP95.metrics?.p95Ms ?? null, offP99Ms: offP95.metrics?.p99Ms ?? null,
       onP50Ms: onP95.metrics?.p50Ms ?? null, onP95Ms: onP95.metrics?.p95Ms ?? null, onP99Ms: onP95.metrics?.p99Ms ?? null,
       cpuUserMs: Number((cpu.user / 1000).toFixed(3)), cpuSystemMs: Number((cpu.system / 1000).toFixed(3)) } });
+  results.push(perfGate("perf.capture_drain_on_informational", productionDrainMs));
+  results.push(...Object.entries(stepMs).map(([name, values]) => perfGate(`perf.source_${name}_informational`, values)));
   original.stderr.call(process.stderr, `source-layer performance pending before drain: ${singletonForReplay.snapshot().pending}\n`);
   for (let drainAttempt = 0; singletonForReplay.snapshot().pending > 0 && drainAttempt < 8; drainAttempt++) {
     await singletonForReplay.drain(async (turn) => {
@@ -261,6 +296,7 @@ try {
       sourceTokens: 0 }, metrics: { pendingBytes: spool.pendingBytes ?? 0, oldestPendingAgeMs: spool.oldestPendingAgeMs ?? 0 } });
   results.push({ id: "perf.source_tokens", family: "perf", status: "pending_fail_closed", counts: { injectedTokens: 0 },
     metrics: { targetMaxTokens: 360 }, note: "injection_pending_slice5" });
+  startSourceDrainForTesting();
   stage = "route replay";
   const waitTurnCount = async (userId: string, sessionId: string, expected: number): Promise<number> => {
     let count = 0;

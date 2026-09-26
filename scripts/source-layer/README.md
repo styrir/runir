@@ -2,6 +2,18 @@
 
 Slice 4's synthetic measurement harness runs with `npm run measure:source-layer` against the local SurrealDB (`SOURCE_LAYER_MEASURE_SURREAL_URL` defaults to `http://127.0.0.1:8000`). It creates and removes a random `slice4` namespace, uses temporary spool and vault directories, and writes count-only, mode-0600 results under `.styrir/analysis/source-layer/<runId>/`; a failed gate exits non-zero. Source recall remains off, so annotation-dependent cases remain pending until Slice 5.
 
+The source writer checks all three stored fingerprint predicates once per writing
+database client and latches the configured fingerprint in memory. Every later
+source write compares its fingerprint to that latch. Key rotation (Rúnir-277.8)
+or a database restore requires a service restart before source writes resume.
+The out-of-process scrub and other external writers must not run while the
+service writes. The spool joins each flush into one write and calls
+`FileHandle.sync()` before acknowledging captures or forget tombstones; drain
+persists one newline-framed `done` record per turn, with the records for a
+window written and synced together. The measurement report includes an
+isolated, stopped-drain paired capture gate and an informational run with the
+production drain active, plus sync and fingerprint-scan counts per request.
+
 The CLI defaults to read-only `inventory`. It emits only row counts, detector-kind
 row counts, and the inventory digest. It requires an explicit vault root so the
 inventory and verification include existing exports. The vault may be the owner's

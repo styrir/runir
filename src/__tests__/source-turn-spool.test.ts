@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -34,6 +34,107 @@ describe("durable source spool", () => {
     const final = new SourceTurnSpool(path);
     await final.initialize();
     expect(final.snapshot().pending).toBe(0);
+  });
+
+  it("group commits concurrent appends and resolves each only after its own sync", async () => {
+    const path = await directory();
+    let syncs = 0;
+    let entered!: () => void;
+    let release!: () => void;
+    const atFirstSync = new Promise<void>((resolve) => { entered = resolve; });
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const spool = new SourceTurnSpool(path, async (handle) => {
+      syncs++;
+      if (syncs === 1) { entered(); await hold; }
+      await handle.sync();
+    });
+    const first = spool.append(turn());
+    await atFirstSync;
+    const secondTurn = prepareSourceTurn({ userId: "synthetic", client: "pi", sessionId: "s",
+      turnKey: "pi:b", role: "user", content: "second synthetic source", occurredAt: "2026-09-25T00:00:00.000Z",
+      scope: "user" }, "synthetic-key");
+    let secondDone = false;
+    const second = spool.append(secondTurn).then((accepted) => { secondDone = true; return accepted; });
+    release();
+    expect(await first).toBe(true);
+    expect(secondDone).toBe(false);
+    expect(await second).toBe(true);
+    expect(syncs).toBe(2);
+    const replay = new SourceTurnSpool(path);
+    await replay.initialize();
+    expect(replay.snapshot().pending).toBe(2);
+  });
+
+  it("uses at most two syncs for concurrent requests and rejects a mismatched proof", async () => {
+    const spool = new SourceTurnSpool(await directory());
+    const turns = Array.from({ length: 12 }, (_, index) => prepareSourceTurn({
+      userId: "synthetic", client: "pi", sessionId: "group", turnKey: `pi:${index}`,
+      role: "user", content: `source ${index}`, occurredAt: "2026-09-25T00:00:00.000Z", scope: "user",
+    }, "synthetic-key"));
+    expect((await Promise.all(turns.map((item) => spool.append(item)))).every(Boolean)).toBe(true);
+    expect(spool.syncCount()).toBeLessThanOrEqual(2);
+    const forged = { ...turns[0]!, content: "password: synthetic-secret-value", redactionProof: turns[0]!.redactionProof };
+    expect(await spool.append(forged)).toBe(false);
+  });
+
+  it("rejects every waiter when its shared sync fails", async () => {
+    const spool = new SourceTurnSpool(await directory(), async () => { throw new Error("synthetic sync failure"); });
+    const turns = Array.from({ length: 4 }, (_, index) => prepareSourceTurn({
+      userId: "synthetic", client: "pi", sessionId: "failure", turnKey: `pi:${index}`,
+      role: "user", content: `source ${index}`, occurredAt: "2026-09-25T00:00:00.000Z", scope: "user",
+    }, "synthetic-key"));
+    expect(await Promise.all(turns.map((item) => spool.append(item)))).toEqual([false, false, false, false]);
+    expect(spool.snapshot()).toMatchObject({ pending: 0, appended: 0, appendFailures: 4 });
+  });
+
+  it("syncs a drain window once and replays every turn if the done sync fails", async () => {
+    const path = await directory();
+    let syncs = 0;
+    const spool = new SourceTurnSpool(path, async (handle) => {
+      syncs++;
+      if (syncs === 2) throw new Error("synthetic crash before done sync");
+      await handle.sync();
+    });
+    const turns = [turn(), prepareSourceTurn({ userId: "synthetic", client: "pi", sessionId: "s",
+      turnKey: "pi:b", role: "user", content: "second source", occurredAt: "2026-09-25T00:00:00.000Z",
+      scope: "user" }, "synthetic-key")];
+    expect((await spool.appendBatch(turns)).every(Boolean)).toBe(true);
+    const durableBytes = (await stat(join(path, "turns.jsonl"))).size;
+    await spool.drain(async () => undefined);
+    expect(syncs).toBe(2);
+    await truncate(join(path, "turns.jsonl"), durableBytes);
+    const replay = new SourceTurnSpool(path);
+    await replay.initialize();
+    expect(replay.snapshot().pending).toBe(2);
+    await replay.drain(async () => undefined);
+    const final = new SourceTurnSpool(path);
+    await final.initialize();
+    expect(final.snapshot().pending).toBe(0);
+  });
+
+  it("does not complete forget until its tombstone is synced", async () => {
+    const path = await directory();
+    let syncs = 0;
+    let entered!: () => void;
+    let release!: () => void;
+    const atTombstoneSync = new Promise<void>((resolve) => { entered = resolve; });
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const spool = new SourceTurnSpool(path, async (handle) => {
+      syncs++;
+      if (syncs === 2) { entered(); await hold; }
+      await handle.sync();
+    });
+    await spool.append(turn());
+    let completed = false;
+    const forgetting = spool.forgetSession("synthetic", "s").then(() => { completed = true; });
+    await atTombstoneSync;
+    expect(completed).toBe(false);
+    release();
+    await forgetting;
+    expect(syncs).toBe(2);
+    const replay = new SourceTurnSpool(path);
+    await replay.initialize();
+    expect(replay.snapshot().pending).toBe(0);
   });
 
   it("retains a failed write for replay and honors a forget tombstone", async () => {

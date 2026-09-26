@@ -1,5 +1,5 @@
 import { createHash, createHmac } from "node:crypto";
-import { SOURCE_REDACTION_VERSION, redactSourceTurn } from "../shared/source-redaction.js";
+import { SOURCE_REDACTION_VERSION, isRedactedSourceText, redactSourceTurn, type RedactedSourceProof } from "../shared/source-redaction.js";
 
 export const LEGACY_EPOCH = "legacy";
 export const SOURCE_FORMAT = 1;
@@ -27,13 +27,21 @@ export type SourceTurn = {
   path?: string;
   truncated: boolean;
   originalBytes: number;
+  readonly redactionProof?: Readonly<{ version: number }>;
 };
 
 export type SourceTurnInput = Omit<SourceTurn, "id" | "content" | "contentHmac" | "keyFingerprint" | "redactionVersion" | "sourceFormat" | "identityQuality" | "truncated" | "originalBytes" | "turnKey" | "sessionEpoch"> & {
   content: string;
   turnKey?: string;
   sessionEpoch?: string;
+  redactionProof?: RedactedSourceProof;
 };
+
+const sourceTurnProofs = new WeakMap<object, string>();
+export function isProvenSourceTurn(turn: SourceTurn): boolean {
+  return !!turn.redactionProof && turn.redactionProof.version === SOURCE_REDACTION_VERSION
+    && sourceTurnProofs.get(turn.redactionProof) === turn.content;
+}
 
 const omission = "\n[TRUNCATED_SOURCE_TURN]";
 
@@ -48,7 +56,8 @@ export function prepareSourceTurn(input: SourceTurnInput, hmacKey: string): Sour
   if (!input.userId || !input.sessionId || !input.client) throw new Error("source identity unavailable");
   if (input.role !== "user" && input.role !== "assistant") throw new Error("non-text source role");
   if (input.content.includes("\0")) throw new Error("binary source turn");
-  const redacted = redactSourceTurn(input.content);
+  const redacted = isRedactedSourceText(input.redactionProof, input.content)
+    ? input.content : redactSourceTurn(input.content);
   const originalBytes = Buffer.byteLength(redacted);
   let content = redacted;
   if (originalBytes > MAX_SOURCE_BYTES) {
@@ -69,13 +78,19 @@ export function prepareSourceTurn(input: SourceTurnInput, hmacKey: string): Sour
   const id = createHash("sha256").update(JSON.stringify([
     input.userId, input.client, input.sessionId, sessionEpoch, turnKey,
   ])).digest("hex");
-  return {
-    ...input, id, sessionEpoch, turnKey, content, contentHmac, keyFingerprint,
+  const { redactionProof: _inputProof, ...fields } = input;
+  const turn: SourceTurn = {
+    ...fields, id, sessionEpoch, turnKey, content, contentHmac, keyFingerprint,
     redactionVersion: SOURCE_REDACTION_VERSION, sourceFormat: SOURCE_FORMAT,
     identityQuality: hasNative ? "native" : hasOrdinal ? "ordinal" : "content_only",
     truncated: originalBytes > MAX_SOURCE_BYTES, originalBytes,
     turnIndex: hasNative || hasOrdinal ? input.turnIndex : undefined,
   };
+  const proof = Object.freeze({ version: SOURCE_REDACTION_VERSION });
+  sourceTurnProofs.set(proof, content);
+  Object.defineProperty(turn, "redactionProof", { value: proof, enumerable: false });
+  // Frozen so the proof-bound string is the string later stored.
+  return Object.freeze(turn);
 }
 
 export function chunkSourceTurn(content: string, maxBytes = 4096): string[] {
