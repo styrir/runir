@@ -7,6 +7,7 @@ import { loadSeed, resetSeed } from "../../../testing/test-seed.js";
 import { runtime, resolveUserId } from "../../runtime.js";
 import { SurrealClient } from "../../../storage/surreal/surreal-store.js";
 import { assertNotProdDbForEval } from "../../../shared/db-guard.js";
+import { sourceRecallMetricsSnapshot } from "../../../recall/source-excerpts.js";
 
 function getAdminDb(c: any): { adminDb: SurrealClient; isOverride: boolean } {
   const nsParam = c.req.query("ns");
@@ -30,6 +31,12 @@ function getAdminDb(c: any): { adminDb: SurrealClient; isOverride: boolean } {
 }
 
 export function registerAdminRoutes(app: Hono) {
+  app.get("/admin/source-recall-metrics", (c) => {
+    const key = process.env.RUNIR_API_KEY;
+    if (!key) return c.json({ error: "service auth is not configured" }, 503);
+    if (c.req.header("Authorization") !== `Bearer ${key}`) return c.json({ error: "unauthorized" }, 401);
+    return c.json({ observations: sourceRecallMetricsSnapshot() });
+  });
   app.get("/admin/rejection-stats", async (c) => {
     try {
       const totalResult = await runtime.db.query<any>("SELECT count() AS total FROM rejection_log GROUP ALL;");

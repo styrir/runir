@@ -957,7 +957,7 @@ export function registerHookRoutes(app: Hono) {
           resolveActiveHexis,
         },
         {
-          body: { ...body, prompt: question, hexisDebug: false },
+          body: { ...body, prompt: question, hexisDebug: false, sourceExcerptsDisabled: true },
           prompt: question,
           uid: userId,
         },

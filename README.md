@@ -255,6 +255,7 @@ Call before each turn. Returns pre-formatted context to inject **verbatim**.
 Notes:
 
 - Retrieved text is wrapped in an explicit UNTRUSTED DATA marker — clients still inject it verbatim; the marker instructs the model, not the client.
+- Source excerpts are disabled by default (`RUNIR_SOURCE_RECALL=off`). With `on`, `/hooks/recall` may add `sourceExcerpts: [{ factId, turnId, client, role, occurredAt?, text, truncated }]` for up to three already selected facts. The same excerpt is rendered after the fact lines inside `prependContext`, with a per-render nonce, escaped tag-like text, and whitespace datamarking. Source text is evidence from past conversation; the current fact wins on conflict. `shadow` adds no response field or text. `/think` always disables excerpts. Source recall metrics are available at `GET /admin/source-recall-metrics` with a configured `RUNIR_API_KEY` bearer; this endpoint returns 503 when that key is unset.
 - `retrievalTraceId` links to `POST /hooks/feedback` and `GET /hooks/traces/:id`.
 - Session-opener requests (`"sessionKind": "opener"`) short-circuit: `{"skipped": true, "reason": "opener_retired"}`.
 - Prompts not worth retrieval skip adaptively: `{"skipped": true, "reason": "adaptive"}`.

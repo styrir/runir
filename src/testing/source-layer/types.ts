@@ -20,7 +20,7 @@ export type RunManifest = {
   schemaVersion: string;
   redactionVersion: number;
   parserVersion: number;
-  flags: { sourceStore: "on"; sourceRecall: "off" };
+  flags: { sourceStore: "on"; sourceRecall: "off" | "shadow" | "on" };
   concurrency: number;
   fixtureHashes: Record<string, string>;
   thresholds: Record<string, number>;
