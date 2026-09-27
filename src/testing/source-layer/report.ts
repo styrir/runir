@@ -11,16 +11,23 @@ export const REQUIRED_GATE_IDS = [
   "replay.codex_epoch_reset", "replay.app_append_unavailable", "replay.app_forget_race",
   "replay.forget_session", "replay.forget_user", "replay.forget_one_fact",
 ] as const;
+export const SLICE5_GATE_IDS = [
+  "retrieval.annotation_exact", "retrieval.linked_exact_parity", "harm.annotation_correction", "harm.cross_scope_recall", "harm.injection_boundary",
+  "harm.shadow_absent", "harm.source_failure", "perf.source_tokens", "perf.linked_lookup_k5",
+] as const;
 const NOTE_CODES = new Set(["annotation_pending_slice5", "recall_off_source_emitted", "queue_cap_unenforced", "queue_64mib_case_omitted", "direct_spool_fault", "injection_pending_slice5"]);
 
 export function summarize(results: GateResult[]) {
   const requiredPass = REQUIRED.every((family) => results.some((r) => r.family === family)
     && results.filter((r) => r.family === family).every((r) => r.status === "pass"));
   const requiredIdsPass = REQUIRED_GATE_IDS.every((id) => results.some((r) => r.id === id && r.status === "pass"));
-  const pendingPresent = ["retrieval", "harm"].every((family) => results.some((r) => r.family === family && r.status === "pending_fail_closed"));
+  const slice4Complete = requiredPass && requiredIdsPass;
+  const slice5Complete = slice4Complete && SLICE5_GATE_IDS.every((id) => results.some((r) => r.id === id && r.status === "pass"))
+    && results.length > 0 && results.every((r) => r.status === "pass");
   return {
-    slice4Complete: requiredPass && requiredIdsPass && pendingPresent,
-    releaseReady: results.length > 0 && results.every((r) => r.status === "pass"),
+    slice4Complete,
+    slice5Complete,
+    releaseReady: slice5Complete,
     pass: results.filter((r) => r.status === "pass").length,
     fail: results.filter((r) => r.status === "fail").length,
     pendingFailClosed: results.filter((r) => r.status === "pending_fail_closed").length,
@@ -38,7 +45,7 @@ function assertCountOnly(manifest: RunManifest, results: GateResult[]): void {
   bounded(manifest.surrealUrl, /^https?:\/\/(?:127\.0\.0\.1|localhost):\d{2,5}$/);
   bounded(manifest.surrealVersion, /^[a-zA-Z0-9._/-]{1,100}$/);
   bounded(manifest.schemaVersion, /^[a-z0-9_-]{1,40}$/);
-  if (manifest.flags.sourceStore !== "on" || manifest.flags.sourceRecall !== "off") throw new Error("unsafe measurement flags");
+  if (manifest.flags.sourceStore !== "on" || !["off", "shadow", "on"].includes(manifest.flags.sourceRecall)) throw new Error("unsafe measurement flags");
   for (const hash of Object.values(manifest.fixtureHashes)) bounded(hash, /^[0-9a-f]{64}$/);
   const numeric = (values: Record<string, number | null>) => {
     for (const [key, value] of Object.entries(values)) {
@@ -64,8 +71,8 @@ export async function writeReport(root: string, manifest: RunManifest, results: 
   const files = {
     manifest: join(dir, "manifest.json"), results: join(dir, "results.json"), report: join(dir, "report.md"),
   };
-  const markdown = ["# Source-layer Slice 4 measurement", "", `Run: ${manifest.runId}`,
-    `Slice 4 complete: ${summary.slice4Complete}`, `Release ready: ${summary.releaseReady}`, "",
+  const markdown = ["# Source-layer Slice 5 measurement", "", `Run: ${manifest.runId}`,
+    `Slice 4 complete: ${summary.slice4Complete}`, `Slice 5 complete: ${summary.slice5Complete}`, `Release ready: ${summary.releaseReady}`, "",
     "| Gate | Family | Status | Counts | Metrics | Note |", "| --- | --- | --- | --- | --- | --- |",
     ...results.map((r) => `| ${r.id} | ${r.family} | ${r.status} | ${JSON.stringify(r.counts)} | ${JSON.stringify(r.metrics ?? {})} | ${r.note ?? ""} |`),
     "", "Direct-store and spool checks use production store functions where no HTTP route exists.",

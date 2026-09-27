@@ -74,6 +74,8 @@ import {
   defaultRrfEntityWeight,
   DEFAULT_RRF_ENTITY_WEIGHT,
   nativeRrfSearch,
+  enrichLinkedExactQaHits,
+  linkedExactQaFailureCount,
   runHybridQueryWithEvidenceTable,
   expandRetrievalQuery,
   entityMentionCandidates,
@@ -391,6 +393,48 @@ function extractScore(fused: any[], idx: number) {
 // ── nativeRrfSearch ──────────────────────────────────────────────────────────
 
 describe("nativeRrfSearch", () => {
+  it("keeps fact hits when an on-mode linked source stalls", async () => {
+    const priorMode = process.env.RUNIR_SOURCE_RECALL;
+    const priorKey = process.env.RUNIR_SOURCE_HMAC_KEY;
+    process.env.RUNIR_SOURCE_RECALL = "on";
+    process.env.RUNIR_SOURCE_HMAC_KEY = "synthetic-key";
+    try {
+      const hits = [{ id: "m1", text: "Badge identifier is stored", score: 1 }];
+      const before = linkedExactQaFailureCount();
+      const result = await enrichLinkedExactQaHits({ query: () => new Promise(() => {}) } as any,
+        hits, "What is the exact badge identifier?", "u1");
+      expect(result).toBe(hits);
+      expect(linkedExactQaFailureCount()).toBe(before + 1);
+    } finally {
+      if (priorMode === undefined) delete process.env.RUNIR_SOURCE_RECALL; else process.env.RUNIR_SOURCE_RECALL = priorMode;
+      if (priorKey === undefined) delete process.env.RUNIR_SOURCE_HMAC_KEY; else process.env.RUNIR_SOURCE_HMAC_KEY = priorKey;
+    }
+  });
+  it("keeps flag-off parent ranking and performs zero source reads", async () => {
+    const priorMode = process.env.RUNIR_SOURCE_RECALL;
+    const priorKey = process.env.RUNIR_SOURCE_HMAC_KEY;
+    process.env.RUNIR_SOURCE_RECALL = "off";
+    process.env.RUNIR_SOURCE_HMAC_KEY = "synthetic-key";
+    try {
+      const db = { query: vi.fn(async (sql: string) => {
+        if (sql.includes("SELECT id, payload")) return [[
+          { id: "m1", payload: { l2: "Badge identifier is stored", raw_source_text: "ORCHID-42" } },
+          { id: "m2", payload: { l2: "Unrelated badge" } },
+        ]];
+        if (sql.includes("session_turn") || sql.includes("source_turn")) throw new Error("source read");
+        if (sql.includes("embedding")) return [[{ id: "m1" }, { id: "m2" }]];
+        return [[]];
+      }) } as any;
+      const hits = await nativeRrfSearch(db, "u1", [1], "What is the exact ORCHID-42 badge identifier?", 10);
+      expect(hits.map((hit) => hit.id)).toEqual(["m1", "m2"]);
+      expect(hits[0]?.raw_source_text).toBe("ORCHID-42");
+      expect(hits[0]?.exactQaCandidate).toBe(true);
+      expect(db.query.mock.calls.some(([sql]: [string]) => sql.includes("session_turn") || sql.includes("source_turn"))).toBe(false);
+    } finally {
+      if (priorMode === undefined) delete process.env.RUNIR_SOURCE_RECALL; else process.env.RUNIR_SOURCE_RECALL = priorMode;
+      if (priorKey === undefined) delete process.env.RUNIR_SOURCE_HMAC_KEY; else process.env.RUNIR_SOURCE_HMAC_KEY = priorKey;
+    }
+  });
   it("returns empty array on DB failure", async () => {
     const db = { query: vi.fn().mockRejectedValue(new Error("db down")) } as any;
     const warn = vi.fn();

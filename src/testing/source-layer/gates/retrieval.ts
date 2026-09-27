@@ -1,10 +1,17 @@
 import type { GateResult } from "../types.js";
 
-export function retrievalGate(sourceExcerptCount: number, recallCalls: number, factHits: { identifier: number; quote: number; paraphrase: number }): GateResult {
-  const off = sourceExcerptCount === 0;
-  return { id: "retrieval.annotation_exact", family: "retrieval", status: off ? "pending_fail_closed" : "fail",
-    counts: { recallCalls, sourceExcerpts: sourceExcerptCount, exactCases: 2, paraphraseCasesReported: 1,
-      claudeNativeIdentifierFactHit: factHits.identifier, claudeNativeQuoteFactHit: factHits.quote,
-      claudeNativeParaphraseFactHit: factHits.paraphrase },
-    note: off ? "annotation_pending_slice5" : "recall_off_source_emitted" };
+export type RetrievalGateEvidence = {
+  offQualifier: boolean; shadowQualifier: boolean; onQualifier: boolean;
+  offOrder: string[]; shadowOrder: string[]; onOrder: string[];
+  onExcerptCount: number; paraphraseFactHit: number;
+};
+
+export function retrievalGate(e: RetrievalGateEvidence): GateResult {
+  const orderSame = JSON.stringify(e.offOrder) === JSON.stringify(e.shadowOrder)
+    && JSON.stringify(e.offOrder) === JSON.stringify(e.onOrder);
+  return { id: "retrieval.annotation_exact", family: "retrieval",
+    status: !e.offQualifier && !e.shadowQualifier && e.onQualifier && e.onExcerptCount > 0 && orderSame ? "pass" : "fail",
+    counts: { offQualifier: Number(e.offQualifier), shadowQualifier: Number(e.shadowQualifier),
+      onQualifier: Number(e.onQualifier), onExcerpts: e.onExcerptCount, orderSame: Number(orderSame),
+      paraphraseFactHit: e.paraphraseFactHit } };
 }

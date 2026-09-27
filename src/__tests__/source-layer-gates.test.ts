@@ -2,15 +2,16 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { REQUIRED_GATE_IDS, summarize, writeReport } from "../testing/source-layer/report.js";
+import { REQUIRED_GATE_IDS, SLICE5_GATE_IDS, summarize, writeReport } from "../testing/source-layer/report.js";
 import { harmGates } from "../testing/source-layer/gates/harm.js";
 import { percentiles } from "../testing/source-layer/gates/perf.js";
 import type { GateResult, RunManifest } from "../testing/source-layer/types.js";
 
 const gates: GateResult[] = [
   ...REQUIRED_GATE_IDS.map((id): GateResult => ({ id, family: id.split(".")[0] as GateResult["family"], status: "pass", counts: {} })),
-  { id: "retrieval.annotation", family: "retrieval", status: "pending_fail_closed", counts: { excerpts: 0 } },
-  { id: "harm.annotation", family: "harm", status: "pending_fail_closed", counts: { excerpts: 0 } },
+  ...SLICE5_GATE_IDS.map((id): GateResult => ({ id, family: id.split(".")[0] as GateResult["family"], status: "pass", counts: {} })),
+  { id: "retrieval.annotation", family: "retrieval", status: "pass", counts: { excerpts: 1 } },
+  { id: "harm.annotation", family: "harm", status: "pass", counts: { excerpts: 1 } },
 ];
 const manifest: RunManifest = {
   runId: "slice4unit", gitSha: "a".repeat(40), gitDirty: true, startedAt: "2026-01-01T00:00:00Z",
@@ -23,9 +24,9 @@ let dir: string | undefined;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); dir = undefined; });
 
 it("distinguishes Slice 4 completion from release readiness and fails on replay gaps", () => {
-  expect(summarize(gates)).toMatchObject({ slice4Complete: true, releaseReady: false, pendingFailClosed: 2 });
+  expect(summarize(gates)).toMatchObject({ slice4Complete: true, slice5Complete: true, releaseReady: true, pendingFailClosed: 0 });
   expect(summarize([...gates, { id: "replay.queue", family: "replay", status: "fail", counts: {} }]).slice4Complete).toBe(false);
-  expect(harmGates(true, 0).map((r) => r.status)).toEqual(["pass", "pending_fail_closed"]);
+  expect(harmGates({ crossScopePass: true, correctionPass: true, injectionPass: true, shadowPass: true, sourceFailurePass: true }).map((r) => r.status)).toEqual(["pass", "pass", "pass", "pass", "pass"]);
   expect(percentiles([1, 2, 3, 4, 5])).toEqual({ p50Ms: 3, p95Ms: 5, p99Ms: 5 });
 });
 

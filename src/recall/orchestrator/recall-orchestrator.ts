@@ -60,6 +60,7 @@ import {
   postProcessRecallResults,
 } from "../selection/recall-selection.js";
 import { relevanceGateDrops, RECALL_RELEVANCE_FLOOR } from "../selection/relevance-gate.js";
+import { annotateSelectedFacts, sourceRecallMode } from "../source-excerpts.js";
 import { TraceCollector } from "../selection/retrieval-trace.js";
 import {
   extractId,
@@ -803,9 +804,14 @@ export async function orchestrateRecall(
             };
           }
           const nonEmptyRendered = renderedText.filter((l) => l.trim() !== "");
-          const prependContext = nonEmptyRendered.length > 0 ? formatRecallInjectionFromRendered(renderedText) : null;
+          const factContext = nonEmptyRendered.length > 0 ? formatRecallInjectionFromRendered(renderedText) : null;
+          const annotation = factContext && body.sourceExcerptsDisabled !== true
+            ? await annotateSelectedFacts({ db, selected, renderedText, boundary: { userId: uid, sessionId: body.sessionId }, budgetTokens, mode: sourceRecallMode() })
+            : { excerpts: [], block: "" };
+          const prependContext = factContext && annotation.block
+            ? factContext.replace("\n[END UNTRUSTED DATA]", `\n${annotation.block}\n[END UNTRUSTED DATA]`) : factContext;
           if (prependContext) {
-            const retrievalTraceId = await persistTrace(contextIdentity, selected, accessTrackedIds, "deterministic", continuityAudit, prependContext);
+            const retrievalTraceId = await persistTrace(contextIdentity, selected, accessTrackedIds, "deterministic", continuityAudit, factContext);
             if (process.env.RUNIR_RECALL_DEBUG === "1") {
               process.stderr.write(`[recall-debug] selected.length=${selected.length}\n`);
             }
@@ -817,6 +823,7 @@ export async function orchestrateRecall(
                 continuitySource: "deterministic",
                 retrievalTraceId,
                 selected: buildSelectedPayload(selected),
+                ...(annotation.excerpts.length ? { sourceExcerpts: annotation.excerpts } : {}),
                 ...(budgetFit ? { budgetFit } : {}),
                 ...continuityDebugPayload,
               },
@@ -931,6 +938,7 @@ export async function orchestrateRecall(
         recencyWindowHours: policy.recencyWindowHours,
         nowMs: typeof body.nowMs === "number" ? body.nowMs : undefined,
         rankingProfile,
+        entityLookupSessionId: sessionId,
         // Exact-QA preserve floor (Rúnir-qjn4.3 R3): undefined unless the plan's
         // default-OFF exact_qa_preserve_floor entry is enabled. undefined →
         // byte-identical preserve behavior (the default plan path).
@@ -1130,9 +1138,14 @@ export async function orchestrateRecall(
           requestedPath: reqPath,
         })
       : null;
-    const prependContext = sessionOpener
+    const factContext = sessionOpener
       ? formatSessionOpenerInjection(sessionOpener)
       : nonEmptyRendered.length > 0 ? formatRecallInjectionFromRendered(renderedText) : null;
+    const annotation = factContext && !sessionOpener && !isCompactionRecall && body.sourceExcerptsDisabled !== true
+      ? await annotateSelectedFacts({ db, selected, renderedText, boundary: { userId: uid, sessionId: body.sessionId }, budgetTokens, mode: sourceRecallMode() })
+      : { excerpts: [], block: "" };
+    const prependContext = factContext && annotation.block
+      ? factContext.replace("\n[END UNTRUSTED DATA]", `\n${annotation.block}\n[END UNTRUSTED DATA]`) : factContext;
     retrievalAudit.calibration = buildRetrievalCalibrationTelemetry({
       policy,
       candidatePool: withHexisView.filtered,
@@ -1142,7 +1155,7 @@ export async function orchestrateRecall(
       emittedContextSize: prependContext?.length ?? 0,
     });
     const retrievalTraceId = prependContext
-      ? await persistTrace(contextIdentity, selected, accessTrackedIds, fallbackRetrievalPath, retrievalAudit, prependContext)
+      ? await persistTrace(contextIdentity, selected, accessTrackedIds, fallbackRetrievalPath, retrievalAudit, factContext)
       : undefined;
     const overlaySnapshotCount = overlayRegistry.forUser(uid).snapshot().length;
     const rywDiagnostic = {
@@ -1273,6 +1286,7 @@ export async function orchestrateRecall(
           ...(sessionOpener ? { sessionOpener } : {}),
           ...(retrievalTraceId ? { retrievalTraceId } : {}),
           selected: buildSelectedPayload(selected),
+          ...(annotation.excerpts.length ? { sourceExcerpts: annotation.excerpts } : {}),
           ...(withHexisView.budgetFit ? { budgetFit: withHexisView.budgetFit } : {}),
           _debug: {
             trace: { ...finalTrace, hits: debugHits },
@@ -1325,6 +1339,7 @@ export async function orchestrateRecall(
         ...(sessionOpener ? { sessionOpener } : {}),
         ...(retrievalTraceId ? { retrievalTraceId } : {}),
         selected: buildSelectedPayload(selected),
+        ...(annotation.excerpts.length ? { sourceExcerpts: annotation.excerpts } : {}),
         ...(withHexisView.budgetFit ? { budgetFit: withHexisView.budgetFit } : {}),
       },
     };
