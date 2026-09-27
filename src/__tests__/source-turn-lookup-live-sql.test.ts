@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { RecordId } from "surrealdb";
 import { execFileSync } from "node:child_process";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { SurrealClient } from "../storage/surreal/surreal-store.js";
@@ -6,7 +7,7 @@ import { ensureSessionTurnSchema, upsertSourceTurn } from "../storage/surreal/se
 import { ensureSourceTurnLinkSchema, markFactSourceLink, reconcileSourceTurnLinks } from "../storage/surreal/source-turn-link-store.js";
 import { prepareSourceTurn } from "../capture/source-turn-identity.js";
 import { lookupLinkedTurns } from "../storage/surreal/source-turn-lookup.js";
-import { readVerifiedSourceTurns } from "../storage/surreal/verified-source-turns.js";
+import { readVerifiedSourceTurns, SOURCE_FACT_LOOKUP_SQL, SOURCE_TURN_LOOKUP_SQL, sourceChunkLookupSql } from "../storage/surreal/verified-source-turns.js";
 import { annotateSelectedFacts, renderSourceExcerpts, sourceRecallMetricsSnapshot } from "../recall/source-excerpts.js";
 import { scoreExactQaCandidate } from "../domain/memory/exact-qa.js";
 
@@ -37,6 +38,28 @@ beforeAll(async () => {
 afterAll(async () => {
   if (connected) await db.query(`REMOVE NAMESPACE ${namespace};`);
   await db?.close().catch(() => undefined);
+});
+
+it("plans production source lookups as record fetches and an indexed chunk read", async (ctx) => {
+  if (!available) return ctx.skip();
+  await ensureSessionTurnSchema(db);
+  const plans = await db.query<unknown>(
+    [SOURCE_FACT_LOOKUP_SQL, SOURCE_TURN_LOOKUP_SQL, sourceChunkLookupSql(0)]
+      .map((sql) => sql.replace(/;\s*$/, " EXPLAIN;")).join("\n"),
+    { recordIds: [new RecordId("semiote", "plan_fact")], userId: "plan_user", t0: "plan_turn" },
+  );
+  for (const [i, plan] of plans.entries()) {
+    const serialized = JSON.stringify(plan);
+    expect(serialized, `lookup ${i} must not scan a table`).not.toContain("TableScan");
+    expect(serialized, `lookup ${i} must use its point-get or index`).toContain(i === 2 ? "idx_session_turn_chunk_lookup" : "SourceExpr");
+  }
+  const turnPlan = await db.query<unknown>(SOURCE_TURN_LOOKUP_SQL.replace(/;\s*$/, " EXPLAIN;"),
+    { recordIds: [new RecordId("session_turn", "plan_turn")] });
+  expect(JSON.stringify(turnPlan)).toContain("session_turn:plan_turn");
+  const legacy = await db.query<unknown>(
+    "SELECT * FROM semiote WHERE user_id = $userId AND record::id(id) IN $ids EXPLAIN;",
+    { userId: "plan_user", ids: ["plan_fact"] });
+  expect(JSON.stringify(legacy)).toContain("TableScan");
 });
 
 it("reads primary and evidence-only links with tenant, session, team, project and path checks", async (ctx) => {

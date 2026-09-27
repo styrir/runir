@@ -1,7 +1,8 @@
 import { createHmac } from "node:crypto";
+import { RecordId } from "surrealdb";
 import { describe, expect, it } from "vitest";
 import { sourceKeyFingerprint } from "../../capture/source-turn-identity.js";
-import { verifiedSourceEligible } from "./verified-source-turns.js";
+import { readVerifiedSourceTurns, verifiedSourceEligible } from "./verified-source-turns.js";
 import { sourceRecallMode } from "../../recall/source-excerpts.js";
 
 const key = "synthetic-test-key";
@@ -63,5 +64,25 @@ describe("verified primary source eligibility", () => {
     expect(eligible(baseFact, { ...baseTurn, path: "src/other.ts" })).toBe(false);
     expect(eligible({ ...baseFact, path: "src/own.ts" }, { ...baseTurn, path: "src/own.ts" })).toBe(true);
     expect(eligible({ ...baseFact, path: "src/own.ts" }, baseTurn)).toBe(true);
+  });
+
+  it("point-gets string and RecordId links and rejects foreign fact rows", async () => {
+    for (const sourceTurnId of ["turn", new RecordId("session_turn", "turn")]) {
+      const calls: Array<{ sql: string; params: Record<string, unknown> }> = [];
+      const db = { query: async (sql: string, params: Record<string, unknown>) => {
+        calls.push({ sql, params });
+        if (calls.length === 1) return [[{ ...baseFact, id: new RecordId("semiote", "fact"), source_turn_id: sourceTurnId },
+          { ...baseFact, id: new RecordId("semiote", "foreign"), user_id: "user-B", source_turn_id: "foreign" }]];
+        if (calls.length === 2) return [[{ ...baseTurn, id: new RecordId("session_turn", "turn"), chunk_count: 1 }]];
+        return [[{ turn_id: "turn", chunk_index: 0, content: text }]];
+      } };
+      const result = await readVerifiedSourceTurns(db as any, ["fact", new RecordId("semiote", "foreign")], boundary, key);
+      expect([...result.keys()]).toEqual(["fact"]);
+      expect(calls).toHaveLength(3);
+      expect(calls[0]?.params.recordIds).toEqual([new RecordId("semiote", "fact"), new RecordId("semiote", "foreign")]);
+      expect(calls[1]?.params.recordIds).toEqual([new RecordId("session_turn", "turn")]);
+      expect(calls[2]?.sql).toContain("turn_id = $t0");
+      expect(calls.map((call) => call.sql).join(" ")).not.toContain("SELECT *");
+    }
   });
 });
