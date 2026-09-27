@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { SourceExcerpt } from "./source-excerpts.js";
 import type {
   MemoryRole,
   SessionOpenerConfidence,
@@ -128,6 +129,16 @@ export const recallSuccessResponseSchema = z.object({
   continuitySource: continuitySourceSchema.optional(),
   sessionOpener: sessionOpenerSchema.optional(),
   selected: z.array(selectedHitSchema).optional(),
+  // `text` is the neutralised source excerpt, never the raw stored turn.
+  sourceExcerpts: z.array(z.object({
+    factId: z.string(),
+    turnId: z.string(),
+    client: z.string(),
+    role: z.string(),
+    occurredAt: z.string().optional(),
+    text: z.string(),
+    truncated: z.boolean(),
+  }).strict()).optional(),
   budgetFit: recallBudgetFitSchema.optional(),
   _debug: z.unknown().optional(),
 }).strict();
@@ -171,3 +182,5 @@ type _SessionOpenerEvidenceItemRoundTrip = AssertExtends<SessionOpenerEvidenceIt
 type _SessionOpenerEvidenceItemCompatibility = AssertExtends<SessionOpenerEvidenceItem, SessionOpenerEvidenceItemContract>;
 type _SessionOpenerRoundTrip = AssertExtends<SessionOpenerContract, SessionOpenerPayload>;
 type _SessionOpenerCompatibility = AssertExtends<SessionOpenerPayload, SessionOpenerContract>;
+type _SourceExcerptRoundTrip = AssertExtends<NonNullable<RecallSuccessResponse["sourceExcerpts"]>[number], SourceExcerpt>;
+type _SourceExcerptCompatibility = AssertExtends<SourceExcerpt, NonNullable<RecallSuccessResponse["sourceExcerpts"]>[number]>;

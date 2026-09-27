@@ -20,6 +20,7 @@
     "scripts/judge-benchmark/failure-signals.ts",
     "scripts/judge-benchmark/failure-groups.ts",
     "scripts/judge-benchmark/live-replay.ts",
+    "scripts/turn-by-turn-replay-harness.ts",
     "tools/review-studio/**/*.ts"
   ],
   "exclude": [

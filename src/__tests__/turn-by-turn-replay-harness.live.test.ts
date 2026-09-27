@@ -9,20 +9,20 @@ describe.skipIf(!RUN_LIVE_REPLAY_HARNESS)("runTurnByTurnReplayHarness live", () 
   it(
     "executes the isolated replay path and emits inspectable live artifacts",
     async () => {
-      const outputRoot = ".pipeline/test-turn-by-turn-replay-live";
+      const outputRoot = ".styrir/analysis/replay-harness/test-live";
       fs.rmSync(outputRoot, { recursive: true, force: true });
 
       const report = await runTurnByTurnReplayHarness({ outputRoot });
 
       expect(report.mode).toBe("live");
-      expect(report.summary.total).toBe(4);
-      expect(report.assets.latestModePath).toBe(".pipeline/turn-by-turn-replay/latest-live.json");
-      expect(fs.existsSync(path.join(outputRoot, "dogfooding-replay-seed-only.json"))).toBe(true);
-      expect(fs.existsSync(path.join(outputRoot, "dogfooding-replay-core.json"))).toBe(true);
-      expect(fs.existsSync(path.join(outputRoot, "dogfooding-replay-client-scoped.json"))).toBe(true);
-      expect(fs.existsSync(path.join(outputRoot, "dogfooding-replay-prefer-client.json"))).toBe(true);
+      expect(report.summary.total).toBe(16);
+      expect(report.assets.latestModePath).toBe(".styrir/analysis/replay-harness/latest-live.json");
+      expect(fs.existsSync(path.join(outputRoot, "on", "dogfooding-replay-seed-only.json"))).toBe(true);
+      expect(fs.existsSync(path.join(outputRoot, "on", "dogfooding-replay-core.json"))).toBe(true);
+      expect(fs.existsSync(path.join(outputRoot, "on", "dogfooding-replay-client-scoped.json"))).toBe(true);
+      expect(fs.existsSync(path.join(outputRoot, "on", "dogfooding-replay-prefer-client.json"))).toBe(true);
       expect(fs.existsSync(report.assets.viewerPath)).toBe(true);
-      expect(report.scenarios[0]?.turnCount).toBe(22);
+      expect(report.scenarios[0]?.turnCount).toBe(31);
       expect(report.summary.failed).toBe(0);
       expect(report.summary.failedScenarioIds).toEqual([]);
       expect(report.scenarios[0]?.failedTurns).toEqual([]);
@@ -37,7 +37,7 @@ describe.skipIf(!RUN_LIVE_REPLAY_HARNESS)("runTurnByTurnReplayHarness live", () 
           outputRoot,
         }),
       );
-      const coreArtifact = JSON.parse(fs.readFileSync(path.join(outputRoot, "dogfooding-replay-core.json"), "utf8"));
+      const coreArtifact = JSON.parse(fs.readFileSync(path.join(outputRoot, "on", "dogfooding-replay-core.json"), "utf8"));
       const boundariesTurn = coreArtifact.perTurnRecall.find((entry: { turnId: string }) => entry.turnId === "turn-07-boundaries");
       expect(boundariesTurn?.admissibility?.contractId).toBeTruthy();
       expect(
@@ -45,7 +45,7 @@ describe.skipIf(!RUN_LIVE_REPLAY_HARNESS)("runTurnByTurnReplayHarness live", () 
           entry.decision === "barred_group" && entry.group === "current_status",
         ),
       ).toBe(true);
-      const clientScopedArtifact = JSON.parse(fs.readFileSync(path.join(outputRoot, "dogfooding-replay-client-scoped.json"), "utf8"));
+      const clientScopedArtifact = JSON.parse(fs.readFileSync(path.join(outputRoot, "on", "dogfooding-replay-client-scoped.json"), "utf8"));
       const priorityTurn = clientScopedArtifact.perTurnRecall.find((entry: { turnId: string }) => entry.turnId === "turn-01-priority");
       expect(
         priorityTurn?.admissibility?.dropped?.some((entry: { decision: string; group: string; cap: number | null }) =>

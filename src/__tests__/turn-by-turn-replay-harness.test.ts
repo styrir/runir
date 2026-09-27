@@ -1,32 +1,49 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
+import { excerptWindow } from "../recall/source-excerpts.js";
 import {
   buildDefaultReplayPlan,
   buildDryRunScenarioArtifact,
   buildIsolatedServiceEnv,
   buildViewerHtml,
+  compareReplayModes,
   computeSnapshotDelta,
   runTurnByTurnReplayHarness,
 } from "../../scripts/turn-by-turn-replay-harness.js";
 
 describe("buildDefaultReplayPlan", () => {
   const plan = buildDefaultReplayPlan("2026-04-17T05:30:38.012Z", {
-    outputRoot: ".pipeline/test-turn-by-turn-replay-plan",
+    outputRoot: ".styrir/analysis/replay-harness/test-plan",
   });
   const scenario = plan.scenarios[0]!;
 
-  it("builds a dedicated replay scenario with realistic seed tracks and a 20-30 turn session", () => {
-    expect(plan.outputRoot).toBe(".pipeline/test-turn-by-turn-replay-plan");
+  it("builds a dedicated replay scenario with realistic seed tracks and an extended session", () => {
+    expect(plan.outputRoot).toBe(".styrir/analysis/replay-harness/test-plan");
     expect(plan.scenarios).toHaveLength(4);
     expect(scenario.seedTracks).toHaveLength(6);
     expect(scenario.seededMemories.length).toBeGreaterThanOrEqual(12);
     expect(scenario.turns.length).toBeGreaterThanOrEqual(20);
-    expect(scenario.turns.length).toBeLessThanOrEqual(30);
+    expect(scenario.turns.length).toBeLessThanOrEqual(32);
     expect(scenario.mode).toBe("full-lifecycle");
     expect(scenario.validationMode).toBe("live-write");
     expect(plan.scenarios[2]?.recallClient).toBe("claude-code");
     expect(plan.scenarios[3]?.preferredClient).toBe("claude-code");
+  });
+
+  it("places both new details inside the fact-overlap excerpt window", () => {
+    for (const [turnId, detail] of [["turn-28-own-wording-seed", "6321"], ["turn-30-different-phrasing-seed", "7426"]] as const) {
+      const action = scenario.turns.find((turn) => turn.id === turnId)?.writeActions[0];
+      expect(action?.kind).toBe("capture");
+      if (action?.kind !== "capture") continue;
+      const messages = action.body.messages as Array<{ content: string }>;
+      const facts = action.body.captureFixtureFacts as Array<{ l2: string }>;
+      const excerpt = excerptWindow(messages[1]!.content, facts[0]!.l2);
+      expect(messages[1]!.content).toContain(detail);
+      expect(facts[0]!.l2).not.toContain(detail);
+      expect(excerpt.truncated).toBe(true);
+      expect(excerpt.text).toContain(detail);
+    }
   });
 
   it("spreads seeded memory over roughly three months and pins core review requirements", () => {
@@ -52,6 +69,42 @@ describe("buildDefaultReplayPlan", () => {
   });
 });
 
+describe("compareReplayModes probe recovery", () => {
+  it("excludes read-only probe turns from both headlines and marks their rows not applicable", () => {
+    const plan = buildDefaultReplayPlan("2026-04-17T05:30:38.012Z");
+    const probes = [
+      ["turn-24-exact-detail", "RB-4187"],
+      ["turn-29-own-wording", "6321"],
+      ["turn-31-different-phrasing", "7426"],
+    ] as const;
+    const byMode = new Map(["off", "shadow", "on"].map((mode) => [mode, plan.scenarios.slice(0, 2).map((scenario) => {
+      const artifact = buildDryRunScenarioArtifact(plan, scenario);
+      for (const [turnId, detail] of probes) {
+        const recall = artifact.perTurnRecall.find((item) => item.turnId === turnId)!;
+        recall.injectedContext = scenario.mode === "read-only" || mode === "on" ? detail : null;
+      }
+      return artifact;
+    })] as const));
+
+    const comparison = compareReplayModes(byMode) as any;
+    for (const headline of [comparison.headline, comparison.secondary]) {
+      expect(headline.detailProbes).toEqual(probes.map(([turnId, detail]) => expect.objectContaining({
+        turnId, detail, cases: 1, recoveredBefore: 0, recoveredAfter: 1,
+      })));
+      expect(headline.exactDetailRecoveredBefore).toBe(0);
+      expect(headline.exactDetailRecoveredAfter).toBe(3);
+      const readOnlyRows = headline.turns.filter((turn: any) => turn.scenarioId === plan.scenarios[1]!.id && turn.detailProbe);
+      expect(readOnlyRows).toHaveLength(3);
+      for (const row of readOnlyRows) {
+        expect(row.probeStatus).toBe("not applicable (read-only scenario does not write probe captures)");
+        expect(row.exactDetailRecoveredBefore).toBeNull();
+        expect(row.exactDetailRecoveredAfter).toBeNull();
+      }
+    }
+    expect(comparison.note).toContain("read-only scenario does not write probe captures");
+  });
+});
+
 describe("buildIsolatedServiceEnv", () => {
   it("does not inherit parent API auth into spawned replay services", () => {
     const originalApiKey = process.env.RUNIR_API_KEY;
@@ -69,8 +122,8 @@ describe("buildIsolatedServiceEnv", () => {
         database: "test_db",
       });
 
-      expect(env.RUNIR_API_KEY).toBe("");
-      expect(env.RUNIR_REQUIRE_API_KEY).toBe("0");
+      expect(env.RUNIR_API_KEY).toBeUndefined();
+      expect(env.RUNIR_REQUIRE_API_KEY).toBeUndefined();
       expect(env.RUNIR_TEST_MODE).toBe("1");
       expect(env.SURREAL_NS).toBe("test_ns");
       expect(env.SURREAL_DB).toBe("test_db");
@@ -85,22 +138,22 @@ describe("buildIsolatedServiceEnv", () => {
 
 describe("buildDryRunScenarioArtifact", () => {
   const plan = buildDefaultReplayPlan("2026-04-17T05:30:38.012Z", {
-    outputRoot: ".pipeline/test-turn-by-turn-replay-artifact",
+    outputRoot: ".styrir/analysis/replay-harness/test-artifact",
   });
   const artifact = buildDryRunScenarioArtifact(plan, plan.scenarios[0]!);
 
   it("produces a summary-first artifact with turn timeline and db evolution", () => {
     expect(artifact.runMode).toBe("dry-run");
     expect(artifact.seedOverview.trackCount).toBe(6);
-    expect(artifact.summary.totalTurns).toBe(22);
+    expect(artifact.summary.totalTurns).toBe(31);
     expect(artifact.turns[0]?.stages[0]?.kind).toBe("recall");
     expect(artifact.turns.some((turn) => turn.stages.some((stage) => stage.kind === "memory-store"))).toBe(true);
     expect(artifact.turns.some((turn) => turn.stages.some((stage) => stage.kind === "capture"))).toBe(true);
     expect(artifact.turns.some((turn) => turn.stages.some((stage) => stage.kind === "session-end"))).toBe(true);
     expect(artifact.dbEvolution.length).toBeGreaterThan(artifact.summary.totalTurns);
     expect(artifact.seedPlan.recencyBuckets).toHaveLength(4);
-    expect(artifact.replayScenario.turnCount).toBe(22);
-    expect(artifact.perTurnRecall).toHaveLength(22);
+    expect(artifact.replayScenario.turnCount).toBe(31);
+    expect(artifact.perTurnRecall).toHaveLength(31);
     expect(artifact.validationMode).toBe("live-write");
     expect(artifact.summary.selectedSeededCount).toBeGreaterThan(0);
     expect(artifact.perTurnRecall.some((entry) => entry.selected[0]?.provenance !== undefined)).toBe(true);
@@ -156,15 +209,15 @@ describe("computeSnapshotDelta", () => {
 
 describe("runTurnByTurnReplayHarness dry-run", () => {
   it("writes machine-readable artifacts and an HTML review surface", async () => {
-    const outputRoot = ".pipeline/test-turn-by-turn-replay-dry-run";
+    const outputRoot = ".styrir/analysis/replay-harness/test-dry-run";
     const report = await runTurnByTurnReplayHarness({ dryRun: true, outputRoot });
 
     expect(report.mode).toBe("dry-run");
     expect(report.summary.failed).toBe(0);
     expect(report.summary.total).toBe(4);
-    expect(report.scenarios[0]?.turnCount).toBe(22);
+    expect(report.scenarios[0]?.turnCount).toBe(31);
     expect(report.assets.viewerPath).toBe(path.join(outputRoot, "report.html"));
-    expect(report.assets.latestModePath).toBe(".pipeline/turn-by-turn-replay/latest-dry-run.json");
+    expect(report.assets.latestModePath).toBe(".styrir/analysis/replay-harness/latest-dry-run.json");
     expect(fs.existsSync(report.assets.viewerPath)).toBe(true);
     expect(fs.existsSync(report.assets.latestModePath)).toBe(true);
 
@@ -182,10 +235,10 @@ describe("runTurnByTurnReplayHarness dry-run", () => {
       fs.readFileSync(path.join(outputRoot, `${report.scenarios[0]!.id}.json`), "utf8"),
     );
     expect(scenarioArtifact.seedOverview.trackCount).toBe(6);
-    expect(scenarioArtifact.summary.totalTurns).toBe(22);
+    expect(scenarioArtifact.summary.totalTurns).toBe(31);
     expect(scenarioArtifact.seedPlan.recencyBuckets).toHaveLength(4);
-    expect(scenarioArtifact.replayScenario.turnCount).toBe(22);
-    expect(scenarioArtifact.perTurnRecall.length).toBe(22);
+    expect(scenarioArtifact.replayScenario.turnCount).toBe(31);
+    expect(scenarioArtifact.perTurnRecall.length).toBe(31);
     expect(scenarioArtifact.summary.selectedSeededCount).toBeGreaterThan(0);
     expect(scenarioArtifact.perTurnRecall.some((entry: { admissibility?: { selectionEngine?: string } | null }) => entry.admissibility?.selectionEngine === "continuity_resolved")).toBe(true);
     expect(scenarioArtifact.perTurnRecall.some((entry: { retrievalPath?: string | null; latestState?: object | null }) => entry.retrievalPath === "latest_state" && Boolean(entry.latestState))).toBe(true);
@@ -193,7 +246,7 @@ describe("runTurnByTurnReplayHarness dry-run", () => {
 
   it("renders the same report model into the viewer html", () => {
     const plan = buildDefaultReplayPlan("2026-04-17T05:30:38.012Z", {
-      outputRoot: ".pipeline/test-turn-by-turn-replay-viewer",
+      outputRoot: ".styrir/analysis/replay-harness/test-viewer",
     });
     const artifact = buildDryRunScenarioArtifact(plan, plan.scenarios[0]!);
     const report = {
@@ -202,9 +255,9 @@ describe("runTurnByTurnReplayHarness dry-run", () => {
       outputRoot: plan.outputRoot,
       assets: {
         viewerPath: path.join(plan.outputRoot, "report.html"),
-        latestPath: ".pipeline/turn-by-turn-replay/latest.json",
-        latestModePath: ".pipeline/turn-by-turn-replay/latest-dry-run.json",
-        latestViewerPath: ".pipeline/turn-by-turn-replay/latest.html",
+        latestPath: ".styrir/analysis/replay-harness/latest.json",
+        latestModePath: ".styrir/analysis/replay-harness/latest-dry-run.json",
+        latestViewerPath: ".styrir/analysis/replay-harness/latest.html",
       },
       scenarios: [{
         id: artifact.scenarioId,
@@ -236,7 +289,7 @@ describe("runTurnByTurnReplayHarness dry-run", () => {
 
   it("supports read-only replay without write-side stages", () => {
     const readOnlyPlan = buildDefaultReplayPlan("2026-04-17T05:30:38.012Z", {
-      outputRoot: ".pipeline/test-turn-by-turn-replay-read-only",
+      outputRoot: ".styrir/analysis/replay-harness/test-read-only",
       readOnly: true,
     });
     const readOnlyArtifact = buildDryRunScenarioArtifact(readOnlyPlan, readOnlyPlan.scenarios[0]!);
@@ -247,7 +300,7 @@ describe("runTurnByTurnReplayHarness dry-run", () => {
 
   it("pins interesting-turn recall expectations against stale and noisy distractors", () => {
     const plan = buildDefaultReplayPlan("2026-04-17T05:30:38.012Z", {
-      outputRoot: ".pipeline/test-turn-by-turn-replay-interesting",
+      outputRoot: ".styrir/analysis/replay-harness/test-interesting",
     });
     const artifact = buildDryRunScenarioArtifact(plan, plan.scenarios[0]!);
     const interestingTurn = artifact.turns.find((turn) => turn.turnId === "turn-01-priority");
