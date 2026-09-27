@@ -16,7 +16,7 @@ import { harmGates } from "../../src/testing/source-layer/gates/harm.js";
 import { perfGate } from "../../src/testing/source-layer/gates/perf.js";
 import { writeReport } from "../../src/testing/source-layer/report.js";
 import { lookupLinkedTurns } from "../../src/storage/surreal/source-turn-lookup.js";
-import { readVerifiedSourceTurns } from "../../src/storage/surreal/verified-source-turns.js";
+import { readVerifiedSourceTurns, SOURCE_FACT_LOOKUP_SQL } from "../../src/storage/surreal/verified-source-turns.js";
 import { renderSourceExcerpts, sourceRecallMetricsSnapshot, annotateSelectedFacts, excerptWindow } from "../../src/recall/source-excerpts.js";
 import { approximateTokens } from "../../src/recall/policy/preference-packet.js";
 import { nativeRrfSearch, enrichLinkedExactQaHits } from "../../src/recall/query/memory-query.js";
@@ -243,7 +243,7 @@ try {
     boundary: { userId: "synthetic-A", sessionId: "synthetic-primary" }, mode: "on" });
   const originalQuery = db.query;
   (db as any).query = (...args: any[]) => {
-    if (String(args[0]).includes("SELECT * FROM semiote WHERE user_id = $userId AND record::id(id) IN $ids"))
+    if (String(args[0]) === SOURCE_FACT_LOOKUP_SQL)
       throw new Error("synthetic linked source outage");
     return (originalQuery as any).apply(db, args);
   };
@@ -555,6 +555,82 @@ try {
     linkedK5Ms.push(performance.now() - started);
   }
   results.push(perfGate("perf.linked_lookup_k5", linkedK5Ms, 100));
+  stage = "source lookup scale seed";
+  // These rows share one tenant so a user-filtered IN query must inspect the
+  // full 768-dimensional fact corpus. Keep the selected five linked and valid.
+  const scaleUser = "synthetic-scale";
+  const scaleEmbedding = Array.from({ length: 768 }, (_, i) => i === 0 ? 1 : 0);
+  for (let base = 0; base < 9_995; base += 100) {
+    const params: Record<string, unknown> = { embedding: scaleEmbedding };
+    const sql: string[] = [];
+    for (let i = base; i < Math.min(base + 100, 9_995); i++) {
+      const key = `id${i - base}`;
+      params[key] = `scale_decoy_${i}`;
+      sql.push(`CREATE type::record('semiote', $${key}) CONTENT {
+        user_id: 'synthetic-scale', scope: 'user', active: true,
+        payload: { l2: 'Synthetic scale decoy' }, embedding: $embedding,
+        created_at: time::now(), updated_at: time::now()
+      };`);
+    }
+    await db.query(sql.join("\n"), params);
+  }
+  for (let base = 0; base < 1_995; base += 100) {
+    const params: Record<string, unknown> = {};
+    const sql: string[] = [];
+    for (let i = base; i < Math.min(base + 100, 1_995); i++) {
+      const key = `id${i - base}`;
+      const chunkKey = `chunk${i - base}`;
+      params[key] = `scale_turn_decoy_${i}`;
+      params[chunkKey] = `scale_turn_decoy_${i}_chunk`;
+      sql.push(`CREATE type::record('session_turn', $${key}) CONTENT {
+        user_id: 'synthetic-scale', client: 'pi', session_id: 'scale', session_epoch: 'e',
+        turn_key: $${key}, role: 'user', content: '', scope: 'user', chunk_count: 1,
+        created_at: time::now()
+      };`);
+      sql.push(`CREATE type::record('session_turn_chunk', $${chunkKey}) CONTENT {
+        user_id: 'synthetic-scale', turn_id: $${key}, chunk_index: 0,
+        content: 'Synthetic scale source text', text_norm: 'synthetic scale source text'
+      };`);
+    }
+    await db.query(sql.join("\n"), params);
+  }
+  const scaleIds: string[] = [];
+  for (let i = 0; i < 5; i++) {
+    const id = `scale_selected_${i}`;
+    await db.query(`CREATE type::record('semiote', $id) CONTENT {
+      user_id: 'synthetic-scale', scope: 'user', active: true,
+      payload: { l2: 'Synthetic selected fact' }, embedding: $embedding,
+      created_at: time::now(), updated_at: time::now()
+    };`, { id, embedding: scaleEmbedding });
+    const turn = prepareSourceTurn({ userId: scaleUser, client: "pi", sessionId: "scale",
+      sessionEpoch: "selected", turnKey: `selected-${i}`, role: "user",
+      content: `Synthetic selected source ${i}.`, occurredAt: "2026-01-01T00:00:00Z",
+      scope: "user" }, syntheticHmacKey());
+    await upsertSourceTurn(db, turn);
+    await markFactSourceLink(db, id, scaleUser, turn, "pending");
+    await reconcileSourceTurnLinks(db, turn);
+    scaleIds.push(id);
+  }
+  stage = "source lookup scale timing";
+  const scaleMs: number[] = [];
+  for (let i = 0; i < 40; i++) {
+    const started = performance.now();
+    const found = await readVerifiedSourceTurns(db, scaleIds, { userId: scaleUser });
+    if (found.size !== 5) throw new Error("scale lookup did not verify five sources");
+    scaleMs.push(performance.now() - started);
+  }
+  results.push(perfGate("perf.verified_lookup_scale_k5", scaleMs, 25,
+    { semioteRows: 10_000, embeddingDimensions: 768, turnRows: 2_000, chunkRows: 2_000 }));
+  const legacyScanMs: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    const started = performance.now();
+    await db.query("SELECT * FROM semiote WHERE user_id = $userId AND record::id(id) IN $ids;",
+      { userId: scaleUser, ids: scaleIds });
+    legacyScanMs.push(performance.now() - started);
+  }
+  const legacyScaleGate = perfGate("perf.legacy_scan_rejected", legacyScanMs, 25);
+  results.push({ ...legacyScaleGate, status: legacyScaleGate.status === "fail" ? "pass" : "fail",
+    counts: { ...legacyScaleGate.counts, preFixGateFailed: Number(legacyScaleGate.status === "fail") } });
   stage = "stored injection";
   const storedNonce = "knownnonce";
   stage = "stored injection fact";
@@ -686,7 +762,7 @@ try {
     startedAt, machine: cpus()[0]?.model ?? "unknown", surrealUrl: url,
     surrealVersion: version.trim().slice(0, 100), schemaVersion: "preflight-current", redactionVersion: SOURCE_REDACTION_VERSION,
     parserVersion: SOURCE_FORMAT, flags: { sourceStore: "on", sourceRecall: "on" }, concurrency: 1,
-    fixtureHashes: fixtures.hashes, thresholds: { captureAddedP95Ms: 20, linkedLookupP95Ms: 100, sourceTokens: 360, fixtureSpoolLoss: 0 },
+    fixtureHashes: fixtures.hashes, thresholds: { captureAddedP95Ms: 20, linkedLookupP95Ms: 100, verifiedLookupScaleP95Ms: 25, sourceTokens: 360, fixtureSpoolLoss: 0 },
     inputCounts: { ...fixtures.inputCounts, capturedFacts: Number(capture.factsFound ?? 0), adjudicatedPairs: 1, correctionPairs: 1 } };
   const output = await writeReport(join(process.cwd(), ".styrir/analysis/source-layer"), manifest, results);
   original.stdout.call(process.stdout, JSON.stringify({ runId: namespace, summary: output.summary, gates: results.map((r) => ({ id: r.id, status: r.status })) }) + "\n");

@@ -13,7 +13,7 @@ export const REQUIRED_GATE_IDS = [
 ] as const;
 export const SLICE5_GATE_IDS = [
   "retrieval.annotation_exact", "retrieval.linked_exact_parity", "harm.annotation_correction", "harm.cross_scope_recall", "harm.injection_boundary",
-  "harm.shadow_absent", "harm.source_failure", "perf.source_tokens", "perf.linked_lookup_k5",
+  "harm.shadow_absent", "harm.source_failure", "perf.source_tokens", "perf.linked_lookup_k5", "perf.verified_lookup_scale_k5",
 ] as const;
 const NOTE_CODES = new Set(["annotation_pending_slice5", "recall_off_source_emitted", "queue_cap_unenforced", "queue_64mib_case_omitted", "direct_spool_fault", "injection_pending_slice5"]);
 

@@ -148,17 +148,16 @@ export async function forgetSourceSession(
   const ids = (rows[0] ?? []) as string[];
   await spool.forget(ids);
   if (!ids.length) return;
-  await db.query(
-    `BEGIN TRANSACTION;
-     UPDATE semiote SET source_turn_id = NONE, source_turn_hmac = NONE,
-       source_turn_link_state = 'unavailable'
-       WHERE user_id = $userId AND source_turn_id IN $ids;
-     DELETE source_turn_evidence WHERE user_id = $userId AND turn_id IN $ids;
-     DELETE session_turn_chunk WHERE user_id = $userId AND turn_id IN $ids;
-     DELETE session_turn WHERE user_id = $userId AND record::id(id) IN $ids;
-     COMMIT TRANSACTION;`,
-    { userId, ids },
-  );
+  const params: Record<string, unknown> = { userId };
+  const statements = ids.map((id, i) => {
+    params[`turn${i}`] = id;
+    return `UPDATE semiote SET source_turn_id = NONE, source_turn_hmac = NONE,
+      source_turn_link_state = 'unavailable' WHERE user_id = $userId AND source_turn_id = $turn${i};
+      DELETE source_turn_evidence WHERE user_id = $userId AND turn_id = $turn${i};
+      DELETE session_turn_chunk WHERE user_id = $userId AND turn_id = $turn${i};
+      DELETE type::record('session_turn', $turn${i}) WHERE user_id = $userId;`;
+  });
+  await db.query(`BEGIN TRANSACTION;\n${statements.join("\n")}\nCOMMIT TRANSACTION;`, params);
 }
 
 export async function forgetSourceUser(
