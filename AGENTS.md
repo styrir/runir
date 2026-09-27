@@ -41,6 +41,10 @@ command blocks to `AGENTS.md`. Put detailed topic guidance in
 - Agents preparing or consuming a multi-session or agent-to-agent handoff
   should read
   [`docs/agent-guidance/handoffs.md`](docs/agent-guidance/handoffs.md).
+- Agents changing what recall returns (excerpts, ranking, supersession) must
+  run the turn-by-turn replay release check described in
+  [`scripts/source-layer/README.md`](scripts/source-layer/README.md) before
+  proposing a production flag flip.
 - Read-only and isolated subagents should skip both unless their task directly
   needs that guidance.
 

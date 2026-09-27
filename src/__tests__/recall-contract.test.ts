@@ -76,6 +76,17 @@ describe("recall-contract", () => {
     })).toThrow(/unrecognized key/i);
   });
 
+  it("accepts neutralised source excerpts but keeps the success envelope strict", () => {
+    const response = {
+      prependContext: "context",
+      count: 1,
+      sourceExcerpts: [{ factId: "fact-1", turnId: "turn-1", client: "", role: "user", text: "safe excerpt", truncated: false }],
+    };
+    expect(parseRecallResponse(response)).toEqual(response);
+    expect(() => parseRecallResponse({ ...response, extra: true })).toThrow(/unrecognized key/i);
+    expect(() => parseRecallResponse({ ...response, sourceExcerpts: [{ ...response.sourceExcerpts[0], extra: true }] })).toThrow(/unrecognized key/i);
+  });
+
   it("rejects invalid session opener warnings", () => {
     expect(() => parseSessionOpener({
       intent: "continue_previous_work",

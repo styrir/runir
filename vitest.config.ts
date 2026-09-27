@@ -25,7 +25,6 @@ export default defineConfig({
       "test/integration/ryw-overlay-recall.test.ts",
       // Lab-coupled: scripts / harness / lab docs
       "src/__tests__/seed-and-verify.test.ts",
-      "src/__tests__/turn-by-turn-replay-harness.test.ts",
       "src/__tests__/ingestion-harness.test.ts",
       "src/__tests__/recall-quality-audit.test.ts",
       "src/__tests__/migration-mim71.test.ts",
