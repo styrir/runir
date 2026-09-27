@@ -1,6 +1,6 @@
 {
   "name": "runir-claudecode",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Rúnir memory integration for Claude Code with opener, recall, capture, session-finalization hooks, and MCP runir_store.",
   "author": {
     "name": "AlphaComposite"

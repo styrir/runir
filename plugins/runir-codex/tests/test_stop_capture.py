@@ -4,6 +4,7 @@ import os
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "hooks"))
 
@@ -403,10 +404,11 @@ class TestIncrementalCapture:
 
         assert CaptureHandler.captured_body is None
 
-    def test_noise_bank_skip_advances_watermark(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("reason", ["noise-bank", "already captured"])
+    def test_terminal_skip_advances_watermark(self, tmp_path, monkeypatch, reason):
         CaptureHandler.captured_body = None
         CaptureHandler.status_code = 200
-        CaptureHandler.response_body = {"skipped": True, "reason": "noise-bank"}
+        CaptureHandler.response_body = {"skipped": True, "reason": reason}
 
         wm_dir = str(tmp_path / "wm")
         monkeypatch.setattr("watermark.WATERMARK_DIR", wm_dir)

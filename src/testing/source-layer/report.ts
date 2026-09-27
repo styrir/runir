@@ -10,6 +10,7 @@ export const REQUIRED_GATE_IDS = [
   "replay.claude_watermark", "replay.claude_epoch_reset", "replay.codex_watermark",
   "replay.codex_epoch_reset", "replay.app_append_unavailable", "replay.app_forget_race",
   "replay.forget_session", "replay.forget_user", "replay.forget_one_fact",
+  "replay.capture_seen_turn_noop", "replay.capture_mixed_seen_new",
 ] as const;
 export const SLICE5_GATE_IDS = [
   "retrieval.annotation_exact", "retrieval.linked_exact_parity", "harm.annotation_correction", "harm.cross_scope_recall", "harm.injection_boundary",

@@ -1,4 +1,5 @@
 import type { Hono } from "hono";
+import { RecordId } from "surrealdb";
 import { redactFact, redactFactText, redactSourceTurn, redactSourceTurnWithProof } from "../../../shared/source-redaction.js";
 import { resolveLlmBaseUrl, resolveLlmTimeoutMs } from "../../../shared/config.js";
 import { prepareSourceTurn, sourceKeyFingerprint, type SourceTurn } from "../../../capture/source-turn-identity.js";
@@ -93,8 +94,20 @@ import {
 } from "../../runtime.js";
 
 const sourceTurnSpool = new SourceTurnSpool();
-const sourceStoreTimings: Array<{ fingerprintMs: number; prepareMs: number; appendMs: number }> = [];
-export function takeSourceStoreTimingsForTesting(): Array<{ fingerprintMs: number; prepareMs: number; appendMs: number }> {
+let captureExtractionInvocations = 0;
+const captureExtractionInputSizes: number[] = [];
+export function takeCaptureExtractionInvocationsForTesting(): number {
+  if (process.env.RUNIR_TEST_MODE !== "1") throw new Error("capture extraction test seam unavailable");
+  const count = captureExtractionInvocations;
+  captureExtractionInvocations = 0;
+  return count;
+}
+export function takeCaptureExtractionInputSizesForTesting(): number[] {
+  if (process.env.RUNIR_TEST_MODE !== "1") throw new Error("capture extraction test seam unavailable");
+  return captureExtractionInputSizes.splice(0);
+}
+const sourceStoreTimings: Array<{ fingerprintMs: number; prepareMs: number; seenMs: number; appendMs: number }> = [];
+export function takeSourceStoreTimingsForTesting(): Array<{ fingerprintMs: number; prepareMs: number; seenMs: number; appendMs: number }> {
   if (process.env.RUNIR_TEST_MODE !== "1") throw new Error("source timing test seam unavailable");
   return sourceStoreTimings.splice(0);
 }
@@ -105,6 +118,24 @@ export function sourceTurnSpoolForTesting(): SourceTurnSpool {
   return sourceTurnSpool;
 }
 const sourceStoreEnabled = () => process.env.RUNIR_SOURCE_STORE === "on";
+// The local service runs one process. These locks serialize matching capture
+// requests within that process; a multi-process deployment needs shared locks.
+const captureTurnLocks = new Map<string, Promise<void>>();
+async function lockCaptureTurns(ids: string[]): Promise<() => void> {
+  const releases: Array<() => void> = [];
+  for (const id of [...new Set(ids)].sort()) {
+    const prior = captureTurnLocks.get(id);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    captureTurnLocks.set(id, held);
+    if (prior) await prior;
+    releases.push(() => {
+      if (captureTurnLocks.get(id) === held) captureTurnLocks.delete(id);
+      release();
+    });
+  }
+  return () => { for (const release of releases.reverse()) release(); };
+}
 function recordSourceKeyRefusal(error: SourceKeyMismatchError, model: string): void {
   recordPipelineDrop("capture", "element", "source_key_mismatch", model);
   console.error(`[runir] source-store write refused: key fingerprint mismatch configured=${error.configured} recorded=${error.recorded}`);
@@ -1166,6 +1197,11 @@ export function registerHookRoutes(app: Hono) {
     timer.mark("resolve_request_context");
     if (messages.length === 0) return c.json({ skipped: true, reason: "no messages", ...debugTimings() });
 
+    let releaseCaptureTurns: (() => void) | undefined;
+    let extractionCompletionTurns: SourceTurn[] = [];
+    let reservedCaptureTurns: SourceTurn[] = [];
+    let captureCommitted = false;
+    const alreadyExtractedIndices = new Set<number>();
     try {
       const contextIdentity = resolveBodyCanonicalContext(body, uid, capturePath, body.sessionId);
       timer.mark("resolve_identity");
@@ -1244,6 +1280,8 @@ export function registerHookRoutes(app: Hono) {
       // The source store is independent of extraction and of every early
       // capture exit below. Receipt binding has already completed here.
       const sourceTurnsByMessage = new Map<number, { turn: SourceTurn; available: boolean }>();
+      const compressedWithIndices = sourceStoreEnabled()
+        ? compressMessagesWithIndices(formatted, cfg.extractMaxChars) : undefined;
       if (sourceStoreEnabled()) {
         let keyAllowed = false;
         const hmacKey = process.env.RUNIR_SOURCE_HMAC_KEY ?? "";
@@ -1290,19 +1328,73 @@ export function registerHookRoutes(app: Hono) {
           }
         }
         const prepareMs = performance.now() - prepareStart;
+        const seenStart = performance.now();
+        await sourceTurnSpool.seedKnownIds(async () => {
+          const rows = (await runtime.db.query<{
+            id: unknown; user_id?: string; content_hmac?: string; key_fingerprint?: string }>(
+            "SELECT id, user_id, content_hmac, key_fingerprint FROM session_turn;"))[0] ?? [];
+          return rows.map((row) => ({ id: extractId(row.id), userId: row.user_id,
+            hmac: row.content_hmac, keyFingerprint: row.key_fingerprint }));
+        });
+        releaseCaptureTurns = await lockCaptureTurns(prepared.map(({ turn }) => turn.id));
+        const candidates = await sourceTurnSpool.seenCandidates(prepared.map(({ turn }) => turn));
+        const unresolved = prepared.filter((_, index) => candidates[index]?.known && !candidates[index]?.extracted);
+        const rows = unresolved.length ? (await runtime.db.query<{
+          id: unknown; user_id?: string; content_hmac?: string; key_fingerprint?: string }>(
+          "SELECT id, user_id, content_hmac, key_fingerprint FROM $recordIds;",
+          { recordIds: [...new Set(unresolved.map(({ turn }) => turn.id))]
+            .map((id) => new RecordId("session_turn", id)) },
+        ))[0] ?? [] : [];
+        const stored = new Map(rows.map((row) => [extractId(row.id), row]));
+        const seen = prepared.map(({ index, turn }, position) => {
+          const row = stored.get(turn.id);
+          const conflict = row && (row.user_id !== turn.userId || !row.content_hmac
+            || row.content_hmac !== turn.contentHmac || row.key_fingerprint !== turn.keyFingerprint);
+          if (conflict || turn.identityQuality === "content_only") return false;
+          if (candidates[position]?.forgotten && !row) {
+            alreadyExtractedIndices.add(index);
+            return true;
+          }
+          const complete = candidates[position]?.extracted ?? false;
+          if (complete) alreadyExtractedIndices.add(index);
+          return complete;
+        });
+        const unseen = prepared.filter((_, index) => !seen[index]);
+        const seenMs = performance.now() - seenStart;
+        const retainedIndices = new Set(compressedWithIndices?.map(({ originalIndex }) => originalIndex) ?? []);
+        const retainedIncomplete = unseen.some(({ index }) => retainedIndices.has(index));
+        if (!retainedIncomplete && prepared.length === safeFormatted.length) {
+          if (unseen.length) {
+            const held = await sourceTurnSpool.reserveCapture(unseen.map(({ turn }) => turn));
+            reservedCaptureTurns = unseen.filter((_, index) => held.accepted[index]).map(({ turn }) => turn);
+            await sourceTurnSpool.commitCapture(reservedCaptureTurns, []);
+            captureCommitted = true;
+            scheduleSourceDrain();
+          }
+          if (process.env.RUNIR_TEST_MODE === "1") sourceStoreTimings.push({ fingerprintMs: prepareStart - fingerprintStart, prepareMs, seenMs, appendMs: 0 });
+          if (validatedCaptureReceipt) await persistCaptureTraceReceipt(uid, validatedCaptureReceipt);
+          return c.json(validatedCaptureReceipt
+            ? { skipped: false, factsFound: 0, outcomes: { create: 0, skip: 0, "merge-update": 0, supersede: 0 },
+              units: [], rejections: { suppressed: 0, rejected_short: 0, rejected_noise: 0 }, ...debugTimings() }
+            : { skipped: true, reason: "already captured", seen: seen.length, ...debugTimings() });
+        }
         const appendStart = performance.now();
-        const accepted = await sourceTurnSpool.appendBatch(prepared.map((entry) => entry.turn));
+        const appended = await sourceTurnSpool.reserveCapture(unseen.map((entry) => entry.turn));
+        reservedCaptureTurns = unseen.filter((_, index) => appended.accepted[index]).map(({ turn }) => turn);
+        extractionCompletionTurns = unseen.filter((entry, index) => appended.accepted[index]
+          && entry.turn.identityQuality !== "content_only").map(({ turn }) => turn);
         if (process.env.RUNIR_TEST_MODE === "1") sourceStoreTimings.push({
-          fingerprintMs: prepareStart - fingerprintStart, prepareMs,
+          fingerprintMs: prepareStart - fingerprintStart, prepareMs, seenMs,
           appendMs: performance.now() - appendStart,
         });
-        for (let i = 0; i < prepared.length; i++) {
-          const { index, turn } = prepared[i]!;
-          const available = accepted[i] ?? false;
+        for (let i = 0; i < unseen.length; i++) {
+          const { index, turn } = unseen[i]!;
+          const available = appended.accepted[i] ?? false;
           if (!available) recordPipelineDrop("capture", "element", "source_spool_unavailable", cfg.extractModel ?? "unknown");
           sourceTurnsByMessage.set(index, { turn, available });
         }
-        scheduleSourceDrain();
+        for (const { index, turn } of prepared.filter((_, position) => seen[position]))
+          sourceTurnsByMessage.set(index, { turn, available: true });
         }
       }
 
@@ -1320,8 +1412,11 @@ export function registerHookRoutes(app: Hono) {
       });
       timer.mark("score_salience");
 
-      const compressedWithIndices = sourceStoreEnabled()
-        ? compressMessagesWithIndices(formatted, cfg.extractMaxChars) : undefined;
+      if (compressedWithIndices) {
+        const retained = new Set(compressedWithIndices.map(({ originalIndex }) => originalIndex));
+        extractionCompletionTurns = extractionCompletionTurns.filter((turn) =>
+          [...sourceTurnsByMessage.entries()].some(([index, entry]) => retained.has(index) && entry.turn.id === turn.id));
+      }
       const compressed = compressedWithIndices
         ? compressedWithIndices.map(({ message }) => message)
         : compressMessages(formatted, cfg.extractMaxChars);
@@ -1339,15 +1434,19 @@ export function registerHookRoutes(app: Hono) {
       if (!apiKey && !captureFixtureFacts) return c.json({ skipped: true, reason: "no capture API key", ...debugTimings() });
 
       if (!salience.hardOverride && salience.score < 0.25 && noiseBank.initialized) {
+        let isNoise = false;
         try {
           const fullText = safeFormatted.map((m) => m.content).join("\n");
           const inputEmbedding = await provider.embedDocument(fullText);
-          if (noiseBank.isNoise(inputEmbedding)) {
-            timer.mark("noise_bank_filter");
-            return c.json({ skipped: true, reason: "noise-bank", ...debugTimings() });
-          }
+          isNoise = noiseBank.isNoise(inputEmbedding);
         } catch {}
         timer.mark("noise_bank_filter");
+        if (isNoise) {
+          await sourceTurnSpool.commitCapture(reservedCaptureTurns, []);
+          captureCommitted = true;
+          scheduleSourceDrain();
+          return c.json({ skipped: true, reason: "noise-bank", ...debugTimings() });
+        }
       }
 
       const pendingRejections: Array<{ reason: string; candidateText: string; confidence: number }> = [];
@@ -1357,6 +1456,10 @@ export function registerHookRoutes(app: Hono) {
         catch { recordPipelineDrop("capture", "element", "redaction_assertion_failed", cfg.extractModel ?? "unknown"); return; }
         pendingRejections.push({ reason, candidateText, confidence: raw.confidence });
       };
+      if (process.env.RUNIR_TEST_MODE === "1") {
+        captureExtractionInvocations++;
+        captureExtractionInputSizes.push(compressed.length);
+      }
       const extractedRawFacts = captureFixtureFacts ?? await extractMemories(
         compressed,
         resolveCapturePrompt(cfg.customPrompt),
@@ -1372,13 +1475,22 @@ export function registerHookRoutes(app: Hono) {
       timer.mark("extract_memories");
       let rawFacts: ExtractedFact[];
       const sourceIndexByFact = new Map<ExtractedFact, number>();
-      try { rawFacts = extractedRawFacts.map((fact) => {
+      try { rawFacts = extractedRawFacts.filter((fact) => {
+        if (!("source_turn_index" in fact) || typeof fact.source_turn_index !== "number") return true;
+        const originalIndex = compressedWithIndices?.[fact.source_turn_index]?.originalIndex;
+        return originalIndex === undefined || !alreadyExtractedIndices.has(originalIndex);
+      }).map((fact) => {
         const normalized = normalizeExtractedFact(redactFact(fact));
         if ("source_turn_index" in fact && typeof fact.source_turn_index === "number")
           sourceIndexByFact.set(normalized, fact.source_turn_index);
         return normalized;
       }); }
-      catch { return redactionDrop(); }
+      catch {
+        await sourceTurnSpool.commitCapture(reservedCaptureTurns, []);
+        captureCommitted = true;
+        scheduleSourceDrain();
+        return redactionDrop();
+      }
       for (const rejection of pendingRejections) {
         void logRejection(runtime.db, { ...rejection, sessionId: body.sessionId, userId: uid });
       }
@@ -1403,6 +1515,9 @@ export function registerHookRoutes(app: Hono) {
           } catch {}
         }
         timer.mark("handle_empty_facts");
+        await sourceTurnSpool.commitCapture(reservedCaptureTurns, extractionCompletionTurns);
+        captureCommitted = true;
+        scheduleSourceDrain();
         return c.json({ skipped: false, factsFound: 0, outcomes, units: [], rejections, ...debugTimings() });
       }
 
@@ -1619,6 +1734,9 @@ export function registerHookRoutes(app: Hono) {
         await persistCaptureTraceReceipt(uid, validatedCaptureReceipt);
         timer.mark("persist_capture_receipt");
       }
+      await sourceTurnSpool.commitCapture(reservedCaptureTurns, extractionCompletionTurns);
+      captureCommitted = true;
+      scheduleSourceDrain();
       timer.mark("build_response_payload");
       return c.json({
         skipped: false,
@@ -1650,6 +1768,14 @@ export function registerHookRoutes(app: Hono) {
         return c.json({ error: err.message, ...debugTimings() }, err.status);
       }
       return c.json({ error: "capture failed", ...debugTimings() }, 500);
+    } finally {
+      if (!captureCommitted && reservedCaptureTurns.length) {
+        try {
+          await sourceTurnSpool.commitCapture(reservedCaptureTurns, []);
+          scheduleSourceDrain();
+        } catch { /* The request already failed; its retry remains eligible. */ }
+      }
+      releaseCaptureTurns?.();
     }
   });
 

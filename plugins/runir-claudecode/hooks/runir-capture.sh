@@ -10,7 +10,7 @@
 #
 # Configuration env vars (consumed by runir_capture.py directly via os.environ):
 #   RUNIR_USER_ID, RUNIR_API_KEY, RUNIR_CAPTURE_URL, RUNIR_CLIENT,
-#   RUNIR_CAPTURE_TIMEOUT, RUNIR_MAX_TRANSCRIPT_BYTES.
+#   RUNIR_CAPTURE_TIMEOUT, RUNIR_CAPTURE_READ_BUDGET_BYTES, RUNIR_CAPTURE_MAX_LINE_BYTES.
 
 set -euo pipefail
 

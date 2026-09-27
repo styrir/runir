@@ -1,9 +1,29 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 
 const sourceAppend = vi.hoisted(() => vi.fn(async (turns: unknown[]) => turns.map(() => true)));
+const sourceExtracted = vi.hoisted(() => new Map<string, string>());
+const sourceForgotten = vi.hoisted(() => new Set<string>());
+const sourceCommit = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock("../capture/source-turn-spool.js", () => ({
   SourceTurnSpool: class {
     appendBatch = sourceAppend;
+    appendBatchWithFresh = async (turns: unknown[]) => ({ accepted: await sourceAppend(turns), fresh: turns.map(() => true) });
+    seedKnownIds = vi.fn().mockResolvedValue(undefined);
+    seenCandidates = vi.fn(async (turns: Array<{ id: string; contentHmac: string }>) => turns.map((turn) =>
+      ({ known: sourceExtracted.has(turn.id) || sourceForgotten.has(turn.id),
+        extracted: sourceExtracted.get(turn.id) === turn.contentHmac, forgotten: sourceForgotten.has(turn.id) })));
+    reserveCapture = async (turns: unknown[]) => ({ accepted: await sourceAppend(turns), fresh: turns.map(() => true) });
+    commitCapture = vi.fn(async (_turns: unknown[], completed: Array<{ id: string; contentHmac: string }>) => {
+      await sourceCommit(_turns, completed);
+      for (const turn of completed) sourceExtracted.set(turn.id, turn.contentHmac);
+    });
+    initialize = vi.fn().mockResolvedValue(undefined);
+    isExtracted = vi.fn(async (turn: { id: string; contentHmac: string }) => sourceExtracted.get(turn.id) === turn.contentHmac);
+    extractedBatch = vi.fn(async (turns: Array<{ id: string; contentHmac: string }>) =>
+      turns.map((turn) => sourceExtracted.get(turn.id) === turn.contentHmac));
+    markExtracted = vi.fn(async (turns: Array<{ id: string; contentHmac: string }>) => {
+      for (const turn of turns) sourceExtracted.set(turn.id, turn.contentHmac);
+    });
     drain = vi.fn().mockResolvedValue(undefined);
     snapshot = vi.fn().mockReturnValue({ appended: 0, pending: 0, pendingBytes: 0, appendFailures: 0 });
   },
@@ -271,7 +291,8 @@ import { resolveCaptureApiKey } from "../shared/config.js";
 import { getPrimaryMemoryRowsByIds, getRetrievalFootprintFromTrace, getRetrievalTrace, listRetrievalTraces, patchRetrievalTraceCaptureReceipt, patchSemioteProvenance, retrievalFootprintIdentityMatches, upsertSemioteRelation } from "../storage/surreal/phase2-store.js";
 import { normalizeCaptureMessages } from "../capture/extraction/capture.js";
 import { createApp } from "../../index.js";
-import { runtime } from "../app/runtime.js";
+import { cfg, runtime, noiseBank } from "../app/runtime.js";
+import { scoreSessionSalience } from "../capture/continuity/session-salience.js";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -280,6 +301,11 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
   afterEach(() => vi.unstubAllEnvs());
   beforeEach(() => {
     vi.clearAllMocks();
+    sourceExtracted.clear();
+    sourceForgotten.clear();
+    sourceCommit.mockReset().mockResolvedValue(undefined);
+    sourceAppend.mockImplementation(async (turns: unknown[]) => turns.map(() => true));
+    (runtime.db.query as Mock).mockResolvedValue([[]]);
     (extractMemories as Mock).mockResolvedValue([]);
     (arbitrateWrite as Mock).mockResolvedValue({ outcome: "create", memoryId: "m1" });
     (resolveCaptureApiKey as Mock).mockReturnValue("test-api-key");
@@ -556,6 +582,264 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
     expect(await status.json()).toMatchObject({ pending: 0, appendFailures: 0 });
   });
 
+  it("skips an already captured turn before extraction and extracts only the new turn in a mixed batch", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    const stored = new Map<string, { user_id: string; content_hmac: string }>();
+    (runtime.db.query as Mock).mockResolvedValue([[]]);
+    sourceAppend.mockImplementation(async (turns: Array<{ id: string; userId: string; contentHmac: string }>) => {
+      for (const turn of turns) stored.set(turn.id, { user_id: turn.userId, content_hmac: turn.contentHmac });
+      return turns.map(() => true);
+    });
+    const app = getApp();
+    const first = { role: "user", content: "Synthetic first turn", turnKey: "test:first", sessionEpoch: "native" };
+    const second = { role: "user", content: "Synthetic second turn", turnKey: "test:second", sessionEpoch: "native" };
+    const post = async (messages: typeof first[]) => app.request("/hooks/capture", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "test-user", sessionId: "synthetic-seen", client: "claudecode", messages }),
+    });
+    expect((await post([first])).status).toBe(200);
+    const extractionCount = (extractMemories as Mock).mock.calls.length;
+    const repeated = await post([first]);
+    expect(await repeated.json()).toMatchObject({ skipped: true, reason: "already captured" });
+    expect((extractMemories as Mock).mock.calls.length).toBe(extractionCount);
+    expect(sourceAppend).toHaveBeenCalledTimes(1);
+    (extractMemories as Mock).mockResolvedValueOnce([
+      { l2: "Synthetic old fact should be suppressed", confidence: 0.9, source_turn_index: 0 },
+      { l2: "Synthetic new fact should be written", confidence: 0.9, source_turn_index: 1 },
+    ]);
+    expect((await post([first, second])).status).toBe(200);
+    expect((extractMemories as Mock).mock.calls.at(-1)?.[0]).toEqual([first, second]);
+    expect((sourceAppend.mock.calls.at(-1)?.[0] as unknown[]).length).toBe(1);
+    expect((arbitrateWrite as Mock).mock.calls).toHaveLength(1);
+    const beforeConflict = (extractMemories as Mock).mock.calls.length;
+    expect((await post([{ ...first, content: "Synthetic changed first turn" }])).status).toBe(200);
+    expect((extractMemories as Mock).mock.calls.length).toBe(beforeConflict + 1);
+    expect(await (await post([{ ...first, content: "Synthetic changed first turn" }])).json())
+      .toMatchObject({ skipped: true, reason: "already captured" });
+    expect((extractMemories as Mock).mock.calls.length).toBe(beforeConflict + 1);
+  });
+
+  it("does not query record IDs for an absent turn", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    const response = await getApp().request("/hooks/capture", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: "test-user",
+        sessionId: "absent-id", client: "claudecode", messages: [{ role: "user",
+          content: "Synthetic novel turn", turnKey: "novel:1", sessionEpoch: "native" }] }) });
+    expect(response.status).toBe(200);
+    expect((runtime.db.query as Mock).mock.calls.filter(([sql]) =>
+      String(sql).includes("FROM $recordIds"))).toHaveLength(0);
+  });
+
+  it("does not complete a turn dropped by compression", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    const previous = cfg.extractMaxChars;
+    cfg.extractMaxChars = 45;
+    try {
+      const app = getApp();
+      const post = () => app.request("/hooks/capture", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: "test-user",
+          sessionId: "compressed-id", client: "claudecode", messages: [
+            { role: "user", content: "ordinary words ".repeat(20), turnKey: "drop:1", sessionEpoch: "native" },
+            { role: "user", content: "Decided: choose the ORCHID-42 plan", turnKey: "keep:2", sessionEpoch: "native" },
+          ] }) });
+      const response = await post();
+      expect(response.status).toBe(200);
+      const turns = sourceAppend.mock.calls.at(-1)?.[0] as Array<{ id: string }>;
+      expect(turns).toHaveLength(2);
+      expect(sourceExtracted.has(turns[0]!.id)).toBe(false);
+      expect(sourceExtracted.has(turns[1]!.id)).toBe(true);
+      const calls = (extractMemories as Mock).mock.calls.length;
+      expect(await (await post()).json()).toMatchObject({ skipped: true, reason: "already captured" });
+      expect((extractMemories as Mock).mock.calls.length).toBe(calls);
+    } finally { cfg.extractMaxChars = previous; }
+  });
+
+  it("returns 500 after a failed fused commit, writes put-only on fallback, then extracts on retry", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    sourceCommit.mockRejectedValueOnce(new Error("synthetic sync failure"));
+    const app = getApp();
+    const post = (content = "Synthetic commit retry") => app.request("/hooks/capture", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: "test-user",
+        sessionId: "failed-commit", client: "claudecode", messages: [{ role: "user",
+          content, turnKey: "commit:1", sessionEpoch: "native" }] }) });
+    expect((await post()).status).toBe(500);
+    expect(sourceCommit.mock.calls).toHaveLength(2);
+    expect(sourceCommit.mock.calls[0]?.[1]).toHaveLength(1);
+    expect(sourceCommit.mock.calls[1]?.[1]).toHaveLength(0);
+    expect(sourceExtracted.size).toBe(0);
+    expect((await post("Changed synthetic commit retry")).status).toBe(200);
+    expect((extractMemories as Mock).mock.calls).toHaveLength(2);
+    expect(await (await post("Changed synthetic commit retry")).json()).toMatchObject({ skipped: true, reason: "already captured" });
+  });
+
+  it("returns 500 when the noise-bank put-only sync fails, leaving the turn retry eligible", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    vi.mocked(scoreSessionSalience).mockResolvedValueOnce({ score: 0.1, hardOverride: false,
+      signals: { lexicalDensity: 0, causalMarkerCount: 0, technicalArtifactScore: 0 }, reason: "mock" } as any);
+    noiseBank.initialized = true;
+    vi.mocked(noiseBank.isNoise).mockReturnValueOnce(true);
+    sourceCommit.mockRejectedValue(new Error("synthetic sync failure"));
+    try {
+      const post = () => getApp().request("/hooks/capture", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: "test-user",
+          sessionId: "noise-sync-failure", client: "claudecode", messages: [{ role: "user",
+            content: "synthetic noisy text", turnKey: "noise:1", sessionEpoch: "native" }] }) });
+      expect((await post()).status).toBe(500);
+      expect(sourceCommit.mock.calls[0]?.[1]).toEqual([]);
+      expect(sourceExtracted.size).toBe(0);
+      sourceCommit.mockResolvedValue(undefined);
+      expect((await post()).status).toBe(200);
+      expect((extractMemories as Mock).mock.calls).toHaveLength(1);
+    } finally {
+      noiseBank.initialized = false;
+      vi.mocked(noiseBank.isNoise).mockReturnValue(false);
+      vi.mocked(scoreSessionSalience).mockReset().mockResolvedValue({ score: 0.8, hardOverride: false,
+        signals: { lexicalDensity: 0.5, causalMarkerCount: 0, technicalArtifactScore: 0.5 }, reason: "mock" } as any);
+    }
+  });
+
+  it("returns 500 when a fact redaction drop cannot sync its source put", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    (extractMemories as Mock).mockResolvedValue([{ l2: null, confidence: 0.9 }]);
+    sourceCommit.mockRejectedValue(new Error("synthetic sync failure"));
+    const post = () => getApp().request("/hooks/capture", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: "test-user",
+        sessionId: "redaction-sync-failure", client: "claudecode", messages: [{ role: "user",
+          content: "synthetic redactable source", turnKey: "redaction:1", sessionEpoch: "native" }] }) });
+    expect((await post()).status).toBe(500);
+    expect(sourceCommit.mock.calls[0]?.[1]).toEqual([]);
+    expect(sourceExtracted.size).toBe(0);
+    sourceCommit.mockResolvedValue(undefined);
+    expect((await post()).status).toBe(200);
+    expect((extractMemories as Mock).mock.calls).toHaveLength(2);
+  });
+
+  it("does not resurrect a forgotten turn without a row; unlink retains its marker", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    const app = getApp();
+    const post = () => app.request("/hooks/capture", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: "test-user",
+        sessionId: "forget-unlink", client: "claudecode", messages: [{ role: "user",
+          content: "Synthetic forget turn", turnKey: "forget:1", sessionEpoch: "native" }] }) });
+    expect((await post()).status).toBe(200);
+    const id = (sourceAppend.mock.calls[0]?.[0] as Array<{ id: string }>)[0]!.id;
+    const calls = (extractMemories as Mock).mock.calls.length;
+    const unlink = await app.request("/memory/forget", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "test-user", memoryId: "m1" }) });
+    expect(unlink.status).toBe(200);
+    expect(sourceExtracted.has(id)).toBe(true);
+    expect(await (await post()).json()).toMatchObject({ skipped: true, reason: "already captured" });
+    sourceExtracted.delete(id);
+    sourceForgotten.add(id);
+    expect(await (await post()).json()).toMatchObject({ skipped: true, reason: "already captured" });
+    expect((extractMemories as Mock).mock.calls.length).toBe(calls);
+  });
+
+  it("retries after extraction throws and after a missing API key", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    const app = getApp();
+    const post = (turnKey: string) => app.request("/hooks/capture", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "test-user", sessionId: "retry-session", client: "claudecode",
+        messages: [{ role: "user", content: "Synthetic retry turn", turnKey, sessionEpoch: "native" }] }),
+    });
+    (extractMemories as Mock).mockRejectedValueOnce(new Error("synthetic extraction failure"));
+    expect((await post("failed")).status).toBe(500);
+    expect((await post("failed")).status).toBe(200);
+    expect((extractMemories as Mock).mock.calls).toHaveLength(2);
+    (resolveCaptureApiKey as Mock).mockReturnValueOnce("");
+    expect(await (await post("no-key")).json()).toMatchObject({ reason: "no capture API key" });
+    expect((await post("no-key")).status).toBe(200);
+    expect((extractMemories as Mock).mock.calls).toHaveLength(3);
+  });
+
+  it("serializes overlapping identical capture requests through extraction", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    let begin!: () => void;
+    let finish!: () => void;
+    const entered = new Promise<void>((resolve) => { begin = resolve; });
+    const held = new Promise<never[]>((resolve) => { finish = () => resolve([]); });
+    (extractMemories as Mock).mockImplementationOnce(async () => { begin(); return held; });
+    const app = getApp();
+    const post = () => app.request("/hooks/capture", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "test-user", sessionId: "overlap-session", client: "claudecode",
+        messages: [{ role: "user", content: "Synthetic overlap turn", turnKey: "overlap", sessionEpoch: "native" }] }),
+    });
+    const first = post();
+    await entered;
+    const second = post();
+    finish();
+    expect((await first).status).toBe(200);
+    expect(await (await second).json()).toMatchObject({ skipped: true, reason: "already captured" });
+    expect((extractMemories as Mock).mock.calls).toHaveLength(1);
+  });
+
+  it("lets an overlapping waiter extract when the holder fails", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    let begin!: () => void;
+    let fail!: () => void;
+    const entered = new Promise<void>((resolve) => { begin = resolve; });
+    const held = new Promise<never[]>((_resolve, reject) => { fail = () => reject(new Error("synthetic failure")); });
+    (extractMemories as Mock).mockImplementationOnce(async () => { begin(); return held; });
+    const app = getApp();
+    const post = () => app.request("/hooks/capture", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "test-user", sessionId: "overlap-fail-session", client: "claudecode",
+        messages: [{ role: "user", content: "Synthetic overlap failure", turnKey: "overlap-fail" }] }),
+    });
+    const first = post();
+    await entered;
+    const second = post();
+    fail();
+    expect((await first).status).toBe(500);
+    expect((await second).status).toBe(200);
+    expect((extractMemories as Mock).mock.calls).toHaveLength(2);
+  });
+
+  it("keeps content-only repeats and later ordinal repeats eligible", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    const app = getApp();
+    const post = (message: Record<string, unknown>) => app.request("/hooks/capture", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "test-user", sessionId: "repeat-session", client: "grok",
+        messages: [{ role: "user", content: "Exactly repeated text", ...message }] }),
+    });
+    expect((await post({})).status).toBe(200);
+    expect((await post({})).status).toBe(200);
+    expect((await post({ turnIndex: 0, sessionEpoch: "e" })).status).toBe(200);
+    expect((await post({ turnIndex: 1, sessionEpoch: "e" })).status).toBe(200);
+    expect((extractMemories as Mock).mock.calls).toHaveLength(4);
+  });
+
+  it("extracts when source storage is off or its HMAC key is unavailable", async () => {
+    const app = getApp();
+    const post = (sessionId: string) => app.request("/hooks/capture", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "test-user", sessionId, client: "codex",
+        messages: [{ role: "user", content: "Synthetic key fallback", turnIndex: 0, sessionEpoch: "e" }] }),
+    });
+    vi.stubEnv("RUNIR_SOURCE_STORE", "off");
+    expect((await post("store-off")).status).toBe(200);
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "");
+    expect((await post("key-empty")).status).toBe(200);
+    expect((extractMemories as Mock).mock.calls).toHaveLength(2);
+    expect(sourceAppend).not.toHaveBeenCalled();
+  });
+
   it("counts a failed spool append and returns normal capture with an unavailable fact link", async () => {
     vi.stubEnv("RUNIR_SOURCE_STORE", "on");
     vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
@@ -658,6 +942,32 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
         path: undefined,
       },
     );
+  });
+
+  it("persists the capture receipt on an all-seen replay with a success body", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    (getRetrievalTrace as Mock).mockResolvedValue({
+      id: "trace-replay", userId: "agent-hermes", sessionId: "receipt-session", prompt: "Receipt prompt",
+      accessTrackedIds: ["semiote:m1"], items: [{ id: "semiote:m1", score: 0.9 }],
+      createdAt: "2026-08-04T00:00:00.000Z",
+    });
+    const app = getApp();
+    const post = () => app.request("/hooks/capture", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "agent-hermes", client: "grok", sessionId: "receipt-session",
+        retrievalTraceId: "trace-replay", memoryIds: ["semiote:m1"], captureReceipt: true,
+        messages: [
+          { role: "user", content: "Receipt prompt", turnKey: "receipt-user" },
+          { role: "assistant", content: "Receipt answer", turnKey: "receipt-assistant" },
+        ] }),
+    });
+    expect((await post()).status).toBe(200);
+    const replay = await post();
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ skipped: false, factsFound: 0 });
+    expect((extractMemories as Mock).mock.calls).toHaveLength(1);
+    expect(patchRetrievalTraceCaptureReceipt).toHaveBeenCalledTimes(2);
   });
 
   it("POST /hooks/capture ignores malformed memoryIds for legacy non-receipt clients", async () => {
