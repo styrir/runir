@@ -20,6 +20,155 @@ const turn = () => prepareSourceTurn({
 }, "synthetic-key");
 
 describe("durable source spool", () => {
+  it("commits put and extraction marker in one sync, with restart replay", async () => {
+    const path = await directory();
+    const item = turn();
+    const spool = new SourceTurnSpool(path);
+    expect((await spool.reserveCapture([item])).accepted).toEqual([true]);
+    expect(spool.syncCount()).toBe(0);
+    await spool.commitCapture([item], [item]);
+    expect(spool.syncCount()).toBe(1);
+    const restarted = new SourceTurnSpool(path);
+    expect(await restarted.isExtracted(item)).toBe(true);
+    expect(await restarted.seenCandidates([item])).toEqual([{ known: true, extracted: true, forgotten: false }]);
+  });
+
+  it("commits failed extraction puts once and leaves retry eligible", async () => {
+    const path = await directory();
+    const item = turn();
+    const spool = new SourceTurnSpool(path);
+    await spool.reserveCapture([item]);
+    await spool.commitCapture([item], []);
+    expect(spool.syncCount()).toBe(1);
+    expect(await new SourceTurnSpool(path).isExtracted(item)).toBe(false);
+  });
+
+  it("supersedes an unextracted put with changed text and marks the new body durably", async () => {
+    const path = await directory();
+    const oldTurn = turn();
+    const changed = prepareSourceTurn({ userId: "synthetic", client: "pi", sessionId: "s",
+      turnKey: "pi:a", role: "user", content: "changed synthetic source text",
+      occurredAt: "2026-09-25T00:00:00.000Z", scope: "user" }, "synthetic-key");
+    const spool = new SourceTurnSpool(path);
+    await spool.commitCapture([oldTurn], []); // put-only after an extraction failure
+    expect((await spool.reserveCapture([changed])).accepted).toEqual([true]);
+    await spool.commitCapture([changed], [changed]);
+    const replay = new SourceTurnSpool(path);
+    expect(await replay.isExtracted(changed)).toBe(true);
+    expect(await replay.isExtracted(oldTurn)).toBe(false);
+    const drained: string[] = [];
+    await replay.drain(async (item) => { drained.push(item.content); return "inserted"; });
+    expect(drained).toEqual([changed.content]);
+    expect((await replay.reserveCapture([changed])).accepted).toEqual([true]);
+    expect(await replay.isExtracted(changed)).toBe(true);
+  });
+
+  it("keeps a pre-sync crash retry eligible and a post-sync crash complete", async () => {
+    const path = await directory();
+    const item = turn();
+    const interrupted = new SourceTurnSpool(path, async (handle) => {
+      await handle.truncate(0); // Simulate losing all unsynced bytes on crash.
+      throw new Error("crash before sync");
+    });
+    await expect(interrupted.commitCapture([item], [item])).rejects.toThrow();
+    const retry = new SourceTurnSpool(path);
+    expect(await retry.isExtracted(item)).toBe(false);
+    await retry.commitCapture([item], [item]);
+    expect(await new SourceTurnSpool(path).isExtracted(item)).toBe(true);
+  });
+
+  it("removes failed marker bytes before a durable put-only fallback", async () => {
+    const path = await directory();
+    const item = turn();
+    let attempts = 0;
+    const spool = new SourceTurnSpool(path, async (handle) => {
+      if (++attempts === 1) throw new Error("synthetic commit failure");
+      await handle.sync();
+    });
+    await expect(spool.commitCapture([item], [item])).rejects.toThrow("synthetic commit failure");
+    await spool.commitCapture([item], []);
+    const restarted = new SourceTurnSpool(path);
+    expect(await restarted.isExtracted(item)).toBe(false);
+    expect(restarted.snapshot().pending).toBe(1);
+    await restarted.commitCapture([], [item]);
+    expect(await new SourceTurnSpool(path).isExtracted(item)).toBe(true);
+  });
+
+  it("treats an id as unresolved until the seed completes", async () => {
+    const spool = new SourceTurnSpool(await directory());
+    const item = turn();
+    expect(await spool.seenCandidates([item])).toEqual([{ known: true, extracted: false, forgotten: false }]);
+    let release!: () => void;
+    let entered!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const loading = new Promise<void>((resolve) => { entered = resolve; });
+    const seeding = spool.seedKnownIds(async () => { entered(); await blocked; return []; });
+    await loading;
+    const racingCapture = spool.seenCandidates([item]);
+    release();
+    await seeding;
+    expect(await racingCapture).toEqual([{ known: false, extracted: false, forgotten: false }]);
+    expect(await spool.seenCandidates([item])).toEqual([{ known: false, extracted: false, forgotten: false }]);
+  });
+
+  it("seeds known ids once and keeps forgotten ids unresolved", async () => {
+    const spool = new SourceTurnSpool(await directory());
+    const item = turn();
+    let loads = 0;
+    await spool.seedKnownIds(async () => { loads++; return [{ id: item.id,
+      userId: item.userId, hmac: item.contentHmac, keyFingerprint: item.keyFingerprint }]; });
+    await spool.seedKnownIds(async () => { loads++; return []; });
+    expect(loads).toBe(1);
+    expect(await spool.seenCandidates([item])).toEqual([{ known: true, extracted: false, forgotten: false }]);
+    await spool.forget([item.id]);
+    expect(await spool.seenCandidates([item])).toEqual([{ known: true, extracted: false, forgotten: true }]);
+  });
+
+  it("trusts a matching marker over a stale startup row snapshot", async () => {
+    const spool = new SourceTurnSpool(await directory());
+    const item = turn();
+    await spool.commitCapture([item], [item]);
+    await spool.seedKnownIds(async () => [{ id: item.id, userId: "other",
+      hmac: item.contentHmac, keyFingerprint: item.keyFingerprint }]);
+    expect(await spool.seenCandidates([item])).toEqual([{ known: true, extracted: true, forgotten: false }]);
+  });
+  it("retains known ids beyond the former 4096-entry boundary", async () => {
+    const spool = new SourceTurnSpool(await directory());
+    const item = turn();
+    await spool.seedKnownIds(async () => [item, ...Array.from({ length: 5_000 }, (_, index) => ({ id: `other-${index}` }))]);
+    expect(await spool.seenCandidates([item])).toEqual([{ known: true, extracted: false, forgotten: false }]);
+  });
+  it("marks only one concurrent append of the same turn as fresh", async () => {
+    const spool = new SourceTurnSpool(await directory());
+    const [first, retry] = await Promise.all([
+      spool.appendBatchWithFresh([turn()]), spool.appendBatchWithFresh([turn()]),
+    ]);
+    expect(first.accepted).toEqual([true]);
+    expect(retry.accepted).toEqual([true]);
+    expect([first.fresh[0], retry.fresh[0]].sort()).toEqual([false, true]);
+    expect(spool.snapshot().appended).toBe(1);
+  });
+
+  it("marks extraction separately from persistence and clears it on session forget", async () => {
+    const spool = new SourceTurnSpool(await directory());
+    const item = turn();
+    expect(await spool.append(item)).toBe(true);
+    await spool.drain(async () => "inserted");
+    expect(await spool.isExtracted(item)).toBe(false);
+    await spool.markExtracted([item]);
+    expect(await spool.isExtracted(item)).toBe(true);
+    await spool.forgetSession(item.userId, item.sessionId);
+    expect(await spool.isExtracted(item)).toBe(false);
+  });
+  it("replays an extraction-complete marker after restart", async () => {
+    const path = await directory();
+    const item = turn();
+    const first = new SourceTurnSpool(path);
+    await first.append(item);
+    await first.markExtracted([item]);
+    const restarted = new SourceTurnSpool(path);
+    expect(await restarted.isExtracted(item)).toBe(true);
+  });
   it("fsyncs before acceptance, replays after a restart and tombstones after persistence", async () => {
     const path = await directory();
     const first = new SourceTurnSpool(path);

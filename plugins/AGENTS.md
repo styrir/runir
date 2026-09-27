@@ -21,7 +21,7 @@ Packaged Rúnir client integrations. Clients invoke the HTTP service and must re
 ## Work Guidance
 
 - Pi package: edit `plugins/runir-pi`, then `/reload` in Pi (or reinstall path package).
-- Claude/Codex: follow existing hook-contract and marketplace refresh steps.
+- Claude/Codex: follow existing hook-contract and marketplace refresh steps. Claude capture uses a v2 byte-offset watermark with per-run and per-line caps; SessionEnd invokes the same flush reader before closing the session. See `runir-claudecode/README.md` for the env vars and migration behavior.
 - Grok: edit `plugins/runir-grok`, then `python3 plugins/runir-grok/scripts/install_hooks.py --user` and `verify_hooks.py --user`. Optional: `memory_bridge.py --write-config` / `--sync`.
 
 ## Verification

@@ -7,7 +7,9 @@
 STATE_DIR="${STATE_DIR:-${HOME}/.claude/state/runir}"
 STATE_FILE="${STATE_DIR}/session-end-state.json"
 
-# Emit `last_line=N` and `message_count=M` on stdout for the given session_id.
+# Emit legacy `last_line=N` and `message_count=M` on stdout for the given session_id.
+# The worker now stores a byte-size diagnostic in last_line; it no longer uses
+# this field to slice filtered messages. Capture uses capture-watermarks.json.
 # Caller invokes via `eval "$(read_state "$session_id")"` to pull both values into locals.
 # Missing file / missing session / parse error all degrade to "0 / 0" (start from scratch).
 read_state() {
@@ -70,7 +72,7 @@ data.setdefault('sessions', {})[sys.argv[2]] = {
 }
 print(json.dumps(data, indent=2))
 " "$current_json" "$session_id" "$last_line" "$message_count" "$updated_at" > "${STATE_FILE}.tmp" \
-    && mv "${STATE_FILE}.tmp" "$STATE_FILE"
+    && mv -f "${STATE_FILE}.tmp" "$STATE_FILE"
 }
 
 # Drop session entries that haven't been updated in 7+ days.
@@ -92,5 +94,5 @@ kept = {k: v for k, v in sessions.items()
         if datetime.fromisoformat(v.get('updated_at','1970-01-01T00:00:00Z').replace('Z','+00:00')) > cutoff}
 data['sessions'] = kept
 print(json.dumps(data, indent=2))
-" "$STATE_FILE" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
+" "$STATE_FILE" > "${STATE_FILE}.tmp" && mv -f "${STATE_FILE}.tmp" "$STATE_FILE"
 }

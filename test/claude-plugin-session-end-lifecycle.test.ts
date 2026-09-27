@@ -10,7 +10,7 @@ const HOOK = path.join(PLUGIN_ROOT, "hooks/runir-session-end.sh");
 async function runHook(event: Record<string, unknown>, env: Record<string, string>) {
   const child = spawn("bash", [HOOK], {
     cwd: process.cwd(),
-    env,
+    env: { ...env, RUNIR_SESSION_END_TIMEOUT: "1" },
     stdio: ["pipe", "pipe", "pipe"],
   });
 

@@ -442,8 +442,14 @@ async function main() {
         hook_event_name: "SessionEnd",
         reason: sessionEndCase.reason,
       }, baseEnv);
-      await waitForRequestCount(mock.requests, 4 + index);
-      const sent = mock.requests[3 + index]!;
+      const started = Date.now();
+      while (!mock.requests.some((request) => request.bodyJson?.sessionId === sessionEndCase.sessionId &&
+             request.bodyJson?.terminationReason === sessionEndCase.reason)) {
+        if (Date.now() - started > 6000) throw new Error(`timed out waiting for session-end ${sessionEndCase.sessionId}`);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      const sent = mock.requests.find((request) => request.bodyJson?.sessionId === sessionEndCase.sessionId &&
+        request.bodyJson?.terminationReason === sessionEndCase.reason)!;
 
       const report: HookReport = {
         hook: `SessionEnd/session-end (${sessionEndCase.reason})`,

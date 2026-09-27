@@ -57,7 +57,10 @@ Optional overrides:
 | `RUNIR_CAPTURE_TIMEOUT` | `30` | Capture HTTP timeout (seconds) |
 | `RUNIR_SESSION_END_TIMEOUT` | `60` | Session-end curl max-time (seconds) |
 | `RUNIR_OPENER_TIMEOUT` | `10` | Opener curl max-time (seconds) |
-| `RUNIR_MAX_TRANSCRIPT_BYTES` | `10485760` | Skip sessions with transcripts above this size |
+| `RUNIR_CAPTURE_READ_BUDGET_BYTES` | `16777216` | Max transcript bytes scanned per Stop or SessionEnd flush; remaining bytes wait for the next invocation |
+| `RUNIR_CAPTURE_MAX_LINE_BYTES` | `8388608` | Lines above this limit are counted and skipped through their newline |
+| `RUNIR_CAPTURE_BATCH_MESSAGES` | `200` | Max messages per capture POST (hard cap 200) |
+| `RUNIR_CAPTURE_BOOTSTRAP_MESSAGES` | `8` | Recent messages sent on first sight of a session |
 | `RUNIR_SPARSE_THRESHOLD` | `10` | Sessions below this message count get git evidence attached |
 | `RUNIR_MAX_DIFF_CHARS` | `2000` | Max chars of git diff to include per session |
 | `RUNIR_GIT_SRC_PREFIX` | `src/` | git diff path prefix for sparse-session evidence |
@@ -83,10 +86,14 @@ The plugin still writes runtime state to `~/.claude/state/runir/`:
 | `opener-debug.log` | `runir-opener.sh` |
 | `session-end.log` | `runir-session-end.sh` |
 | `capture.log` | `runir_capture.py` |
-| `capture-watermarks.json` | `runir_capture.py` |
+| `capture-watermarks.json` | `runir_capture.py` (v2 byte offsets, native turn keys, migration checkpoints) |
 | `session-end-state.json` | `runir-session-end.sh` |
 
 When debugging `SessionEnd`, do **not** rely on transcript attachments alone. Claude Code writes most hook stdout to debug logs rather than the transcript, and `SessionEnd` is especially easy to misread if you only inspect the JSONL tail. Use `~/.claude/state/runir/session-end.log` (plus `--debug` when needed) as the authoritative signal for whether the hook ran and which exit reason it saw.
+
+Capture reads complete JSONL lines from the saved byte offset and holds an open assistant snapshot until the hook confirms its final text or SessionEnd flushes it. The first sight of a session sends only its last eight turns and saves EOF; v1 message-count cursors migrate by a capped, resumable scan. A replacement file with a changed prefix or smaller size bootstraps its tail, while an inode change with the same prefix keeps the offset. State updates are atomic and locked; concurrent Stop workers for one session exit after a short lock timeout and the next hook catches up. No whole-transcript size refusal remains.
+
+SessionEnd runs the same capped flush first and then sends a bounded tail body to `/hooks/session-end` so the session row closes even if capture has already caught up. Sparse git evidence and `terminationReason` remain on that request. The bounded flush may leave backlog for a later Stop if the session ends during a large catch-up.
 
 The session-end hook also forwards Claude’s lifecycle reason to the server as `terminationReason` (for example `resume`, `clear`, or `prompt_input_exit`) so downstream processing can distinguish a resumed handoff from a true prompt exit.
 

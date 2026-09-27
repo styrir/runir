@@ -67,7 +67,8 @@ try {
     throw new Error("runtime target mismatch");
   const { runDeploymentPreflight } = await import("../../src/app/readiness.js");
   const { runVaultExport } = await import("../../src/lifecycle/archive/vault-exporter.js");
-  const { sourceTurnSpoolForTesting, stopSourceDrainForTesting, startSourceDrainForTesting, takeSourceStoreTimingsForTesting } = await import("../../src/app/routes/hooks/index.js");
+  const { sourceTurnSpoolForTesting, stopSourceDrainForTesting, startSourceDrainForTesting, takeSourceStoreTimingsForTesting,
+    takeCaptureExtractionInvocationsForTesting, takeCaptureExtractionInputSizesForTesting } = await import("../../src/app/routes/hooks/index.js");
   stopDrainForCleanup = stopSourceDrainForTesting;
   const { forgetSourceSession, forgetSourceUser, markFactSourceLink, reconcileSourceTurnLinks } = await import("../../src/storage/surreal/source-turn-link-store.js");
   const { upsertSourceTurn, sourceFingerprintScanCount } = await import("../../src/storage/surreal/session-turn-store.js");
@@ -307,7 +308,7 @@ try {
   results.push(perfGate("perf.linked_lookup", lookupMs, 100));
   const captureMs = { off: [] as number[], on: [] as number[] };
   takeSourceStoreTimingsForTesting();
-  const stepMs = { fingerprint: [] as number[], prepare: [] as number[], append: [] as number[] };
+  const stepMs = { fingerprint: [] as number[], prepare: [] as number[], seen: [] as number[], append: [] as number[] };
   const syncPerRequest: number[] = [];
   const scansPerRequest: number[] = [];
   const cpuBefore = process.cpuUsage();
@@ -333,6 +334,7 @@ try {
         if (latest) {
           stepMs.fingerprint.push(latest.fingerprintMs);
           stepMs.prepare.push(latest.prepareMs);
+          stepMs.seen.push(latest.seenMs);
           stepMs.append.push(latest.appendMs);
         }
         syncPerRequest.push(singletonForReplay.syncCount() - syncBefore);
@@ -444,6 +446,88 @@ try {
     results.push({ id: `replay.${client}_epoch_reset`, family: "replay", status: next.status === 200 && new Set(epochs.map((r) => r.session_epoch)).size === 2 ? "pass" : "fail",
       counts: { turns: epochs.length, epochs: new Set(epochs.map((r) => r.session_epoch)).size } });
   }
+  stage = "capture idempotency";
+  const idempotencySession = `synthetic-idempotency-${suffix}`;
+  const initialMessage = { role: "user", content: `Synthetic idempotency marker ${suffix}`, turnKey: `synthetic:${suffix}:1`, sessionEpoch: "native" };
+  const initialBody = { userId: "synthetic-idempotency", client: "claudecode", sessionId: idempotencySession,
+    disableHexis: true, messages: [initialMessage],
+    captureFixtureFacts: [{ l2: `The synthetic idempotency marker is ${suffix}.`, confidence: 0.99, source_turn_index: 0 }] };
+  const countRows = async (table: string) => Number((await db.query<{ total: number }>(
+    `SELECT count() AS total FROM ${table} GROUP ALL;`))[0]?.[0]?.total ?? 0);
+  takeCaptureExtractionInvocationsForTesting();
+  takeCaptureExtractionInputSizesForTesting();
+  const firstIdempotency = await post("/hooks/capture", initialBody);
+  await waitTurnCount("synthetic-idempotency", idempotencySession, 1);
+  const rowsAfterFirst = await countRows("session_turn");
+  const factsAfterFirst = await countRows("semiote");
+  takeCaptureExtractionInvocationsForTesting();
+  takeCaptureExtractionInputSizesForTesting();
+  const repeatedIdempotency = await post("/hooks/capture", initialBody);
+  const repeatBody = await repeatedIdempotency.json() as { skipped?: boolean; reason?: string };
+  const repeatExtractions = takeCaptureExtractionInvocationsForTesting();
+  const repeatInputSizes = takeCaptureExtractionInputSizesForTesting();
+  const rowsAfterRepeat = await countRows("session_turn");
+  const factsAfterRepeat = await countRows("semiote");
+  results.push({ id: "replay.capture_seen_turn_noop", family: "replay",
+    status: firstIdempotency.status === 200 && repeatedIdempotency.status === 200
+      && repeatBody.skipped === true && repeatBody.reason === "already captured"
+      && rowsAfterRepeat === rowsAfterFirst && factsAfterRepeat === factsAfterFirst
+      && repeatExtractions === 0 && repeatInputSizes.length === 0 ? "pass" : "fail",
+    counts: { newTurns: rowsAfterRepeat - rowsAfterFirst, newFacts: factsAfterRepeat - factsAfterFirst,
+      extractionInvocations: repeatExtractions } });
+  const mixedMessage = { role: "user", content: `Synthetic idempotency novel ${suffix}`,
+    turnKey: `synthetic:${suffix}:2`, sessionEpoch: "native" };
+  const mixed = await post("/hooks/capture", { ...initialBody, messages: [initialMessage, mixedMessage],
+    captureFixtureFacts: [{ l2: `The synthetic novel marker is ${suffix}.`, confidence: 0.99, source_turn_index: 1 }] });
+  const mixedExtractions = takeCaptureExtractionInvocationsForTesting();
+  const mixedInputSizes = takeCaptureExtractionInputSizesForTesting();
+  const mixedTurnCount = await waitTurnCount("synthetic-idempotency", idempotencySession, 2);
+  results.push({ id: "replay.capture_mixed_seen_new", family: "replay",
+    status: mixed.status === 200 && mixedTurnCount === 2 && mixedExtractions === 1
+      && mixedInputSizes.length === 1 && mixedInputSizes[0] === 2 ? "pass" : "fail",
+    counts: { turns: mixedTurnCount, extractionInvocations: mixedExtractions, extractionInputMessages: mixedInputSizes[0] ?? 0 } });
+  await stopSourceDrainForTesting();
+  stage = "seen check performance";
+  const seenMessages = Array.from({ length: 200 }, (_, index) => ({ role: "user", content: `Synthetic seen performance ${suffix} ${index}`,
+    turnKey: `synthetic:${suffix}:perf:${index}`, sessionEpoch: "native" }));
+  const seenBody = { userId: "synthetic-seen-perf", client: "claudecode", sessionId: `synthetic-seen-perf-${suffix}`,
+    disableHexis: true, messages: seenMessages, captureFixtureFacts: [] };
+  if ((await post("/hooks/capture", seenBody)).status !== 200) throw new Error("seen performance seed failed");
+  takeSourceStoreTimingsForTesting();
+  const seen20Body = { ...seenBody, messages: seenMessages.slice(0, 20) };
+  const seen20Samples: number[] = [];
+  for (let sample = 0; sample < 20; sample++) {
+    const response = await post("/hooks/capture", seen20Body);
+    const result = await response.json() as { reason?: string };
+    if (response.status !== 200 || result.reason !== "already captured") throw new Error("seen K20 performance replay failed");
+    const timing = takeSourceStoreTimingsForTesting().at(-1);
+    if (timing) seen20Samples.push(timing.seenMs);
+  }
+  results.push(perfGate("perf.seen_check_k20", seen20Samples, 5));
+  const seenSamples: number[] = [];
+  for (let sample = 0; sample < 20; sample++) {
+    const response = await post("/hooks/capture", seenBody);
+    const result = await response.json() as { skipped?: boolean; reason?: string };
+    if (response.status !== 200 || result.reason !== "already captured") throw new Error("seen performance replay failed");
+    const timing = takeSourceStoreTimingsForTesting().at(-1);
+    if (timing) seenSamples.push(timing.seenMs);
+  }
+  const seenPerf = perfGate("perf.seen_check_k200", seenSamples, 5);
+  results.push(seenPerf);
+  startSourceDrainForTesting();
+  await waitTurnCount("synthetic-seen-perf", seenBody.sessionId, 200);
+  await stopSourceDrainForTesting();
+  if (sourceTurnSpoolForTesting().snapshot().pending !== 0) throw new Error("seen DB performance drain incomplete");
+  takeSourceStoreTimingsForTesting();
+  const storedSeenSamples: number[] = [];
+  for (let sample = 0; sample < 20; sample++) {
+    const response = await post("/hooks/capture", seenBody);
+    const result = await response.json() as { reason?: string };
+    if (response.status !== 200 || result.reason !== "already captured") throw new Error("stored seen performance replay failed");
+    const timing = takeSourceStoreTimingsForTesting().at(-1);
+    if (timing) storedSeenSamples.push(timing.seenMs);
+  }
+  results.push(perfGate("perf.stored_seen_check_k200", storedSeenSamples, 5));
   stage = "append fault";
   const singletonSpool = sourceTurnSpoolForTesting();
   const journal = join(spoolDir, "turns.jsonl");
@@ -451,22 +535,20 @@ try {
   await rename(journal, savedJournal);
   await mkdir(journal);
   const appendBefore = singletonSpool.snapshot().appendFailures;
-  let faultFactId: string | undefined;
+  let faultStatus = 0;
   try {
     const response = await post("/hooks/capture", { userId: "synthetic-fault", client: "claude", sessionId: "fault",
       disableHexis: true, messages: [{ role: "user", content: "Synthetic append fault turn", turnIndex: 0, sessionEpoch: "e" }],
       captureFixtureFacts: [{ l2: "Synthetic append fault fact persists without its source.", confidence: 0.99, source_turn_index: 0 }] });
-    const body = await response.json() as { units?: Array<{ id?: string }> };
-    faultFactId = body.units?.[0]?.id;
+    faultStatus = response.status;
   } finally {
     await rm(journal, { recursive: true, force: true });
     await rename(savedJournal, journal);
+    startSourceDrainForTesting();
   }
-  const fault = faultFactId ? (await db.query<{ source_turn_link_state?: string }>(
-    "SELECT source_turn_link_state FROM type::record('semiote', $id);", { id: faultFactId.replace(/^semiote:/, "") }))[0]?.[0] : undefined;
   const appendDelta = singletonSpool.snapshot().appendFailures - appendBefore;
-  results.push({ id: "replay.app_append_unavailable", family: "replay", status: appendDelta > 0 && fault?.source_turn_link_state === "unavailable" ? "pass" : "fail",
-    counts: { appendFailuresDelta: appendDelta, unavailableFacts: Number(fault?.source_turn_link_state === "unavailable") } });
+  results.push({ id: "replay.app_append_unavailable", family: "replay", status: appendDelta > 0 && faultStatus === 500 ? "pass" : "fail",
+    counts: { appendFailuresDelta: appendDelta, responseStatus: faultStatus } });
   stage = "forget";
   const pendingTurn = prepareSourceTurn({ userId: "synthetic-forget", client: "pi", sessionId: "pending-session", sessionEpoch: "e",
     turnKey: "pi:pending", role: "user", content: "Synthetic pending forget turn", occurredAt: new Date().toISOString(), scope: "user" }, syntheticHmacKey());

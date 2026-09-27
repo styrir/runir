@@ -6,8 +6,11 @@ import { join } from "node:path";
 import { isProvenSourceTurn, type SourceTurn } from "./source-turn-identity.js";
 import { redactSourceTurn } from "../shared/source-redaction.js";
 
-type SpoolEntry = { op: "put"; turn: SourceTurn; queuedAt?: string } | { op: "done" | "forget"; id: string };
+type SpoolEntry = { op: "put"; turn: SourceTurn; queuedAt?: string }
+  | { op: "done" | "forget"; id: string }
+  | { op: "extracted"; id: string; userId: string; sessionId: string; hmac: string; keyFingerprint: string };
 type Pending = { offset: number; length: number; queuedAt: string; bytes: number; userId: string; sessionId: string; hmac: string };
+type AppendResult = { accepted: boolean[]; fresh: boolean[] };
 
 export type SourceSpoolCounters = {
   appended: number;
@@ -26,12 +29,16 @@ export type SourceSpoolCounters = {
 export class SourceTurnSpool {
   private readonly file: string;
   private readonly pending = new Map<string, Pending>();
+  private readonly knownIds = new Set<string>();
+  private knownIdsSeeded = false;
   private readonly forgotten = new Set<string>();
+  private readonly extracted = new Map<string, { userId: string; sessionId: string; hmac: string; keyFingerprint: string }>();
   private readonly inFlight = new Map<string, Promise<unknown>>();
   private serial: Promise<unknown> = Promise.resolve();
-  private appendQueue: Array<{ turns: SourceTurn[]; resolve: (accepted: boolean[]) => void }> = [];
+  private appendQueue: Array<{ turns: SourceTurn[]; resolve: (result: AppendResult) => void }> = [];
   private appendWriter: Promise<void> | undefined;
   private syncs = 0;
+  private rollbackFailed = false;
   private initialized = false;
   private readonly counts = { appended: 0, replayed: 0, appendFailures: 0, persistFailures: 0, conflicts: 0 };
 
@@ -43,6 +50,111 @@ export class SourceTurnSpool {
 
   syncCount(): number { return this.syncs; }
 
+  /** Only a completed extraction is eligible for replay suppression. */
+  async isExtracted(turn: SourceTurn): Promise<boolean> {
+    return (await this.extractedBatch([turn]))[0] ?? false;
+  }
+
+  async extractedBatch(turns: SourceTurn[]): Promise<boolean[]> {
+    await this.initialize();
+    return this.sequence(async () => turns.map((turn) => {
+      const marker = this.extracted.get(turn.id);
+      return marker?.userId === turn.userId && marker.hmac === turn.contentHmac
+        && marker.keyFingerprint === turn.keyFingerprint;
+    }));
+  }
+
+  /** The database snapshot is taken once, in journal order. New puts and markers
+   * then extend the set. Tombstoned ids remain known for a live-row check. */
+  async seedKnownIds(load: () => Promise<Array<{ id: string }>>): Promise<void> {
+    await this.initialize();
+    await this.sequence(async () => {
+      if (this.knownIdsSeeded) return;
+      for (const row of await load()) {
+        this.knownIds.add(row.id);
+      }
+      this.knownIdsSeeded = true;
+    });
+  }
+
+  async seenCandidates(turns: SourceTurn[]): Promise<Array<{ known: boolean; extracted: boolean; forgotten: boolean }>> {
+    await this.initialize();
+    return this.sequence(async () => turns.map((turn) => {
+      const marker = this.extracted.get(turn.id);
+      return { known: !this.knownIdsSeeded || this.knownIds.has(turn.id), forgotten: this.forgotten.has(turn.id),
+        extracted: !this.forgotten.has(turn.id)
+        && marker?.userId === turn.userId && marker.hmac === turn.contentHmac
+        && marker.keyFingerprint === turn.keyFingerprint };
+    }));
+  }
+
+  /** Acceptance is provisional until commitCapture has fsynced the journal. */
+  async reserveCapture(turns: SourceTurn[]): Promise<AppendResult> {
+    await this.initialize();
+    return this.sequence(async () => {
+      const accepted = turns.map((turn) => {
+        if (this.forgotten.has(turn.id)) return false;
+        return true;
+      });
+      return { accepted, fresh: turns.map((turn, index) => accepted[index]!
+        && (!this.pending.has(turn.id) || this.pending.get(turn.id)?.hmac !== turn.contentHmac)
+        && turns.findIndex((item) => item.id === turn.id) === index) };
+    });
+  }
+
+  async commitCapture(turns: SourceTurn[], completed: SourceTurn[]): Promise<void> {
+    if (!turns.length && !completed.length) return;
+    await this.initialize();
+    try { await this.sequence(async () => {
+      const staged = new Map<string, SourceTurn>();
+      for (const turn of turns) {
+        if (this.forgotten.has(turn.id)) continue;
+        const prior = this.pending.get(turn.id)?.hmac ?? staged.get(turn.id)?.contentHmac;
+        if (!prior || prior !== turn.contentHmac) staged.set(turn.id, turn);
+      }
+      const puts = [...staged.values()];
+      const markers = completed.filter((turn) => !this.forgotten.has(turn.id));
+      if (!puts.length && !markers.length) return;
+      const queuedAt = new Date().toISOString();
+      const positions = await this.appendLines([
+        ...puts.map((turn) => `${JSON.stringify({ op: "put", turn, queuedAt })}\n`),
+        ...markers.map((turn) => `${JSON.stringify({ op: "extracted", id: turn.id,
+          userId: turn.userId, sessionId: turn.sessionId, hmac: turn.contentHmac,
+          keyFingerprint: turn.keyFingerprint })}\n`),
+      ]);
+      puts.forEach((turn, index) => {
+        this.pending.set(turn.id, { ...positions[index]!, queuedAt, bytes: Buffer.byteLength(turn.content),
+          userId: turn.userId, sessionId: turn.sessionId, hmac: turn.contentHmac });
+        this.knownIds.add(turn.id);
+        this.counts.appended++;
+      });
+      for (const turn of markers) {
+        this.knownIds.add(turn.id);
+        this.extracted.set(turn.id, { userId: turn.userId, sessionId: turn.sessionId,
+          hmac: turn.contentHmac, keyFingerprint: turn.keyFingerprint });
+      }
+    }); }
+    catch (error) { this.counts.appendFailures += turns.length; throw error; }
+  }
+
+  async markExtracted(turns: SourceTurn[]): Promise<void> {
+    if (!turns.length) return;
+    await this.initialize();
+    await this.sequence(async () => {
+      const fresh = turns.filter((turn) => !this.forgotten.has(turn.id) &&
+        (this.extracted.get(turn.id)?.hmac !== turn.contentHmac
+          || this.extracted.get(turn.id)?.userId !== turn.userId
+          || this.extracted.get(turn.id)?.keyFingerprint !== turn.keyFingerprint));
+      if (!fresh.length) return;
+      await this.appendLines(fresh.map((turn) => `${JSON.stringify({ op: "extracted", id: turn.id,
+        userId: turn.userId, sessionId: turn.sessionId, hmac: turn.contentHmac, keyFingerprint: turn.keyFingerprint })}\n`));
+      for (const turn of fresh) this.extracted.set(turn.id, {
+        userId: turn.userId, sessionId: turn.sessionId, hmac: turn.contentHmac, keyFingerprint: turn.keyFingerprint,
+      });
+      for (const turn of fresh) this.knownIds.add(turn.id);
+    });
+  }
+
   private sequence<T>(work: () => Promise<T>): Promise<T> {
     const next = this.serial.then(work, work);
     this.serial = next.catch(() => undefined);
@@ -50,10 +162,13 @@ export class SourceTurnSpool {
   }
 
   private async appendLines(lines: Iterable<string>): Promise<Array<{ offset: number; length: number }>> {
+    if (this.rollbackFailed) throw new Error("source spool rollback failed");
     const handle = await open(this.file, "a", 0o600);
     let synced = false;
+    let initialOffset: number | undefined;
     try {
       let offset = (await handle.stat()).size;
+      initialOffset = offset;
       const positions: Array<{ offset: number; length: number }> = [];
       const chunks: string[] = [];
       for (const line of lines) {
@@ -68,6 +183,13 @@ export class SourceTurnSpool {
       this.syncs++;
       synced = true;
       return positions;
+    } catch (error) {
+      // Unsynced marker bytes must not be carried into a later successful sync.
+      if (initialOffset !== undefined) {
+        try { await handle.truncate(initialOffset); }
+        catch { this.rollbackFailed = true; }
+      }
+      throw error;
     } finally {
       // A close error after fsync cannot revoke a durable append.
       if (synced) await handle.close().catch(() => undefined);
@@ -94,14 +216,22 @@ export class SourceTurnSpool {
             const length = end - start + 1;
             const entry = JSON.parse(data.subarray(start, end).toString("utf8")) as SpoolEntry;
             if (entry.op === "put" && !this.forgotten.has(entry.turn.id)) {
+              this.knownIds.add(entry.turn.id);
               this.pending.set(entry.turn.id, {
                 offset, length, queuedAt: entry.queuedAt ?? entry.turn.occurredAt,
                 bytes: Buffer.byteLength(entry.turn.content), userId: entry.turn.userId,
                 sessionId: entry.turn.sessionId, hmac: entry.turn.contentHmac,
               });
+            } else if (entry.op === "extracted") {
+              this.knownIds.add(entry.id);
+              if (!this.forgotten.has(entry.id)) this.extracted.set(entry.id, {
+                userId: entry.userId, sessionId: entry.sessionId, hmac: entry.hmac, keyFingerprint: entry.keyFingerprint,
+              });
             } else if (entry.op !== "put") {
+              this.knownIds.add(entry.id);
               if (entry.op === "forget") this.forgotten.add(entry.id);
               this.pending.delete(entry.id);
+              if (entry.op === "forget") this.extracted.delete(entry.id);
             }
             offset += length;
             start = end + 1;
@@ -120,18 +250,22 @@ export class SourceTurnSpool {
   }
 
   async appendBatch(turns: SourceTurn[]): Promise<boolean[]> {
+    return (await this.appendBatchWithFresh(turns)).accepted;
+  }
+
+  async appendBatchWithFresh(turns: SourceTurn[]): Promise<AppendResult> {
     try {
       for (const turn of turns) {
         if (!isProvenSourceTurn(turn) && redactSourceTurn(turn.content) !== turn.content) throw new Error("unredacted source turn");
       }
       await this.initialize();
-      return await new Promise<boolean[]>((resolve) => {
+      return await new Promise<AppendResult>((resolve) => {
         this.appendQueue.push({ turns, resolve });
         this.startAppendWriter();
       });
     } catch {
       this.counts.appendFailures += turns.length;
-      return turns.map(() => false);
+      return { accepted: turns.map(() => false), fresh: turns.map(() => false) };
     }
   }
 
@@ -154,16 +288,23 @@ export class SourceTurnSpool {
       try {
         await this.sequence(async () => {
           const staged = new Map<string, SourceTurn>();
-          const accepted = batch.map(({ turns }) => turns.map((turn) => {
-            if (this.forgotten.has(turn.id)) return false;
+          const freshByRequest: boolean[][] = [];
+          const accepted = batch.map(({ turns }) => {
+            const fresh: boolean[] = [];
+            freshByRequest.push(fresh);
+            return turns.map((turn, turnIndex) => {
+            if (this.forgotten.has(turn.id)) { fresh[turnIndex] = false; return false; }
             const priorHmac = this.pending.get(turn.id)?.hmac ?? staged.get(turn.id)?.contentHmac;
             if (priorHmac && priorHmac !== turn.contentHmac) {
               this.counts.conflicts++;
+              fresh[turnIndex] = false;
               return false;
             }
+            fresh[turnIndex] = !priorHmac;
             if (!priorHmac) staged.set(turn.id, turn);
             return true;
-          }));
+            });
+          });
           const fresh = [...staged.values()];
           if (fresh.length) {
             const queuedAt = new Date().toISOString();
@@ -173,15 +314,16 @@ export class SourceTurnSpool {
                 ...positions[index], queuedAt, bytes: Buffer.byteLength(turn.content),
                 userId: turn.userId, sessionId: turn.sessionId, hmac: turn.contentHmac,
               });
+              this.knownIds.add(turn.id);
               this.counts.appended++;
             });
           }
-          batch.forEach((request, index) => request.resolve(accepted[index]!));
+          batch.forEach((request, index) => request.resolve({ accepted: accepted[index]!, fresh: freshByRequest[index]! }));
         });
       } catch {
         for (const request of batch) {
           this.counts.appendFailures += request.turns.length;
-          request.resolve(request.turns.map(() => false));
+          request.resolve({ accepted: request.turns.map(() => false), fresh: request.turns.map(() => false) });
         }
       }
     }
@@ -250,7 +392,7 @@ export class SourceTurnSpool {
     await this.appendWriter;
     const writes = await this.sequence(async () => {
       if (ids.length) await this.appendLines(ids.map((id) => `${JSON.stringify({ op: "forget", id })}\n`));
-      for (const id of ids) { this.forgotten.add(id); this.pending.delete(id); }
+      for (const id of ids) { this.knownIds.add(id); this.forgotten.add(id); this.pending.delete(id); this.extracted.delete(id); }
       return ids.map((id) => this.inFlight.get(id));
     });
     await Promise.all(writes.map((writing) => writing?.catch(() => undefined)));
@@ -258,16 +400,18 @@ export class SourceTurnSpool {
 
   async forgetSession(userId: string, sessionId: string): Promise<void> {
     await this.initialize();
-    await this.forget([...this.pending.entries()]
-      .filter(([, entry]) => entry.userId === userId && entry.sessionId === sessionId)
-      .map(([id]) => id));
+    await this.forget([...new Set([
+      ...[...this.pending.entries()].filter(([, entry]) => entry.userId === userId && entry.sessionId === sessionId).map(([id]) => id),
+      ...[...this.extracted.entries()].filter(([, entry]) => entry.userId === userId && entry.sessionId === sessionId).map(([id]) => id),
+    ])]);
   }
 
   async forgetUser(userId: string): Promise<void> {
     await this.initialize();
-    await this.forget([...this.pending.entries()]
-      .filter(([, entry]) => entry.userId === userId)
-      .map(([id]) => id));
+    await this.forget([...new Set([
+      ...[...this.pending.entries()].filter(([, entry]) => entry.userId === userId).map(([id]) => id),
+      ...[...this.extracted.entries()].filter(([, entry]) => entry.userId === userId).map(([id]) => id),
+    ])]);
   }
 
   snapshot(): SourceSpoolCounters {

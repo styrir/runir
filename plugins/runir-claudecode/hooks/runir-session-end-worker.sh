@@ -4,9 +4,7 @@ set -euo pipefail
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "${HOOK_DIR}/.." && pwd)}"
 HOOK_LIB_DIR="${PLUGIN_ROOT}/hooks/lib"
-FILTER="${HOOK_LIB_DIR}/extract-messages.jq"
 
-source "${HOOK_LIB_DIR}/stability.sh"
 source "${HOOK_LIB_DIR}/state.sh"
 source "${HOOK_LIB_DIR}/http.sh"
 
@@ -18,7 +16,6 @@ ENDPOINT="${RUNIR_SESSION_END_URL:-${RUNIR_BASE}/hooks/session-end}"
 SESSION_END_TIMEOUT="${RUNIR_SESSION_END_TIMEOUT:-60}"
 
 stage="worker_start"
-tmp_jsonl=""
 tmp_messages=""
 tmp_payload=""
 body_tmp=""
@@ -33,7 +30,7 @@ log() {
 }
 
 cleanup() {
-  rm -f "${INPUT_PATH:-}" "${tmp_jsonl:-}" "${tmp_messages:-}" "${tmp_payload:-}" "${body_tmp:-}"
+  rm -f "${INPUT_PATH:-}" "${tmp_messages:-}" "${tmp_payload:-}" "${body_tmp:-}"
 }
 
 on_exit() {
@@ -64,50 +61,59 @@ fi
 session_log_id="${session_id:-unknown}"
 session_log_reason="${session_end_reason:-unknown}"
 
-if [[ -z "$transcript_path" || "$transcript_path" == "null" ]]; then
-  stage="skip_no_transcript"
-  log "skip: run=${RUN_ID} no transcript_path session=${session_log_id} reason=${session_log_reason}"
-  exit 0
+if [[ -z "$transcript_path" || "$transcript_path" == "null" || ! -f "$transcript_path" ]]; then
+  log "skip: run=${RUN_ID} session=${session_log_id} reason=${session_log_reason} transcript not found"
 fi
 
-if [[ ! -f "$transcript_path" ]]; then
-  stage="skip_missing_transcript"
-  log "skip: run=${RUN_ID} transcript not found session=${session_log_id} reason=${session_log_reason} path=$transcript_path"
-  exit 0
-fi
-
-: "${RUNIR_MAX_TRANSCRIPT_BYTES:=10485760}"
-size=$(wc -c <"$transcript_path" | tr -d ' ')
-if [ "$size" -gt "$RUNIR_MAX_TRANSCRIPT_BYTES" ]; then
-  stage="skip_transcript_too_large"
-  log "skip: run=${RUN_ID} session=${session_log_id} reason=transcript_too_large exit_reason=${session_log_reason} bytes=${size} limit=${RUNIR_MAX_TRANSCRIPT_BYTES}"
-  exit 0
-fi
-
-stage="stabilize_transcript"
-tmp_jsonl=$(mktemp)
-cp "$transcript_path" "$tmp_jsonl"
-stabilize_file "$transcript_path" && cp "$transcript_path" "$tmp_jsonl" || true
+stage="flush_capture"
+flush_deadline=$(( $(date +%s) + SESSION_END_TIMEOUT ))
+while true; do
+  remaining=$(( flush_deadline - $(date +%s) ))
+  if [[ $remaining -le 0 ]]; then
+    log "hold: run=${RUN_ID} session=${session_log_id} stage=flush_timeout"
+    break
+  fi
+  before_offset=$(PYTHONPATH="$HOOK_DIR" python3 -c 'import sys; from runir_watermark import load_entry; print(load_entry(sys.argv[1]).get("offset", 0))' "$session_id" 2>/dev/null || echo 0)
+  if ! RUNIR_SESSION_END_TIMEOUT="$remaining" python3 "${HOOK_DIR}/runir_capture.py" --flush < "$INPUT_PATH" >/dev/null 2>&1; then
+    log "hold: run=${RUN_ID} session=${session_log_id} stage=flush_lock_or_send"
+    sleep 0.1
+    continue
+  fi
+  if [[ ! -f "$transcript_path" ]]; then break; fi
+  flush_offset=$(PYTHONPATH="$HOOK_DIR" python3 -c 'import sys; from runir_watermark import load_entry; print(load_entry(sys.argv[1]).get("offset", 0))' "$session_id" 2>/dev/null || echo 0)
+  flush_size=$(python3 -c 'import os,sys; print(os.path.getsize(sys.argv[1]))' "$transcript_path")
+  if [[ "$flush_offset" -ge "$flush_size" ]]; then break; fi
+  if [[ "$flush_offset" -le "$before_offset" ]]; then
+    log "hold: run=${RUN_ID} session=${session_log_id} stage=flush_no_progress"
+    sleep 0.1
+    continue
+  fi
+done
 
 stage="read_state"
 eval "$(read_state "$session_id")"
 
 stage="extract_messages"
 tmp_messages=$(mktemp)
-jq -Rr -f "$FILTER" "$tmp_jsonl" | \
-  awk "NR > ${last_line}" | \
-  jq -s '.' > "$tmp_messages" 2>/dev/null || echo "[]" > "$tmp_messages"
-
+# The shared reverse reader only retains a bounded tail. On a repeated end,
+# replay the final native turn at the previous offset so the route closes.
+end_tail_count=200
+if [[ "$message_count" -gt 0 ]]; then end_tail_count=1; fi
+python3 "${HOOK_DIR}/runir_capture.py" --session-end-messages "$end_tail_count" \
+  < "$INPUT_PATH" > "$tmp_messages" 2>/dev/null || echo "[]" > "$tmp_messages"
 new_msg_count=$(jq 'length' < "$tmp_messages" 2>/dev/null || echo "0")
 if [[ "$new_msg_count" -eq 0 ]]; then
-  stage="skip_no_new_messages"
-  log "skip: run=${RUN_ID} no new messages session=${session_log_id} reason=${session_log_reason} last_line=${last_line}"
-  exit 0
+  # A sparse transcript still needs a normalizable body for the close route.
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); t=d.get("last_assistant_message") or "[session ended]"; print(json.dumps([{"role":"assistant","content":t}]))'     "$INPUT_PATH" > "$tmp_messages"
+  new_msg_count=1
 fi
 
 stage="prepare_payload"
-total_lines=$(wc -l < "$tmp_jsonl" | tr -d ' ')
-new_message_count=$((message_count + new_msg_count))
+total_bytes=0
+if [[ -f "$transcript_path" ]]; then
+  total_bytes=$(python3 -c 'import os,sys; print(os.path.getsize(sys.argv[1]))' "$transcript_path")
+fi
+new_message_count=$((message_count > 0 ? message_count : new_msg_count))
 tmp_payload=$(mktemp)
 python3 -c "
 import json, sys, subprocess, os
@@ -219,7 +225,7 @@ log "stage: run=${RUN_ID} session=${session_log_id} reason=${session_log_reason}
 
 if [[ "$http_code" =~ ^2 ]]; then
   stage="write_state"
-  write_state "$session_id" "$total_lines" "$new_message_count"
+  write_state "$session_id" "$total_bytes" "$new_message_count"
   prune_old_sessions
   stage="complete"
   log "ok: run=${RUN_ID} session=${session_log_id} reason=${session_log_reason} new_msgs=${new_msg_count} total=${new_message_count} http=${http_code}"

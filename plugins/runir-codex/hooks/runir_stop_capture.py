@@ -32,6 +32,7 @@ KNOWN_TERMINAL_SKIP_REASONS = frozenset({
     "no messages",
     "no normalizable messages",
     "noise-bank",
+    "already captured",
 })
 # Reasons that are NOT terminal (transient/config issues — retry may succeed):
 # "no capture API key" — missing env var, might be set before next Stop
