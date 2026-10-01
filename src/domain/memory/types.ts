@@ -17,3 +17,4 @@ export * from "./retrieval.js";
 export * from "./lifecycle.js";
 export * from "./prompts.js";
 export * from "./exact-qa.js";
+export * from "./processing-lineage.js";

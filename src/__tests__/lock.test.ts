@@ -7,8 +7,32 @@ import {
   ensureConsolidationLockTable,
   ensureStalenessBacklogTable,
 } from "../lifecycle/semion/lock.js";
+import { processingLineageSchemaStatements } from "../storage/surreal/processing-lineage-schema.js";
 
 type MockDb = { query: ReturnType<typeof vi.fn> };
+
+function completeLineageFields(): Record<string, string> {
+  return Object.fromEntries(processingLineageSchemaStatements("staleness_backlog").map((statement) => {
+    const field = statement.match(/^DEFINE FIELD IF NOT EXISTS ([^ ]+)/)?.[1] ?? "";
+    return [field, statement.replace("IF NOT EXISTS ", "")];
+  }));
+}
+
+function schemaAwareBacklogDb(initialFields: Record<string, string>): MockDb & { fields: Record<string, string> } {
+  const state = { fields: { ...initialFields } };
+  const db: MockDb & { fields: Record<string, string> } = {
+    fields: state.fields,
+    query: vi.fn(async (sql: string) => {
+      if (sql.includes("INFO FOR TABLE staleness_backlog")) return [[{ fields: state.fields }]];
+      if (sql.includes("DEFINE FIELD IF NOT EXISTS processing_lineage")) {
+        state.fields = completeLineageFields();
+        db.fields = state.fields;
+      }
+      return [[]];
+    }),
+  };
+  return db;
+}
 
 // acquireLock relies on the UNIQUE idx_cl_key index as the contention arbiter:
 // reap expired lease, CREATE the new one — a live lease makes the CREATE throw
@@ -134,12 +158,36 @@ describe("ensureStalenessBacklogTable", () => {
   it("defines table, fields, and index", async () => {
     const db = { query: vi.fn().mockResolvedValue([[]]) } as any;
     await ensureStalenessBacklogTable(db);
-    expect(db.query).toHaveBeenCalledTimes(8);
+    expect(db.query).toHaveBeenCalledTimes(10);
     const calls = db.query.mock.calls.map((c: any[]) => c[0] as string);
     expect(calls.some((s: string) => s.includes("DEFINE TABLE"))).toBe(true);
+    expect(calls.some((s: string) => s.includes("INFO FOR TABLE staleness_backlog"))).toBe(true);
+    expect(calls.some((s: string) => s.includes("processing_lineage.delivery.restrictions"))).toBe(true);
     expect(calls.some((s: string) => s.includes("user_id"))).toBe(true);
     expect(calls.some((s: string) => s.includes("facts"))).toBe(true);
     expect(calls.some((s: string) => s.includes("status"))).toBe(true);
     expect(calls.some((s: string) => s.includes("idx_sb_status"))).toBe(true);
+  });
+
+  it("uses the production initializer for absent and idempotent lineage schema", async () => {
+    const db = schemaAwareBacklogDb({});
+    await ensureStalenessBacklogTable(db as any);
+    expect(db.fields).toEqual(completeLineageFields());
+    const firstCallCount = db.query.mock.calls.length;
+    await ensureStalenessBacklogTable(db as any);
+    const secondCalls = db.query.mock.calls.slice(firstCallCount).map((call: any[]) => call[0] as string);
+    expect(secondCalls.some((sql: string) => sql.includes("DEFINE FIELD IF NOT EXISTS processing_lineage"))).toBe(false);
+    expect(secondCalls.some((sql: string) => sql.includes("INFO FOR TABLE staleness_backlog"))).toBe(true);
+  });
+
+  it.each([
+    ["partial", { processing_lineage: "DEFINE FIELD processing_lineage ON staleness_backlog TYPE none | object" }],
+    ["incompatible", { processing_lineage: "DEFINE FIELD processing_lineage ON staleness_backlog TYPE none | string" }],
+    ["extra", { ...completeLineageFields(), "processing_lineage.unexpected": "DEFINE FIELD processing_lineage.unexpected ON staleness_backlog TYPE string" }],
+  ] as const)("refuses %s lineage hierarchy before later backlog fields", async (_label, fields) => {
+    const db = schemaAwareBacklogDb(fields);
+    await expect(ensureStalenessBacklogTable(db as any)).rejects.toMatchObject({ name: "ProcessingLineageSchemaError" });
+    const calls = db.query.mock.calls.map((call: any[]) => call[0] as string);
+    expect(calls.some((sql: string) => sql.includes("DEFINE FIELD IF NOT EXISTS user_id"))).toBe(false);
   });
 });

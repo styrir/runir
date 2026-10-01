@@ -21,6 +21,7 @@ import {
 import type { RetrievalAuditRecord } from "../../recall/policy/policy-types.js";
 import { embeddingForStore, extractId, type SurrealClient } from "./surreal-store.js";
 import { redactFact, redactFactText } from "../../shared/source-redaction.js";
+import { ensureProcessingLineageSchema } from "./processing-lineage-schema.js";
 
 export type RetrievalFootprintIdentitySnapshot = {
   userId: string;
@@ -339,6 +340,7 @@ export async function ensurePhase2Schema(db: SurrealClient, embeddingDim = 768):
     "DEFINE ANALYZER IF NOT EXISTS mem_analyzer TOKENIZERS blank,class FILTERS lowercase,snowball(english);",
   );
   await db.query("DEFINE TABLE IF NOT EXISTS semiote SCHEMALESS;");
+  await ensureProcessingLineageSchema(db, "semiote");
   await db.query(`
     DEFINE FIELD IF NOT EXISTS payload ON TABLE semiote TYPE object;
     DEFINE FIELD IF NOT EXISTS embedding ON TABLE semiote TYPE option<array<float>>;
@@ -400,6 +402,7 @@ export async function ensurePhase2Schema(db: SurrealClient, embeddingDim = 768):
   `);
 
   await db.query("DEFINE TABLE IF NOT EXISTS noema SCHEMALESS;");
+  await ensureProcessingLineageSchema(db, "noema");
   await db.query(`
     DEFINE FIELD IF NOT EXISTS canonical ON TABLE noema TYPE object;
     DEFINE FIELD IF NOT EXISTS canonical_text ON TABLE noema TYPE option<string>;

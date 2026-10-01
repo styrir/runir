@@ -12,6 +12,16 @@
  * producer values.
  */
 
+import {
+  classifyProcessingLineage,
+  PROCESSING_LINEAGE_ORIGIN,
+  PROCESSING_LINEAGE_STATE,
+  PROCESSING_LINEAGE_VERSION,
+  PROCESSING_POLICY_VERSION,
+  type ProcessingLineageRestriction,
+  type ProcessingLineageV1,
+} from "../../domain/memory/processing-lineage.js";
+
 export const MINNI_ORIGIN = "minni" as const;
 export const MINNI_PROCESSING_POLICY_VERSION = "runir.minni.local/v1" as const;
 
@@ -76,7 +86,12 @@ export type ProducerAdmissionRefusalReason =
   | "target_user_mismatch"
   | "operation_mismatch"
   | "registration_invalid"
-  | "context_invalid";
+  | "context_invalid"
+  | "authority_mismatch"
+  | "delivery_resolver_unconfigured"
+  | "delivery_resolver_untrusted"
+  | "delivery_evidence_invalid"
+  | "lineage_invalid";
 
 export type ProducerAdmissionRefusal = Readonly<{
   ok: false;
@@ -88,6 +103,24 @@ export type ProducerAdmissionRefusal = Readonly<{
 export type ProducerAdmission =
   | Readonly<{ ok: true; context: ProcessingPolicyContext }>
   | ProducerAdmissionRefusal;
+
+/** Opaque producer-owned delivery evidence; its fields are private by design. */
+export type ProducerDeliveryEvidence = Readonly<{
+  readonly __producerDeliveryEvidence: unique symbol;
+}>;
+
+export interface TrustedProducerDeliveryResolver {
+  resolve(
+    authority: ProducerAuthority,
+    context: unknown,
+  ): ProducerDeliveryEvidence | ProducerAdmissionRefusal;
+}
+
+export type MintedProcessingLineage = Readonly<{
+  ok: true;
+  context: ProcessingPolicyContext;
+  lineage: ProcessingLineageV1;
+}>;
 
 export type ProducerAdmissionInput = Readonly<{
   /** Must be created by a server-authenticated producer adapter. */
@@ -128,6 +161,13 @@ const serverTargetUserIdentity = new WeakMap<object, string>();
 const serverOperationIdentity = new WeakMap<object, ProducerOperation>();
 const processingPolicyContextIdentity = new WeakMap<object, ProcessingPolicyContextBinding>();
 const authorityIdentity = new WeakMap<ProducerAuthority, AuthorityState>();
+type ProducerDeliveryEvidenceBinding = Readonly<{
+  state: AuthorityState;
+  contextBinding: ProcessingPolicyContextBinding;
+  restrictions: readonly ProcessingLineageRestriction[];
+}>;
+const producerDeliveryEvidenceIdentity = new WeakMap<object, ProducerDeliveryEvidenceBinding>();
+const producerDeliveryResolverIdentity = new WeakMap<object, "unconfigured" | "synthetic">();
 
 function refusal(reason: ProducerAdmissionRefusalReason): ProducerAdmissionRefusal {
   return {
@@ -232,6 +272,13 @@ function currentContextRefusal(
   if (registration.registrationRef !== binding.registrationRef || registration.principalRef !== binding.principalRef) {
     return "registration_mismatch";
   }
+  if (registration.origin !== MINNI_ORIGIN || registration.policyVersion !== MINNI_PROCESSING_POLICY_VERSION) {
+    return "registration_invalid";
+  }
+  const principalRegistration = binding.state.byPrincipal.get(binding.principalRef);
+  if (!principalRegistration || principalRegistration.registrationRef !== binding.registrationRef) {
+    return "registration_mismatch";
+  }
   if (binding.state.revoked.has(binding.registrationRef) || registration.status !== "active") {
     return "registration_revoked";
   }
@@ -246,6 +293,55 @@ function currentContextRefusal(
   }
   return undefined;
 }
+
+function createOpaqueProducerDeliveryEvidence(
+  authority: ProducerAuthority,
+  context: unknown,
+  restrictions: readonly ProcessingLineageRestriction[],
+): ProducerDeliveryEvidence | ProducerAdmissionRefusal {
+  const state = authorityIdentity.get(authority);
+  const contextObject = asObject(context);
+  const contextBinding = contextObject ? processingPolicyContextIdentity.get(contextObject) : undefined;
+  if (!state || !contextBinding || contextBinding.state !== state || !isTrustedProcessingPolicyContext(context)) {
+    return refusal("authority_mismatch");
+  }
+  const evidence = Object.freeze({}) as ProducerDeliveryEvidence;
+  producerDeliveryEvidenceIdentity.set(evidence, {
+    state,
+    contextBinding,
+    restrictions: Object.freeze([...restrictions]),
+  });
+  return evidence;
+}
+
+const productionProducerDeliveryResolver: TrustedProducerDeliveryResolver = Object.freeze({
+  resolve: () => refusal("delivery_resolver_unconfigured"),
+});
+producerDeliveryResolverIdentity.set(productionProducerDeliveryResolver, "unconfigured");
+
+/**
+ * Fixed synthetic resolver used by source tests only. It has no caller-supplied
+ * flags: its fixture restrictions are selected from the already authenticated
+ * server operation and the resulting evidence is bound to this authority and
+ * context through a private identity map.
+ */
+export const syntheticProducerDeliveryResolver: TrustedProducerDeliveryResolver = Object.freeze({
+  resolve: (authority: ProducerAuthority, context: unknown) => {
+    const contextObject = asObject(context);
+    const contextBinding = contextObject ? processingPolicyContextIdentity.get(contextObject) : undefined;
+    const state = authorityIdentity.get(authority);
+    if (!state || !contextBinding || contextBinding.state !== state || !isTrustedProcessingPolicyContext(context)) {
+      return refusal("authority_mismatch");
+    }
+    const restrictions: readonly ProcessingLineageRestriction[] = context.operation === "capture_ingest"
+      ? []
+      : context.operation === "scheduled_maintenance"
+        ? ["audio_derived"]
+        : ["audio_derived", "excluded_source", "producer_local_only"];
+    return createOpaqueProducerDeliveryEvidence(authority, context, restrictions);
+  },
+});
+producerDeliveryResolverIdentity.set(syntheticProducerDeliveryResolver, "synthetic");
 
 /**
  * Internal boundary constructor for a principal authenticated by server code.
@@ -432,6 +528,9 @@ export function replaceProducerRegistration(
   authority: ProducerAuthority,
   registration: TrustedProducerRegistration,
 ): void {
+  if (registration.origin !== MINNI_ORIGIN || registration.policyVersion !== MINNI_PROCESSING_POLICY_VERSION) {
+    throw new TypeError("producer registration policy is unsupported");
+  }
   const state = authorityIdentity.get(authority);
   const current = state?.byRegistration.get(registration.registrationRef);
   if (!state || !current) throw new TypeError("producer registration is unknown");
@@ -456,6 +555,89 @@ export function assertTrustedProcessingPolicyContext(
   }
   const reason = currentContextRefusal(value, binding, expected);
   if (reason) throw new ProducerPolicyRefusalError(reason);
+}
+
+function isProducerAdmissionRefusal(value: unknown): value is ProducerAdmissionRefusal {
+  const object = asObject(value);
+  return Boolean(
+    object
+    && (object as { ok?: unknown }).ok === false
+    && (object as { code?: unknown }).code === "producer_policy_refused"
+    && (object as { contentFree?: unknown }).contentFree === true,
+  );
+}
+
+/**
+ * Mint persisted Minni provenance only from an opaque context admitted by the
+ * same authority instance. Current registration state is checked again at the
+ * mint point, so expiry, revocation, replacement, and grant changes cannot be
+ * bypassed by retaining an earlier context. The production authority has no
+ * registrations and therefore refuses until a later owner gate provisions it.
+ */
+export function mintProcessingLineage(
+  authority: ProducerAuthority,
+  context: unknown,
+  deliveryEvidenceOrResolver: ProducerDeliveryEvidence | TrustedProducerDeliveryResolver = productionProducerDeliveryResolver,
+): MintedProcessingLineage | ProducerAdmissionRefusal {
+  const state = authorityIdentity.get(authority);
+  const contextObject = asObject(context);
+  const binding = contextObject ? processingPolicyContextIdentity.get(contextObject) : undefined;
+  if (!state || !binding || binding.state !== state || !isTrustedProcessingPolicyContext(context)) {
+    return refusal("authority_mismatch");
+  }
+  const beforeRefusal = currentContextRefusal(context, binding, {});
+  if (beforeRefusal) return refusal(beforeRefusal);
+
+  let evidence: ProducerDeliveryEvidence;
+  const resolverKind = asObject(deliveryEvidenceOrResolver)
+    ? producerDeliveryResolverIdentity.get(deliveryEvidenceOrResolver)
+    : undefined;
+  if (resolverKind !== undefined) {
+    if (resolverKind === "unconfigured") return refusal("delivery_resolver_unconfigured");
+    let resolved: ProducerDeliveryEvidence | ProducerAdmissionRefusal;
+    try {
+      resolved = (deliveryEvidenceOrResolver as TrustedProducerDeliveryResolver).resolve(authority, context);
+    } catch {
+      return refusal("delivery_evidence_invalid");
+    }
+    if (isProducerAdmissionRefusal(resolved)) return resolved;
+    evidence = resolved;
+    const afterResolverRefusal = currentContextRefusal(context, binding, {});
+    if (afterResolverRefusal) return refusal(afterResolverRefusal);
+  } else {
+    if (deliveryEvidenceOrResolver === undefined) return refusal("delivery_resolver_unconfigured");
+    const evidenceObject = asObject(deliveryEvidenceOrResolver);
+    const evidenceBinding = evidenceObject
+      ? producerDeliveryEvidenceIdentity.get(evidenceObject)
+      : undefined;
+    if (!evidenceBinding) return refusal("delivery_resolver_untrusted");
+    if (evidenceBinding.state !== state || evidenceBinding.contextBinding !== binding) {
+      return refusal("authority_mismatch");
+    }
+    evidence = deliveryEvidenceOrResolver as ProducerDeliveryEvidence;
+  }
+
+  const evidenceBinding = producerDeliveryEvidenceIdentity.get(evidence);
+  if (!evidenceBinding || evidenceBinding.state !== state || evidenceBinding.contextBinding !== binding) {
+    return refusal("delivery_evidence_invalid");
+  }
+  const restrictions = evidenceBinding.restrictions;
+  const parsed = classifyProcessingLineage({
+    state: PROCESSING_LINEAGE_STATE,
+    origin: PROCESSING_LINEAGE_ORIGIN,
+    producer_principal_ref: context.principalRef,
+    producer_registration_ref: context.registrationRef,
+    processing_policy_version: PROCESSING_POLICY_VERSION,
+    admitted_operation: context.operation,
+    target_user_id: context.targetUserId,
+    delivery: {
+      version: PROCESSING_LINEAGE_VERSION,
+      disposition: restrictions.length > 0 ? "local_only" : "ordinary",
+      restrictions,
+    },
+  });
+  if (parsed.state !== "minni_verified") return refusal("lineage_invalid");
+  return { ok: true, context, lineage: parsed.lineage };
 }
 
 export class ProducerPolicyRefusalError extends Error {
