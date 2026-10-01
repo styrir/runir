@@ -10,6 +10,7 @@ import {
   SUMMARY_UNCERTAINTIES,
   classifyMinniGetEventsResponse,
   classifyMinniSummaryContract,
+  compareMinniTimestamps,
   decodeSupportedOCRObservation,
   noAuthorizedMinniEvidence,
   serializeMinniSummaryContract,
@@ -102,6 +103,7 @@ function contract(overrides: Record<string, unknown> = {}): Record<string, unkno
   return {
     version: MINNI_SUMMARY_CONTRACT_VERSION,
     summary: "The captured display is retained as a bounded claim.",
+    event_capture_or_index_interval: interval,
     evidence_counts: { returned_count: 1, local_only_withheld_count: 3 },
     processing_lineage: lineage,
     evidence: [{
@@ -180,6 +182,33 @@ describe("Minni summary A1 producer response codec", () => {
     });
   });
 
+  it("orders fractional instants by exact precision and normalizes offsets without changing source strings", () => {
+    expect(compareMinniTimestamps(
+      "2026-10-01T10:00:00.123Z",
+      "2026-10-01T10:00:00.123456Z",
+    )).toBe(-1);
+    expect(compareMinniTimestamps(
+      "2026-10-01T10:00:00.123456Z",
+      "2026-10-01T10:00:00.123Z",
+    )).toBe(1);
+    expect(compareMinniTimestamps(
+      "2026-10-01T12:00:00.123+02:00",
+      "2026-10-01T10:00:00.123000Z",
+    )).toBe(0);
+    expect(compareMinniTimestamps(
+      "2026-10-01T10:00:00.123000Z",
+      "2026-10-01T10:00:00.123Z",
+    )).toBe(0);
+    expect(compareMinniTimestamps(
+      "2026-02-29T10:00:00Z",
+      "2026-03-01T10:00:00Z",
+    )).toBeUndefined();
+    expect(compareMinniTimestamps(
+      "2026-10-01T24:00:00Z",
+      "2026-10-02T00:00:00Z",
+    )).toBeUndefined();
+  });
+
   it("enforces the returned-item cap, non-negative counts, exact event shape, and ordered intervals", () => {
     expect(classifyMinniGetEventsResponse(response(
       Array.from({ length: MINNI_GET_EVENTS_MAX_ITEMS + 1 }, (_, index) => event({ id: `event-${index}` })),
@@ -205,6 +234,14 @@ describe("Minni summary A1 producer response codec", () => {
       contentFree: true,
     });
     expect(classifyMinniGetEventsResponse(response([event({ ts: "2026-10-01T10:02:00.000Z" })]))).toMatchObject({
+      ok: false,
+      reason: "invalid_producer_response",
+      contentFree: true,
+    });
+    expect(classifyMinniGetEventsResponse(response([event({
+      ts: "2026-10-01T10:00:00.123456Z",
+      end: "2026-10-01T10:00:00.123Z",
+    })]))).toMatchObject({
       ok: false,
       reason: "invalid_producer_response",
       contentFree: true,
@@ -320,6 +357,104 @@ describe("Minni summary A1 OCR projection", () => {
 });
 
 describe("Minni summary A1 durable contract codec", () => {
+  it("requires the overall interval to equal the exact extent of every evidence reference", () => {
+    const baseEvidence = (contract().evidence as unknown[])[0] as Record<string, unknown>;
+    const uncitedEvidence = {
+      event_id: "event-2",
+      modality: "event",
+      event_capture_or_index_interval: {
+        start: "2026-10-01T09:59:00.123456Z",
+        end: "2026-10-01T10:02:00.123Z",
+        meaning: "event_capture_or_index_interval",
+      },
+      uncertainties: [],
+      anchor_context: "not_applicable",
+    };
+    const accepted = classifyMinniSummaryContract(contract({
+      evidence_counts: { returned_count: 2, local_only_withheld_count: 0 },
+      evidence: [baseEvidence, uncitedEvidence],
+      event_capture_or_index_interval: uncitedEvidence.event_capture_or_index_interval,
+    }));
+    expect(accepted).toMatchObject({ ok: true });
+
+    const stale = classifyMinniSummaryContract(contract({
+      evidence_counts: { returned_count: 2, local_only_withheld_count: 0 },
+      evidence: [baseEvidence, uncitedEvidence],
+    }));
+    expect(stale).toEqual({ ok: false, reason: "invalid_contract", contentFree: true });
+  });
+
+  it("refuses a claim interval borrowed from uncited evidence inside the overall extent", () => {
+    const base = contract();
+    const evidence = (base.evidence as Record<string, unknown>[])[0];
+    const claim = (base.claims as Record<string, unknown>[])[0];
+    const supportInterval = {
+      start: "2026-10-01T10:00:00.123456Z",
+      end: "2026-10-01T10:00:00.123456Z",
+      meaning: "event_capture_or_index_interval",
+    };
+    const uncitedInterval = {
+      start: "2026-10-01T10:00:00Z",
+      end: "2026-10-01T10:00:00.1Z",
+      meaning: "event_capture_or_index_interval",
+    };
+    const input = contract({
+      evidence_counts: { returned_count: 2, local_only_withheld_count: 0 },
+      evidence: [
+        { ...evidence, event_capture_or_index_interval: supportInterval },
+        { ...evidence, event_id: "uncited", event_capture_or_index_interval: uncitedInterval },
+      ],
+      event_capture_or_index_interval: {
+        start: uncitedInterval.start,
+        end: supportInterval.end,
+        meaning: "event_capture_or_index_interval",
+      },
+      claims: [{ ...claim, event_capture_or_index_interval: supportInterval }],
+    });
+    expect(classifyMinniSummaryContract(input)).toMatchObject({ ok: true });
+    expect(classifyMinniSummaryContract({
+      ...input,
+      claims: [{ ...claim, event_capture_or_index_interval: uncitedInterval }],
+    })).toEqual({ ok: false, reason: "invalid_contract", contentFree: true });
+  });
+
+  it("uses claim support order for equivalent-instant ties while preserving original strings", () => {
+    const base = contract();
+    const evidence = (base.evidence as Record<string, unknown>[])[0];
+    const claim = (base.claims as Record<string, unknown>[])[0];
+    const firstInterval = {
+      start: "2026-10-01T10:00:00.123456Z",
+      end: "2026-10-01T10:00:00.124Z",
+      meaning: "event_capture_or_index_interval",
+    };
+    const secondInterval = {
+      start: "2026-10-01T13:00:00.123456+03:00",
+      end: "2026-10-01T13:00:00.124+03:00",
+      meaning: "event_capture_or_index_interval",
+    };
+    const input = contract({
+      evidence_counts: { returned_count: 2, local_only_withheld_count: 0 },
+      evidence: [
+        { ...evidence, event_capture_or_index_interval: firstInterval },
+        { ...evidence, event_id: "event-2", event_capture_or_index_interval: secondInterval },
+      ],
+      event_capture_or_index_interval: firstInterval,
+      claims: [{
+        ...claim,
+        support_event_ids: ["event-2", "event-1"],
+        event_capture_or_index_interval: secondInterval,
+      }],
+    });
+    const result = classifyMinniSummaryContract(input);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected exact support-only extent");
+    expect(result.contract.claims[0].event_capture_or_index_interval).toEqual(secondInterval);
+    expect(classifyMinniSummaryContract({
+      ...input,
+      claims: [{ ...claim, support_event_ids: ["event-2", "event-1"], event_capture_or_index_interval: firstInterval }],
+    })).toEqual({ ok: false, reason: "invalid_contract", contentFree: true });
+  });
+
   it("round-trips the strict contract and preserves separate event and screenshot times", () => {
     const input = contract({
       evidence: [{
