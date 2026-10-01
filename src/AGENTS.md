@@ -27,6 +27,7 @@ Source code for the Rúnir HTTP memory service: app startup, routes, capture, re
 - Route response shapes, hook envelopes, trace fields, and event schemas are client contracts.
 - `domain/memory/processing-lineage.ts` is a neutral persisted-provenance contract: parsing/classification and conservative joins never grant authority, infer legacy origin, or import app processing contexts.
 - `lifecycle/semion/lock.ts` invokes the shared INFO-checked optional processing-lineage schema before staleness-backlog fields and indexes; schema refusal stops initializer progress before protected writes.
+- Generic `lifecycle/semion` consolidation and staleness searches must select only rows with absent `processing_lineage` before mapping text, embedding, provider calls, or supersede mutation. Protected valid and invalid-present rows are quarantined from these generic maintenance paths; protected supersede uses the storage writer's exact-mint entrypoint instead.
 - Read code over comments/docs when behavior conflicts, then fix the stale doc in the same change.
 
 ## Work Guidance
