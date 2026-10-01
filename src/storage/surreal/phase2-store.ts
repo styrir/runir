@@ -1270,12 +1270,276 @@ export async function getHexisByScopeKey(
   return row ? mapHexisRow(row) : null;
 }
 
+type NoemaPromotionMetadata = Readonly<{
+  id: unknown;
+  user_id: unknown;
+  payload_user_id: unknown;
+  processing_lineage: unknown;
+  active: unknown;
+  supersedes: unknown;
+  superseded_by: unknown;
+  lineage_root_id: unknown;
+  inactive_at: unknown;
+  inactive_reason: unknown;
+  supersede_provenance: unknown;
+  updated_at: unknown;
+  payload_active: unknown;
+  payload_inactive_at: unknown;
+  payload_inactive_reason: unknown;
+  payload_superseded_by_id: unknown;
+  payload_supersedes_id: unknown;
+  payload_lineage_root_id: unknown;
+  payload_supersede_provenance: unknown;
+  payload_updated_at: unknown;
+  payload_write_source: unknown;
+  payload_arbitration_outcome: unknown;
+  payload_is_stale: unknown;
+  payload_stale_since: unknown;
+  payload_contradicted_by: unknown;
+}>;
+
+const NOEMA_PROMOTION_GUARDED_FIELDS = [
+  { field: "user_id", key: "user_id", parameter: "expectedUserId" },
+  { field: "payload.userId", key: "payload_user_id", parameter: "expectedPayloadUserId" },
+  { field: "active", key: "active", parameter: "expectedActive" },
+  { field: "supersedes", key: "supersedes", parameter: "expectedSupersedes" },
+  { field: "superseded_by", key: "superseded_by", parameter: "expectedSupersededBy" },
+  { field: "lineage_root_id", key: "lineage_root_id", parameter: "expectedLineageRootId" },
+  { field: "inactive_at", key: "inactive_at", parameter: "expectedInactiveAt" },
+  { field: "inactive_reason", key: "inactive_reason", parameter: "expectedInactiveReason" },
+  { field: "supersede_provenance", key: "supersede_provenance", parameter: "expectedSupersedeProvenance" },
+  { field: "updated_at", key: "updated_at", parameter: "expectedUpdatedAt" },
+  { field: "payload.active", key: "payload_active", parameter: "expectedPayloadActive" },
+  { field: "payload.inactiveAt", key: "payload_inactive_at", parameter: "expectedPayloadInactiveAt" },
+  { field: "payload.inactiveReason", key: "payload_inactive_reason", parameter: "expectedPayloadInactiveReason" },
+  { field: "payload.supersededById", key: "payload_superseded_by_id", parameter: "expectedPayloadSupersededById" },
+  { field: "payload.supersedesId", key: "payload_supersedes_id", parameter: "expectedPayloadSupersedesId" },
+  { field: "payload.lineageRootId", key: "payload_lineage_root_id", parameter: "expectedPayloadLineageRootId" },
+  { field: "payload.supersede_provenance", key: "payload_supersede_provenance", parameter: "expectedPayloadSupersedeProvenance" },
+  { field: "payload.updatedAt", key: "payload_updated_at", parameter: "expectedPayloadUpdatedAt" },
+  { field: "payload.writeSource", key: "payload_write_source", parameter: "expectedPayloadWriteSource" },
+  { field: "payload.arbitrationOutcome", key: "payload_arbitration_outcome", parameter: "expectedPayloadArbitrationOutcome" },
+  { field: "payload.isStale", key: "payload_is_stale", parameter: "expectedPayloadIsStale" },
+  { field: "payload.staleSince", key: "payload_stale_since", parameter: "expectedPayloadStaleSince" },
+  { field: "payload.contradictedBy", key: "payload_contradicted_by", parameter: "expectedPayloadContradictedBy" },
+] as const satisfies readonly Readonly<{
+  field: string;
+  key: keyof NoemaPromotionMetadata;
+  parameter: string;
+}>[];
+
+function normalizePromotionSourceId(source: unknown): string | undefined {
+  let candidate = source;
+  if (typeof candidate !== "string") {
+    if (candidate === null || typeof candidate !== "object") return undefined;
+    try {
+      candidate = (candidate as { id?: unknown }).id;
+    } catch {
+      return undefined;
+    }
+  }
+  if (typeof candidate !== "string") {
+    if (candidate === null || typeof candidate !== "object") return undefined;
+    try {
+      candidate = (candidate as { id?: unknown }).id;
+    } catch {
+      return undefined;
+    }
+  }
+  if (typeof candidate !== "string") return undefined;
+  const normalized = extractId(candidate).trim();
+  if (!normalized || normalized.length > 256 || /\s/.test(normalized)) return undefined;
+  return normalized;
+}
+
+async function readNoemaPromotionMetadata(
+  db: SurrealClient,
+  id: string,
+): Promise<NoemaPromotionMetadata | undefined> {
+  const results = await db.query<NoemaPromotionMetadata>(
+    `SELECT id, user_id, payload.userId AS payload_user_id, processing_lineage,
+            active, supersedes, superseded_by, lineage_root_id, inactive_at,
+            inactive_reason, supersede_provenance, updated_at,
+            payload.active AS payload_active,
+            payload.inactiveAt AS payload_inactive_at,
+            payload.inactiveReason AS payload_inactive_reason,
+            payload.supersededById AS payload_superseded_by_id,
+            payload.supersedesId AS payload_supersedes_id,
+            payload.lineageRootId AS payload_lineage_root_id,
+            payload.supersede_provenance AS payload_supersede_provenance,
+            payload.updatedAt AS payload_updated_at,
+            payload.writeSource AS payload_write_source,
+            payload.arbitrationOutcome AS payload_arbitration_outcome,
+            payload.isStale AS payload_is_stale,
+            payload.staleSince AS payload_stale_since,
+            payload.contradictedBy AS payload_contradicted_by
+     FROM type::record('semiote', $id) LIMIT 1;`,
+    { id },
+  );
+  const rows = results[0] ?? [];
+  return rows.length === 1 ? rows[0] : undefined;
+}
+
+function isPromotionRecordId(value: object): boolean {
+  if (value instanceof RecordId) return true;
+  try {
+    return Object.keys(value).length === 1 && Object.keys(value)[0] === "id";
+  } catch {
+    return false;
+  }
+}
+
+function canonicalPromotionMetadataValue(
+  value: unknown,
+  ancestors: Set<object> = new Set(),
+): string | undefined {
+  if (value === undefined) return "<NONE>";
+  if (value === null) return "<NULL>";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (typeof value !== "object") return undefined;
+  if (ancestors.has(value)) return undefined;
+
+  ancestors.add(value);
+  try {
+    if (value instanceof Date) return value.toISOString();
+
+    const candidate = value as Record<string, unknown>;
+    if ("toJSON" in candidate) {
+      const toJSON = candidate.toJSON;
+      if (typeof toJSON !== "function") return undefined;
+      return canonicalPromotionMetadataValue(toJSON.call(value), ancestors);
+    }
+
+    if (isPromotionRecordId(value)) {
+      const id = normalizePromotionSourceId(value);
+      return id ? `<record:${id}>` : undefined;
+    }
+
+    if (Array.isArray(value)) {
+      const entries: string[] = [];
+      for (let index = 0; index < value.length; index += 1) {
+        if (!(index in value)) return undefined;
+        const entry = canonicalPromotionMetadataValue(value[index], ancestors);
+        if (entry === undefined) return undefined;
+        entries.push(entry);
+      }
+      return JSON.stringify(entries);
+    }
+
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return undefined;
+    const entries: Array<[string, string]> = [];
+    for (const key of Object.keys(value).sort()) {
+      const entry = canonicalPromotionMetadataValue(candidate[key], ancestors);
+      if (entry === undefined) return undefined;
+      entries.push([key, entry]);
+    }
+    return JSON.stringify(entries);
+  } catch {
+    return undefined;
+  } finally {
+    ancestors.delete(value);
+  }
+}
+
+function samePromotionMetadataValue(left: unknown, right: unknown): boolean {
+  const leftCanonical = canonicalPromotionMetadataValue(left);
+  const rightCanonical = canonicalPromotionMetadataValue(right);
+  if (leftCanonical === undefined || rightCanonical === undefined) return false;
+  if (left === right) return true;
+  if (leftCanonical === rightCanonical) return true;
+  if (left && typeof left === "object" && isPromotionRecordId(left) && typeof right === "string") {
+    return normalizePromotionSourceId(left) === normalizePromotionSourceId(right);
+  }
+  if (right && typeof right === "object" && isPromotionRecordId(right) && typeof left === "string") {
+    return normalizePromotionSourceId(right) === normalizePromotionSourceId(left);
+  }
+  return false;
+}
+
+function promotionMetadataMatches(
+  expected: NoemaPromotionMetadata,
+  actual: Record<string, unknown>,
+): boolean {
+  if (actual.processing_lineage !== undefined) return false;
+  if (normalizePromotionSourceId(actual.id) !== normalizePromotionSourceId(expected.id)) return false;
+  const actualPayload = actual.payload && typeof actual.payload === "object"
+    ? actual.payload as Record<string, unknown>
+    : {};
+  const actualMetadataValue = (key: keyof NoemaPromotionMetadata): unknown => {
+    const payloadKeys: Partial<Record<keyof NoemaPromotionMetadata, string>> = {
+      payload_user_id: "userId",
+      payload_active: "active",
+      payload_inactive_at: "inactiveAt",
+      payload_inactive_reason: "inactiveReason",
+      payload_superseded_by_id: "supersededById",
+      payload_supersedes_id: "supersedesId",
+      payload_lineage_root_id: "lineageRootId",
+      payload_supersede_provenance: "supersede_provenance",
+      payload_updated_at: "updatedAt",
+      payload_write_source: "writeSource",
+      payload_arbitration_outcome: "arbitrationOutcome",
+      payload_is_stale: "isStale",
+      payload_stale_since: "staleSince",
+      payload_contradicted_by: "contradictedBy",
+    };
+    const payloadKey = payloadKeys[key];
+    return payloadKey ? actualPayload[payloadKey] : actual[key];
+  };
+  return NOEMA_PROMOTION_GUARDED_FIELDS.every(({ key }) =>
+    samePromotionMetadataValue(actualMetadataValue(key), expected[key]),
+  );
+}
+
+async function readGuardedNoemaPromotionRow(
+  db: SurrealClient,
+  id: string,
+  metadata: NoemaPromotionMetadata,
+): Promise<Record<string, unknown> | undefined> {
+  const variables: Record<string, unknown> = { id };
+  const predicates = ["processing_lineage = NONE"];
+  for (const { field, key, parameter } of NOEMA_PROMOTION_GUARDED_FIELDS) {
+    const expected = metadata[key];
+    if (expected === undefined) {
+      predicates.push(`${field} = NONE`);
+    } else {
+      predicates.push(`${field} = $${parameter}`);
+      variables[parameter] = expected;
+    }
+  }
+  const results = await db.query<Record<string, unknown>>(
+    `SELECT * FROM type::record('semiote', $id)
+     WHERE ${predicates.join(" AND ")};`,
+    variables,
+  );
+  const rows = results[0] ?? [];
+  const row = rows.length === 1 ? rows[0] : undefined;
+  return row && promotionMetadataMatches(metadata, row) ? row : undefined;
+}
+
 export async function promoteSemioteToNoema(
   db: SurrealClient,
-  row: any,
+  source: string | { readonly id?: unknown },
   embedText?: (text: string) => Promise<number[]>,
 ): Promise<{ promoted: boolean; id: string | null; embeddingWritten: boolean }> {
-  const payload = row?.payload ?? {};
+  const id = normalizePromotionSourceId(source);
+  if (!id) {
+    return { promoted: false, id: null, embeddingWritten: false };
+  }
+
+  const metadata = await readNoemaPromotionMetadata(db, id);
+  if (!metadata || metadata.processing_lineage !== undefined) {
+    return { promoted: false, id: null, embeddingWritten: false };
+  }
+  const row = await readGuardedNoemaPromotionRow(db, id, metadata);
+  if (!row) {
+    return { promoted: false, id: null, embeddingWritten: false };
+  }
+
+  const payload: any = row?.payload ?? {};
   const canonicalText = redactFactText(String(payload.l2 ?? payload.data ?? "")).trim();
   const userId = String(row?.user_id ?? payload.userId ?? "").trim();
   if (!canonicalText || !userId) {
