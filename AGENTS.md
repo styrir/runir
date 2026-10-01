@@ -45,6 +45,9 @@ command blocks to `AGENTS.md`. Put detailed topic guidance in
   run the turn-by-turn replay release check described in
   [`scripts/source-layer/README.md`](scripts/source-layer/README.md) before
   proposing a production flag flip.
+- Agents designing Minni summary ingestion, later processing or consumer delivery
+  must read [`docs/minni-summary-policy.md`](docs/minni-summary-policy.md); its
+  source requirements do not establish active runtime enforcement.
 - Read-only and isolated subagents should skip both unless their task directly
   needs that guidance.
 
