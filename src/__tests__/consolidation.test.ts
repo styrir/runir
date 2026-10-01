@@ -158,6 +158,59 @@ describe("runConsolidationForScope", () => {
     expect(mockReleaseLock).toHaveBeenCalled();
   });
 
+  it("selects and passes only stable ids to the Noema promotion boundary", async () => {
+    const db = mockDb();
+    const sourceRow = {
+      id: "semiote:source-1",
+      user_id: "user1",
+      active: true,
+      scope: "session",
+      path: "/repo",
+      memory_role: "current_status",
+      updated_at: "version-1",
+      payload: {
+        l2: "stored consolidation content",
+        confidence: 0.95,
+        factKey: "cases:consolidation",
+        continuitySubjectKey: "consolidation",
+        claimPredicate: "contains",
+      },
+      usefulness_score: 0.83,
+      successful_use_count: 3,
+      cross_session_use_count: 2,
+      contradiction_count: 0,
+    };
+    db.query.mockImplementation((sql: string) => {
+      if (sql.includes("SELECT id FROM semiote") && sql.includes("payload.userId")) {
+        return Promise.resolve([[{ id: "semiote:source-1" }]]);
+      }
+      if (sql.includes("SELECT id, user_id") && sql.includes("processing_lineage")) {
+        return Promise.resolve([[{
+          id: "semiote:source-1",
+          user_id: "user1",
+          processing_lineage: undefined,
+          active: true,
+          scope: "session",
+          path: "/repo",
+          memory_role: "current_status",
+          updated_at: "version-1",
+        }]]);
+      }
+      if (sql.includes("SELECT * FROM type::record('semiote'")) return Promise.resolve([[sourceRow]]);
+      if (sql.includes("SELECT status FROM type::record('noema'")) return Promise.resolve([[]]);
+      return Promise.resolve([[]]);
+    });
+
+    await runConsolidationForScope(db, "user1", "session", embedText, new Map(), "api-key");
+
+    const promotionSelect = db.query.mock.calls.find(([sql]: [string]) =>
+      sql.includes("SELECT id FROM semiote") && sql.includes("payload.userId"));
+    expect(promotionSelect).toBeDefined();
+    expect(promotionSelect?.[0]).not.toContain("SELECT *");
+    expect(promotionSelect?.[0]).toContain("processing_lineage = NONE");
+    expect(promotionSelect?.[1]).toEqual({ userId: "user1", scope: "session" });
+  });
+
   it("deduplicates memories with cosine >= 0.90", async () => {
     // Return two memories with identical text (will have cos=1.0 with identicalEmbedText)
     mockFetchAllActiveMemoriesForScope.mockResolvedValueOnce([

@@ -1,4 +1,4 @@
-import type { SurrealClient } from "../../storage/surreal/surreal-store.js";
+import { extractId, type SurrealClient } from "../../storage/surreal/surreal-store.js";
 import type { Bm25CorpusStats, MemoryScope } from "../../domain/memory/types.js";
 import { PRIMARY_MEMORY_TABLE } from "../../domain/memory/types.js";
 import { exactValueTokens } from "../../domain/memory/exact-qa.js";
@@ -451,16 +451,17 @@ export async function runConsolidationForScope(
     logger?.(`memory-hybrid: decay pass for ${userId}::${scope}: scored=${decayResult.scored} pruned=${decayResult.pruned}`);
     logger?.(`memory-hybrid: promotion pass for ${userId}::${scope}: to_working=${promoResult.promoted_to_working} to_durable=${promoResult.promoted_to_durable}`);
 
-    const promotableResults = await db.query<any>(
-      `SELECT * FROM ${PRIMARY_MEMORY_TABLE}
+    const promotableResults = await db.query<{ id: unknown }>(
+      `SELECT id FROM ${PRIMARY_MEMORY_TABLE}
        WHERE payload.userId = $userId
        AND payload.scope = $scope
+       AND processing_lineage = NONE
        AND (active = NONE OR active = true);`,
       { userId, scope },
     );
     let noemaPromoted = 0;
     for (const row of promotableResults[0] ?? []) {
-      const promotion = await promoteSemioteToNoema(db, row, embedText);
+      const promotion = await promoteSemioteToNoema(db, extractId(row.id), embedText);
       if (promotion.promoted) noemaPromoted++;
     }
     if (noemaPromoted > 0) {

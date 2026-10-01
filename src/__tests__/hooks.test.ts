@@ -569,6 +569,7 @@ describe("hook endpoints – userId resolution", () => {
     expect(json.promoted).toBe(1);
     expect(json.promotedIds).toEqual(["noema:abc123"]);
     expect(promoteSemioteToNoema).toHaveBeenCalledTimes(1);
+    expect(promoteSemioteToNoema).toHaveBeenCalledWith(expect.anything(), "mem-1");
     // the model answer is now persisted onto the trace (recall receipt), not discarded
     expect(patchRetrievalTraceAnswer).toHaveBeenCalledWith(
       expect.anything(),
