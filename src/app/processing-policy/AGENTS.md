@@ -10,6 +10,7 @@ server-resolved target user to a local-only processing context.
 
 - `authority.ts` owns opaque producer principal, registration, operation, target-user, and processing-context values. Minted identities are private `WeakMap` values; context use revalidates the current internal registry.
 - The module owns the default-empty production registry and content-free refusal result/error contracts.
+- `authority.ts` also owns the context-bound `mintProcessingLineage` seam. It accepts only private-map delivery evidence from a source-owned resolver, revalidates current registration identity, status, expiry, operation, and target grants around resolver use, and does not write storage or activate registrations. The production resolver is unconfigured; the fixed synthetic resolver is test-only.
 - Runtime consumers validate an authority-produced context before provider egress; storage lineage and lifecycle enforcement belong to later Rúnir-4nb.2 children.
 
 ## Local Contracts

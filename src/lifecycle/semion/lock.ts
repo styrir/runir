@@ -1,4 +1,5 @@
 import type { SurrealClient } from "../../storage/surreal/surreal-store.js";
+import { ensureProcessingLineageSchema } from "../../storage/surreal/processing-lineage-schema.js";
 
 /**
  * Attempts to acquire a TTL lease lock for a userId/scope pair.
@@ -145,6 +146,7 @@ export async function ensureStalenessBacklogTable(
   await db.query(
     "DEFINE TABLE IF NOT EXISTS staleness_backlog SCHEMAFULL;",
   );
+  await ensureProcessingLineageSchema(db, "staleness_backlog");
   await db.query(
     "DEFINE FIELD IF NOT EXISTS user_id ON TABLE staleness_backlog TYPE string;",
   );

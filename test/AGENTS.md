@@ -17,6 +17,8 @@ Primary Vitest and Python tests plus local fixtures for service behavior, hooks,
 - Raw integration artifacts must preserve exactly what the system produces; do not add presentation wrappers.
 - Do not mark dependency tests as skipped simply because Docker/Ollama/service is down; start required services or report a real startup blocker.
 - Mock only mapping/hydration or controlled unit seams; DB/service behavior belongs in the service.
+- Sourcea lineage native tests may start only an owned loopback ephemeral Surreal memory process with synthetic data, must exercise actual schema/parser/wrapper behavior, and must terminate the process in cleanup. They are opt-in and must not fall back to an operator endpoint.
+- Sourcea delivery positives must use the fixed source-owned synthetic resolver; request-shaped flags, copied evidence, and serialized evidence are refusal fixtures. Backlog schema tests must call `ensureStalenessBacklogTable` itself for absent, idempotent, partial, incompatible, and extra hierarchy cases.
 
 ## Work Guidance
 

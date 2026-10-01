@@ -25,6 +25,8 @@ Source code for the Rúnir HTTP memory service: app startup, routes, capture, re
 - Use canonical ontology terms (`semiote`, `noema`, `hexis`, `syndesis`, `archeion`, `overlay`, `watermark`) when layer semantics matter.
 - Name the primary memory table via `PRIMARY_MEMORY_TABLE` (`src/domain/memory/boundary.ts`, re-exported from `domain/memory/types.ts`) — never a bare `"semiote"` literal or an implicit `"memories"` default. `tableName` is required on store/dag-guard signatures with no preceding optional param, and defaults to `PRIMARY_MEMORY_TABLE` on optional-tail signatures. A literal `"memories"` is allowed only at intentional legacy surfaces (admin enrich/backfill routes, the `capture/enrichment/memory-enricher.ts` module, and the legacy clusterer/synthesis paths), where it is spelled out explicitly with a comment.
 - Route response shapes, hook envelopes, trace fields, and event schemas are client contracts.
+- `domain/memory/processing-lineage.ts` is a neutral persisted-provenance contract: parsing/classification and conservative joins never grant authority, infer legacy origin, or import app processing contexts.
+- `lifecycle/semion/lock.ts` invokes the shared INFO-checked optional processing-lineage schema before staleness-backlog fields and indexes; schema refusal stops initializer progress before protected writes.
 - Read code over comments/docs when behavior conflicts, then fix the stale doc in the same change.
 
 ## Work Guidance
