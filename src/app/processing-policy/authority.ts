@@ -88,6 +88,7 @@ export type ProducerAdmissionRefusalReason =
   | "registration_invalid"
   | "context_invalid"
   | "authority_mismatch"
+  | "lineage_present"
   | "delivery_resolver_unconfigured"
   | "delivery_resolver_untrusted"
   | "delivery_evidence_invalid"
@@ -122,6 +123,15 @@ export type MintedProcessingLineage = Readonly<{
   lineage: ProcessingLineageV1;
 }>;
 
+export type MintedProcessingLineageUseResult<T> =
+  | Readonly<{
+      ok: true;
+      context: ProcessingPolicyContext;
+      lineage: ProcessingLineageV1;
+      value: T;
+    }>
+  | ProducerAdmissionRefusal;
+
 export type ProducerAdmissionInput = Readonly<{
   /** Must be created by a server-authenticated producer adapter. */
   principal?: ProducerPrincipal | null;
@@ -145,6 +155,7 @@ type AuthorityState = {
 
 type ProcessingPolicyContextBinding = Readonly<{
   state: AuthorityState;
+  context: ProcessingPolicyContext;
   principalRef: ProducerPrincipalRef;
   registrationRef: ProducerRegistrationRef;
   operation: ProducerOperation;
@@ -161,6 +172,11 @@ const serverTargetUserIdentity = new WeakMap<object, string>();
 const serverOperationIdentity = new WeakMap<object, ProducerOperation>();
 const processingPolicyContextIdentity = new WeakMap<object, ProcessingPolicyContextBinding>();
 const authorityIdentity = new WeakMap<ProducerAuthority, AuthorityState>();
+const mintedProcessingLineageIdentity = new WeakMap<object, Readonly<{
+  state: AuthorityState;
+  contextBinding: ProcessingPolicyContextBinding;
+  lineage: ProcessingLineageV1;
+}>>();
 type ProducerDeliveryEvidenceBinding = Readonly<{
   state: AuthorityState;
   contextBinding: ProcessingPolicyContextBinding;
@@ -438,6 +454,7 @@ function buildContext(
   }) as ProcessingPolicyContext;
   processingPolicyContextIdentity.set(context, {
     state,
+    context,
     principalRef: principal.principalRef,
     registrationRef: registration.registrationRef,
     operation,
@@ -637,7 +654,53 @@ export function mintProcessingLineage(
     },
   });
   if (parsed.state !== "minni_verified") return refusal("lineage_invalid");
-  return { ok: true, context, lineage: parsed.lineage };
+  const minted = Object.freeze({ ok: true as const, context, lineage: parsed.lineage });
+  mintedProcessingLineageIdentity.set(minted, {
+    state,
+    contextBinding: binding,
+    lineage: parsed.lineage,
+  });
+  return minted;
+}
+
+/**
+ * Revalidate the exact object returned by `mintProcessingLineage` immediately
+ * before a protected operation. Structural copies and parsed lineage values do
+ * not carry the private binding and therefore refuse before the callback runs.
+ */
+export async function runWithMintedProcessingLineage<T>(
+  authority: ProducerAuthority,
+  minted: unknown,
+  callback: (lineage: ProcessingLineageV1, context: ProcessingPolicyContext) => T | Promise<T>,
+  expected: Readonly<{ operation?: ProducerOperation; targetUserId?: string }> = {},
+): Promise<MintedProcessingLineageUseResult<T>> {
+  const state = authorityIdentity.get(authority);
+  const mintedObject = asObject(minted);
+  const binding = mintedObject ? mintedProcessingLineageIdentity.get(mintedObject) : undefined;
+  if (!state || !binding) return refusal("lineage_invalid");
+  if (binding.state !== state) return refusal("authority_mismatch");
+
+  const context = binding.contextBinding;
+  const exactContext = context.context;
+  const contextRefusal = currentContextRefusal(
+    exactContext,
+    context,
+    expected,
+  );
+  if (contextRefusal) return refusal(contextRefusal);
+  if (binding.lineage.target_user_id !== context.targetUserId
+    || binding.lineage.admitted_operation !== context.operation
+    || binding.lineage.producer_principal_ref !== context.principalRef
+    || binding.lineage.producer_registration_ref !== context.registrationRef) {
+    return refusal("lineage_invalid");
+  }
+
+  return {
+    ok: true,
+    context: exactContext,
+    lineage: binding.lineage,
+    value: await callback(binding.lineage, exactContext),
+  };
 }
 
 export class ProducerPolicyRefusalError extends Error {
