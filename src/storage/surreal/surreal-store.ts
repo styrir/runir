@@ -32,6 +32,7 @@ export {
   listNearbyExistingForCaptureContext,
   findSimilarMemories,
   updateMemoryText,
+  mergeMemoryWithProcessingLineage,
   supersedeMemory,
   restoreMemoryById,
   getMemoryLineage,

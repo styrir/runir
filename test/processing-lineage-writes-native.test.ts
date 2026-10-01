@@ -9,13 +9,18 @@ import {
   createTrustedProducerRegistration,
   mintProcessingLineage,
   syntheticProducerDeliveryResolver,
+  type ProducerOperation,
 } from "../src/app/processing-policy/authority.js";
 import {
   createMemoryWithProcessingLineage,
+  findSimilarMemories,
+  mergeMemoryWithProcessingLineage,
   upsertMemory,
+  updateMemoryText,
 } from "../src/storage/surreal/surreal-store.js";
 import { SurrealClient } from "../src/storage/surreal/surreal-client.js";
 import { ensureProcessingLineageSchema } from "../src/storage/surreal/processing-lineage-schema.js";
+import { PROCESSING_LINEAGE_VERSION, type ProcessingLineageRestriction, type ProcessingLineageV1 } from "../src/domain/memory/processing-lineage.js";
 
 const runNative = process.env.RUNIR_LINEAGE_NATIVE_WRITES === "1";
 const PASSWORD = "sourceb-a-native-synthetic";
@@ -59,25 +64,91 @@ async function waitForExit(child: ChildProcess): Promise<void> {
   await new Promise<void>((resolve) => child.once("exit", () => resolve()));
 }
 
-function fixture() {
-  const principal = createServerAuthenticatedProducerPrincipal("principal.sourceb-a.native");
+function fixture(operation: ProducerOperation = "capture_ingest") {
+  const principal = createServerAuthenticatedProducerPrincipal(`principal.sourceb.native.${operation}`);
   const targetUser = createServerResolvedTargetUser("user.sourceb-a.native");
   const authority = createProducerAuthority([
     createTrustedProducerRegistration({
-      registrationRef: "registration.sourceb-a.native",
+      registrationRef: `registration.sourceb.native.${operation}`,
       principalRef: principal.principalRef,
-      authorizedOperations: ["capture_ingest"],
+      authorizedOperations: [operation],
       authorizedTargetUsers: [targetUser.userId],
     }),
   ]);
-  const operation = createServerSelectedProducerOperation("capture_ingest");
-  const admission = authority.resolve({ principal, operation, targetUser });
+  const selectedOperation = createServerSelectedProducerOperation(operation);
+  const admission = authority.resolve({ principal, operation: selectedOperation, targetUser });
   if (!admission.ok) throw new Error(`native admission failed: ${admission.reason}`);
   const evidence = syntheticProducerDeliveryResolver.resolve(authority, admission.context);
   if ("ok" in evidence && evidence.ok === false) throw new Error(`native evidence failed: ${evidence.reason}`);
   const minted = mintProcessingLineage(authority, admission.context, evidence);
   if (!minted.ok) throw new Error(`native mint failed: ${minted.reason}`);
   return { authority, targetUser, minted };
+}
+
+function restrictedLineage(
+  lineage: ProcessingLineageV1,
+  restrictions: readonly ProcessingLineageRestriction[],
+): ProcessingLineageV1 {
+  return {
+    ...lineage,
+    delivery: {
+      version: PROCESSING_LINEAGE_VERSION,
+      disposition: restrictions.length > 0 ? "local_only" : "ordinary",
+      restrictions: [...restrictions],
+    },
+  };
+}
+
+async function insertRawMemory(
+  db: SurrealClient,
+  input: {
+    id: string;
+    userId: string;
+    text: string;
+    embedding?: number[];
+    lineage?: unknown;
+    scope?: "user" | "session";
+    sessionId?: string;
+    tags?: string[];
+    pinnedAt?: string;
+    atomicFact?: unknown;
+    tableName?: "semiote" | "memories";
+  },
+): Promise<void> {
+  const now = new Date().toISOString();
+  const tableName = input.tableName ?? "semiote";
+  const lineageClause = input.lineage === undefined ? "" : ", processing_lineage: $lineage";
+  await db.query(
+    `CREATE type::record('${tableName}', $id) CONTENT {
+       embedding: $embedding,
+       payload: {
+         l2: $text,
+         userId: $userId,
+         tags: $tags,
+         pinnedAt: $pinnedAt,
+         atomicFact: $atomicFact
+       },
+       user_id: $userId,
+       scope: $scope,
+       session_id: $sessionId,
+       created_at: <datetime>$now,
+       updated_at: <datetime>$now,
+       active: true${lineageClause}
+     };`,
+    {
+      id: input.id,
+      userId: input.userId,
+      text: input.text,
+      embedding: input.embedding ?? [1, 0, 0],
+      lineage: input.lineage,
+      scope: input.scope ?? "user",
+      sessionId: input.sessionId,
+      tags: input.tags ?? [],
+      pinnedAt: input.pinnedAt,
+      atomicFact: input.atomicFact,
+      now,
+    },
+  );
 }
 
 describe.skipIf(!runNative)("Sourceb-A native processing-lineage writes", () => {
@@ -253,5 +324,180 @@ describe.skipIf(!runNative)("Sourceb-A native processing-lineage writes", () => 
     })).rejects.toThrow();
     const rows = await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "rollback-create" });
     expect(rows[0]).toHaveLength(0);
+  }, 30_000);
+
+  it("merges a known row with a monotonic restricted lineage and preserves rich payload fields", async () => {
+    const source = fixture();
+    const storedLineage = restrictedLineage(source.minted.lineage, ["audio_derived", "producer_local_only"]);
+    const pinnedAt = "2026-01-01T00:00:00.000Z";
+    const atomicFact = { subject: "synthetic", predicate: "merge", value: "before" };
+    await insertRawMemory(db, {
+      id: "native-merge-rich",
+      userId: source.targetUser.userId,
+      text: "before merge",
+      lineage: storedLineage,
+      scope: "session",
+      sessionId: "native-merge-session",
+      tags: ["keep", "synthetic"],
+      pinnedAt,
+      atomicFact,
+    });
+    const before = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-merge-rich" }))[0]?.[0];
+
+    await mergeMemoryWithProcessingLineage(db, source.authority, source.minted, {
+      id: "native-merge-rich",
+      userId: source.targetUser.userId,
+      newText: "after merge",
+      embedding: [0.2, 0.3, 0.4],
+      writeSource: "session_summary",
+      atomicFactAction: "retain",
+      continuityMetadata: { memoryRole: "recent_work", continuitySubjectKey: "subject.merge" },
+    });
+
+    const after = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-merge-rich" }))[0]?.[0];
+    expect(after?.processing_lineage).toEqual(restrictedLineage(source.minted.lineage, ["audio_derived", "producer_local_only"]));
+    expect(after?.payload?.l2).toBe("after merge");
+    expect(after?.payload?.tags).toEqual(["keep", "synthetic"]);
+    expect(after?.payload?.pinnedAt).toBe(pinnedAt);
+    expect(after?.payload?.atomicFact).toEqual(atomicFact);
+    expect(after?.payload?.userId).toBe(source.targetUser.userId);
+    expect(after?.scope).toBe(before?.scope);
+    expect(after?.session_id).toBe(before?.session_id);
+    expect(after?.created_at).toEqual(before?.created_at);
+    expect(new Date(String(after?.updated_at)).getTime()).toBeGreaterThanOrEqual(
+      new Date(String(before?.updated_at)).getTime(),
+    );
+  }, 30_000);
+
+  it("refuses compare-and-set user, lineage, and deletion changes after preflight", async () => {
+    const mutations = [
+      {
+        label: "user",
+        apply: async (source: ReturnType<typeof fixture>) => {
+          await db.query("UPDATE type::record('semiote', $id) SET user_id = $other;", { id: "native-merge-cas-user", other: "changed-user" });
+          return source;
+        },
+        id: "native-merge-cas-user",
+      },
+      {
+        label: "lineage",
+        apply: async (source: ReturnType<typeof fixture>) => {
+          await db.query("UPDATE type::record('semiote', $id) SET processing_lineage = $lineage;", {
+            id: "native-merge-cas-lineage",
+            lineage: restrictedLineage(source.minted.lineage, ["audio_derived"]),
+          });
+          return source;
+        },
+        id: "native-merge-cas-lineage",
+      },
+      {
+        label: "deletion",
+        apply: async (source: ReturnType<typeof fixture>) => {
+          await db.query("DELETE type::record('semiote', $id);", { id: "native-merge-cas-delete" });
+          return source;
+        },
+        id: "native-merge-cas-delete",
+      },
+    ] as const;
+
+    for (const mutation of mutations) {
+      const source = fixture();
+      await insertRawMemory(db, {
+        id: mutation.id,
+        userId: source.targetUser.userId,
+        text: `before ${mutation.label}`,
+        lineage: source.minted.lineage,
+      });
+      const originalQuery = db.query.bind(db);
+      let mutated = false;
+      (db as any).query = async (sql: string, vars?: Record<string, unknown>) => {
+        const result = await originalQuery(sql, vars);
+        if (!mutated && sql.includes("SELECT id, user_id, processing_lineage")) {
+          mutated = true;
+          await mutation.apply(source);
+        }
+        return result;
+      };
+      try {
+        await expect(mergeMemoryWithProcessingLineage(db, source.authority, source.minted, {
+          id: mutation.id,
+          userId: source.targetUser.userId,
+          newText: "must not land",
+          embedding: EMBEDDING,
+          writeSource: "session_summary",
+          atomicFactAction: "retain",
+        })).rejects.toThrow(/transaction failed|compare-and-set/);
+      } finally {
+        (db as any).query = originalQuery;
+      }
+      expect(mutated).toBe(true);
+      if (mutation.label !== "deletion") {
+        const row = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: mutation.id }))[0]?.[0];
+        expect(row?.payload?.l2).toContain("before");
+      } else {
+        const rows = await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: mutation.id });
+        expect(rows[0]).toHaveLength(0);
+      }
+    }
+  }, 30_000);
+
+  it("rolls back protected merge text and lineage on a known precommit failure", async () => {
+    const source = fixture();
+    await insertRawMemory(db, {
+      id: "native-merge-rollback",
+      userId: source.targetUser.userId,
+      text: "rollback before",
+      lineage: source.minted.lineage,
+      tags: ["preserve"],
+    });
+    await db.query("DEFINE FIELD payload.writeSource ON TABLE semiote TYPE option<int> ASSERT $value = NONE OR $value = 0;");
+    await expect(mergeMemoryWithProcessingLineage(db, source.authority, source.minted, {
+      id: "native-merge-rollback",
+      userId: source.targetUser.userId,
+      newText: "merge-rollback",
+      embedding: [0.4, 0.5, 0.6],
+      writeSource: "session_summary",
+      atomicFactAction: "retain",
+    })).rejects.toThrow();
+    const row = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-merge-rollback" }))[0]?.[0];
+    expect(row?.payload?.l2).toBe("rollback before");
+    expect(row?.payload?.tags).toEqual(["preserve"]);
+    expect(row?.processing_lineage).toEqual(source.minted.lineage);
+    await db.query("REMOVE FIELD payload.writeSource ON TABLE semiote;");
+  }, 30_000);
+
+  it("keeps protected rows out of generic similarity mapping and rejects generic updates", async () => {
+    const source = fixture();
+    await insertRawMemory(db, {
+      id: "native-candidate-legacy",
+      userId: source.targetUser.userId,
+      text: "legacy candidate",
+      embedding: [1, 0, 0],
+    });
+    await insertRawMemory(db, {
+      id: "native-candidate-valid",
+      userId: source.targetUser.userId,
+      text: "valid protected candidate",
+      embedding: [1, 0, 0],
+      lineage: source.minted.lineage,
+    });
+    await insertRawMemory(db, {
+      id: "native-candidate-invalid",
+      userId: source.targetUser.userId,
+      text: "invalid protected candidate",
+      embedding: [1, 0, 0],
+      lineage: { ...source.minted.lineage, state: "forged" },
+    });
+
+    const candidates = await findSimilarMemories(db, source.targetUser.userId, [1, 0, 0], 24, 10);
+    expect(candidates.map((candidate) => candidate.id)).toEqual(["native-candidate-legacy"]);
+
+    await expect(updateMemoryText(db, "native-candidate-valid", "must not update", EMBEDDING, "session_summary", "retain"))
+      .rejects.toMatchObject({ reason: "lineage_present", contentFree: true });
+    await expect(updateMemoryText(db, "native-candidate-invalid", "must not update", EMBEDDING, "session_summary", "retain"))
+      .rejects.toMatchObject({ reason: "lineage_present", contentFree: true });
+    await updateMemoryText(db, "native-candidate-legacy", "legacy updated", EMBEDDING, "session_summary", "retain");
+    const legacy = (await db.query<any>("SELECT payload.l2 FROM type::record('semiote', $id);", { id: "native-candidate-legacy" }))[0]?.[0];
+    expect(legacy?.payload?.l2).toBe("legacy updated");
   }, 30_000);
 });
