@@ -8,6 +8,7 @@ import {
   createServerSelectedProducerOperation,
   createTrustedProducerRegistration,
   mintProcessingLineage,
+  revokeProducerRegistration,
   syntheticProducerDeliveryResolver,
   type ProducerOperation,
 } from "../src/app/processing-policy/authority.js";
@@ -15,6 +16,9 @@ import {
   createMemoryWithProcessingLineage,
   findSimilarMemories,
   mergeMemoryWithProcessingLineage,
+  supersedeMemoryWithProcessingLineage,
+  supersedeMemory,
+  softArchiveInactiveOlderThan,
   upsertMemory,
   updateMemoryText,
 } from "../src/storage/surreal/surreal-store.js";
@@ -412,7 +416,7 @@ describe.skipIf(!runNative)("Sourceb-A native processing-lineage writes", () => 
       let mutated = false;
       (db as any).query = async (sql: string, vars?: Record<string, unknown>) => {
         const result = await originalQuery(sql, vars);
-        if (!mutated && sql.includes("SELECT id, user_id, processing_lineage")) {
+        if (!mutated && sql.includes("SELECT id, user_id") && sql.includes("processing_lineage")) {
           mutated = true;
           await mutation.apply(source);
         }
@@ -499,5 +503,714 @@ describe.skipIf(!runNative)("Sourceb-A native processing-lineage writes", () => 
     await updateMemoryText(db, "native-candidate-legacy", "legacy updated", EMBEDDING, "session_summary", "retain");
     const legacy = (await db.query<any>("SELECT payload.l2 FROM type::record('semiote', $id);", { id: "native-candidate-legacy" }))[0]?.[0];
     expect(legacy?.payload?.l2).toBe("legacy updated");
+  }, 30_000);
+
+  it("supersedes a protected fresh replacement with the monotonic lineage union", async () => {
+    const source = fixture();
+    const storedLineage = restrictedLineage(source.minted.lineage, ["audio_derived"]);
+    await insertRawMemory(db, {
+      id: "native-supersede-prev",
+      userId: source.targetUser.userId,
+      text: "protected previous",
+      lineage: storedLineage,
+      tags: ["keep-previous"],
+    });
+
+    await supersedeMemoryWithProcessingLineage(db, source.authority, source.minted, {
+      previousId: "native-supersede-prev",
+      replacement: {
+        id: "native-supersede-fresh",
+        text: "protected replacement",
+        userId: source.targetUser.userId,
+        embedding: EMBEDDING,
+        scope: "user",
+        writeSource: "session_summary",
+      },
+      supersedeProvenance: "deterministic",
+    });
+
+    const previous = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-supersede-prev" }))[0]?.[0];
+    const replacement = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-supersede-fresh" }))[0]?.[0];
+    expect(previous?.active).toBe(false);
+    expect(replacement?.active).toBe(true);
+    expect(replacement?.supersedes).toBeTruthy();
+    expect(replacement?.processing_lineage).toEqual(storedLineage);
+    expect(previous?.processing_lineage).toEqual(storedLineage);
+    expect(replacement?.payload?.l2).toBe("protected replacement");
+    expect(previous?.payload?.tags).toEqual(["keep-previous"]);
+  }, 30_000);
+
+  it("preserves an existing protected survivor while joining both stored lineages", async () => {
+    const source = fixture();
+    const previousLineage = restrictedLineage(source.minted.lineage, ["audio_derived"]);
+    const survivorLineage = restrictedLineage(source.minted.lineage, ["producer_local_only"]);
+    await insertRawMemory(db, {
+      id: "native-supersede-existing-prev",
+      userId: source.targetUser.userId,
+      text: "protected prior",
+      lineage: previousLineage,
+    });
+    await insertRawMemory(db, {
+      id: "native-supersede-existing",
+      userId: source.targetUser.userId,
+      text: "rich survivor",
+      lineage: survivorLineage,
+      tags: ["survivor"],
+      pinnedAt: "2026-01-01T00:00:00.000Z",
+    });
+    await db.query("UPDATE type::record('semiote', $id) SET payload.confidence = $confidence;", {
+      id: "native-supersede-existing",
+      confidence: 0.93,
+    });
+
+    await supersedeMemoryWithProcessingLineage(db, source.authority, source.minted, {
+      previousId: "native-supersede-existing-prev",
+      replacement: {
+        id: "native-supersede-existing",
+        text: "incoming text must not replace survivor",
+        userId: source.targetUser.userId,
+        embedding: EMBEDDING,
+        scope: "user",
+        writeSource: "session_summary",
+      },
+      supersedeProvenance: "llm-generated",
+    });
+
+    const survivor = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-supersede-existing" }))[0]?.[0];
+    const previous = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-supersede-existing-prev" }))[0]?.[0];
+    const joined = restrictedLineage(source.minted.lineage, ["audio_derived", "producer_local_only"]);
+    expect(survivor?.payload?.l2).toBe("rich survivor");
+    expect(survivor?.payload?.tags).toEqual(["survivor"]);
+    expect(survivor?.payload?.confidence).toBe(0.93);
+    expect(survivor?.processing_lineage).toEqual(joined);
+    expect(previous?.processing_lineage).toEqual(joined);
+    expect(previous?.active).toBe(false);
+  }, 30_000);
+
+  it("rolls back protected fresh supersede on a known precommit failure", async () => {
+    const source = fixture();
+    await insertRawMemory(db, {
+      id: "native-supersede-rollback-prev",
+      userId: source.targetUser.userId,
+      text: "rollback previous",
+      lineage: source.minted.lineage,
+    });
+    const original = db.queryTransaction.bind(db);
+    (db as any).queryTransaction = (body: string, vars?: Record<string, unknown>) =>
+      original(`${body}\nTHROW "protected supersede rollback probe";`, vars);
+    try {
+      const failure = await supersedeMemoryWithProcessingLineage(db, source.authority, source.minted, {
+        previousId: "native-supersede-rollback-prev",
+        replacement: {
+          id: "native-supersede-rollback-new",
+          text: "must roll back",
+          userId: source.targetUser.userId,
+          embedding: EMBEDDING,
+          scope: "user",
+          writeSource: "session_summary",
+        },
+        supersedeProvenance: "deterministic",
+      }).then(() => null, (error: unknown) => error);
+      expect(failure).toMatchObject({
+        protectedSupersedeOutcome: "rolled_back",
+        protectedSupersedeMetadataReadback: { previousExists: true, replacementExists: false },
+      });
+      expect(String((failure as Error).message)).toMatch(/transaction failed/);
+    } finally {
+      (db as any).queryTransaction = original;
+    }
+    const previous = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-supersede-rollback-prev" }))[0]?.[0];
+    const replacement = await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-supersede-rollback-new" });
+    expect(previous?.active).toBe(true);
+    expect(replacement[0]).toHaveLength(0);
+  }, 30_000);
+
+  it("rejects a protected supersede that would close a cycle before mutation", async () => {
+    const source = fixture();
+    await insertRawMemory(db, {
+      id: "native-supersede-cycle-prev",
+      userId: source.targetUser.userId,
+      text: "cycle previous",
+      lineage: source.minted.lineage,
+    });
+    await db.query(
+      "UPDATE type::record('semiote', $id) SET supersedes = $replacement;",
+      { id: "native-supersede-cycle-prev", replacement: "native-supersede-cycle-new" },
+    );
+
+    await expect(supersedeMemoryWithProcessingLineage(db, source.authority, source.minted, {
+      previousId: "native-supersede-cycle-prev",
+      replacement: {
+        id: "native-supersede-cycle-new",
+        text: "must not close cycle",
+        userId: source.targetUser.userId,
+        embedding: EMBEDDING,
+        scope: "user",
+        writeSource: "session_summary",
+      },
+      supersedeProvenance: "deterministic",
+    })).rejects.toMatchObject({ reason: "lineage_invalid", contentFree: true });
+
+    const previous = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-supersede-cycle-prev" }))[0]?.[0];
+    const replacement = await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-supersede-cycle-new" });
+    expect(previous?.active).toBe(true);
+    expect(replacement[0]).toHaveLength(0);
+  }, 30_000);
+
+  it("keeps generic absent-lineage supersede branches atomic with row assertions", async () => {
+    const source = fixture();
+    await upsertMemory(db, "native-generic-supersede-prev", "generic previous", source.targetUser.userId, EMBEDDING, {}, "user", undefined, undefined, "semiote");
+    await supersedeMemory(
+      db,
+      {
+        id: "native-generic-supersede-prev",
+        l2: "generic previous",
+        similarity: 1,
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: "native-generic-supersede-new",
+        text: "generic replacement",
+        userId: source.targetUser.userId,
+        embedding: EMBEDDING,
+        scope: "user",
+        writeSource: "session_summary",
+      },
+      "deterministic",
+      undefined,
+      "superseded",
+      "semiote",
+    );
+    const previous = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-generic-supersede-prev" }))[0]?.[0];
+    const replacement = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-generic-supersede-new" }))[0]?.[0];
+    expect(previous?.active).toBe(false);
+    expect(replacement?.active).toBe(true);
+
+    await upsertMemory(db, "native-generic-supersede-survivor", "rich generic survivor", source.targetUser.userId, EMBEDDING, { confidence: 0.91 }, "user", undefined, undefined, "semiote");
+    await supersedeMemory(
+      db,
+      {
+        id: "native-generic-supersede-prev",
+        l2: "generic previous",
+        similarity: 1,
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: "native-generic-supersede-survivor",
+        text: "ignored generic incoming",
+        userId: source.targetUser.userId,
+        embedding: EMBEDDING,
+        scope: "user",
+        writeSource: "session_summary",
+      },
+      "llm-generated",
+      true,
+      "superseded",
+      "semiote",
+    );
+    const survivor = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-generic-supersede-survivor" }))[0]?.[0];
+    expect(survivor?.payload?.l2).toBe("rich generic survivor");
+    expect(survivor?.payload?.confidence).toBe(0.91);
+  }, 30_000);
+
+  it("rejects a copied mint before any metadata SQL", async () => {
+    const source = fixture();
+    await insertRawMemory(db, {
+      id: "native-supersede-copied-prev",
+      userId: source.targetUser.userId,
+      text: "copied mint previous",
+      lineage: source.minted.lineage,
+    });
+    const copiedMint = { ...source.minted };
+    const originalQuery = db.query.bind(db);
+    let queryCount = 0;
+    (db as any).query = async (...args: any[]) => {
+      queryCount++;
+      return originalQuery(...args);
+    };
+    try {
+      await expect(supersedeMemoryWithProcessingLineage(db, source.authority, copiedMint, {
+        previousId: "native-supersede-copied-prev",
+        replacement: {
+          id: "native-supersede-copied-new",
+          text: "must not run",
+          userId: source.targetUser.userId,
+          embedding: EMBEDDING,
+          scope: "user",
+          writeSource: "session_summary",
+        },
+        supersedeProvenance: "deterministic",
+      })).rejects.toMatchObject({ reason: "lineage_invalid", contentFree: true });
+    } finally {
+      (db as any).query = originalQuery;
+    }
+    expect(queryCount).toBe(0);
+  }, 30_000);
+
+  it("refuses legacy, invalid, and mixed-authority protected rows before transaction", async () => {
+    const source = fixture("capture_ingest");
+    const other = fixture("scheduled_maintenance");
+    const cases = [
+      { id: "native-supersede-legacy", lineage: undefined },
+      { id: "native-supersede-invalid", lineage: { ...source.minted.lineage, state: "forged" } },
+      { id: "native-supersede-mixed", lineage: other.minted.lineage },
+    ] as const;
+    for (const item of cases) {
+      await insertRawMemory(db, {
+        id: item.id,
+        userId: source.targetUser.userId,
+        text: `protected ${item.id}`,
+        ...(item.lineage === undefined ? {} : { lineage: item.lineage }),
+      });
+      await expect(supersedeMemoryWithProcessingLineage(db, source.authority, source.minted, {
+        previousId: item.id,
+        replacement: {
+          id: `${item.id}-replacement`,
+          text: "must not process",
+          userId: source.targetUser.userId,
+          embedding: EMBEDDING,
+          scope: "user",
+          writeSource: "session_summary",
+        },
+        supersedeProvenance: "deterministic",
+      })).rejects.toMatchObject({ reason: "lineage_invalid", contentFree: true });
+      const previous = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: item.id }))[0]?.[0];
+      const replacement = await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: `${item.id}-replacement` });
+      expect(previous?.active).toBe(true);
+      expect(replacement[0]).toHaveLength(0);
+    }
+  }, 30_000);
+
+  it("refuses a fresh-id collision that appears after metadata preflight", async () => {
+    const source = fixture();
+    await insertRawMemory(db, {
+      id: "native-supersede-collision-prev",
+      userId: source.targetUser.userId,
+      text: "collision previous",
+      lineage: source.minted.lineage,
+    });
+    const originalQuery = db.query.bind(db);
+    let replacementRead = false;
+    (db as any).query = async (sql: string, vars?: Record<string, unknown>) => {
+      const result = await originalQuery(sql, vars);
+      if (!replacementRead && sql.includes("SELECT id, user_id") && sql.includes("processing_lineage") && vars?.recordId === "native-supersede-collision-new") {
+        replacementRead = true;
+        await insertRawMemory(db, {
+          id: "native-supersede-collision-new",
+          userId: source.targetUser.userId,
+          text: "raced legacy collision",
+        });
+      }
+      return result;
+    };
+    try {
+      await expect(supersedeMemoryWithProcessingLineage(db, source.authority, source.minted, {
+        previousId: "native-supersede-collision-prev",
+        replacement: {
+          id: "native-supersede-collision-new",
+          text: "must not overwrite collision",
+          userId: source.targetUser.userId,
+          embedding: EMBEDDING,
+          scope: "user",
+          writeSource: "session_summary",
+        },
+        supersedeProvenance: "deterministic",
+      })).rejects.toThrow(/transaction failed/);
+    } finally {
+      (db as any).query = originalQuery;
+    }
+    const previous = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-supersede-collision-prev" }))[0]?.[0];
+    const collision = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-supersede-collision-new" }))[0]?.[0];
+    expect(previous?.active).toBe(true);
+    expect(collision?.payload?.l2).toBe("raced legacy collision");
+  }, 30_000);
+
+  it("classifies a post-COMMIT transport error from metadata readback without retrying", async () => {
+    const source = fixture();
+    await insertRawMemory(db, {
+      id: "native-supersede-ambiguous-prev",
+      userId: source.targetUser.userId,
+      text: "ambiguous previous",
+      lineage: source.minted.lineage,
+    });
+    const originalTransaction = db.queryTransaction.bind(db);
+    let attempts = 0;
+    (db as any).queryTransaction = async (body: string, vars?: Record<string, unknown>) => {
+      attempts++;
+      await originalTransaction(body, vars);
+      throw new Error("synthetic transport failure after COMMIT");
+    };
+    try {
+      const failure = await supersedeMemoryWithProcessingLineage(db, source.authority, source.minted, {
+        previousId: "native-supersede-ambiguous-prev",
+        replacement: {
+          id: "native-supersede-ambiguous-new",
+          text: "ambiguous replacement",
+          userId: source.targetUser.userId,
+          embedding: EMBEDDING,
+          scope: "user",
+          writeSource: "session_summary",
+        },
+        supersedeProvenance: "deterministic",
+      }).then(() => null, (error: unknown) => error);
+      expect(failure).toMatchObject({
+        protectedSupersedeOutcome: "committed",
+        protectedSupersedeMetadataReadback: { previousExists: true, replacementExists: true },
+      });
+      expect(String((failure as Error).message)).toContain("after COMMIT");
+    } finally {
+      (db as any).queryTransaction = originalTransaction;
+    }
+    expect(attempts).toBe(1);
+  }, 30_000);
+
+  it("detects previous-row user, lineage, deletion, status, and branch CAS races", async () => {
+    const mutations: Array<{ label: string; apply: (id: string, lineage: ProcessingLineageV1) => Promise<unknown> }> = [
+      { label: "user", apply: async (id: string, _lineage: ProcessingLineageV1) => db.query("UPDATE type::record('semiote', $id) SET user_id = $other;", { id, other: "other-user" }) },
+      { label: "lineage", apply: async (id: string, lineage: ProcessingLineageV1) => db.query("UPDATE type::record('semiote', $id) SET processing_lineage = $lineage;", { id, lineage: restrictedLineage(lineage, ["audio_derived"]) }) },
+      { label: "deletion", apply: async (id: string, _lineage: ProcessingLineageV1) => db.query("DELETE type::record('semiote', $id);", { id }) },
+      { label: "status", apply: async (id: string, _lineage: ProcessingLineageV1) => db.query("UPDATE type::record('semiote', $id) SET active = false;", { id }) },
+      { label: "branch", apply: async (id: string, _lineage: ProcessingLineageV1) => db.query("UPDATE type::record('semiote', $id) SET supersedes = $other;", { id, other: "raced-branch" }) },
+    ];
+    for (const mutation of mutations) {
+      const source = fixture();
+      const previousId = `native-supersede-cas-${mutation.label}`;
+      const replacementId = `${previousId}-replacement`;
+      await insertRawMemory(db, {
+        id: previousId,
+        userId: source.targetUser.userId,
+        text: `cas ${mutation.label}`,
+        lineage: source.minted.lineage,
+      });
+      const originalQuery = db.query.bind(db);
+      let mutated = false;
+      (db as any).query = async (sql: string, vars?: Record<string, unknown>) => {
+        const result = await originalQuery(sql, vars);
+        if (!mutated && sql.includes("SELECT id, user_id") && sql.includes("processing_lineage") && vars?.recordId === replacementId) {
+          mutated = true;
+          await mutation.apply(previousId, source.minted.lineage);
+        }
+        return result;
+      };
+      try {
+        await expect(supersedeMemoryWithProcessingLineage(db, source.authority, source.minted, {
+          previousId,
+          replacement: {
+            id: replacementId,
+            text: "must not land after race",
+            userId: source.targetUser.userId,
+            embedding: EMBEDDING,
+            scope: "user",
+            writeSource: "session_summary",
+          },
+          supersedeProvenance: "deterministic",
+        })).rejects.toThrow(/transaction failed/);
+      } finally {
+        (db as any).query = originalQuery;
+      }
+      expect(mutated).toBe(true);
+      const replacement = await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: replacementId });
+      expect(replacement[0]).toHaveLength(0);
+    }
+  }, 30_000);
+
+  it("refuses generic supersede for valid or invalid-present lineage and closes a lineage race", async () => {
+    const source = fixture();
+    const rows = [
+      { id: "native-generic-protected-valid", lineage: source.minted.lineage },
+      { id: "native-generic-protected-invalid", lineage: { ...source.minted.lineage, state: "forged" } },
+    ] as const;
+    for (const row of rows) {
+      await insertRawMemory(db, {
+        id: row.id,
+        userId: source.targetUser.userId,
+        text: row.id,
+        lineage: row.lineage,
+      });
+      let transactionCalls = 0;
+      const originalTransaction = db.queryTransaction.bind(db);
+      (db as any).queryTransaction = async (...args: any[]) => {
+        transactionCalls++;
+        return originalTransaction(...args);
+      };
+      try {
+        await expect(supersedeMemory(
+          db,
+          { id: row.id, l2: row.id, similarity: 1, createdAt: new Date().toISOString() },
+          {
+            id: `${row.id}-replacement`,
+            text: "generic must not process protected",
+            userId: source.targetUser.userId,
+            embedding: EMBEDDING,
+            scope: "user",
+            writeSource: "session_summary",
+          },
+          "deterministic",
+          undefined,
+          "superseded",
+          "semiote",
+        )).rejects.toMatchObject({ reason: "lineage_present", contentFree: true });
+      } finally {
+        (db as any).queryTransaction = originalTransaction;
+      }
+      expect(transactionCalls).toBe(0);
+    }
+
+    await insertRawMemory(db, {
+      id: "native-generic-race-prev",
+      userId: source.targetUser.userId,
+      text: "generic race previous",
+    });
+    const originalQuery = db.query.bind(db);
+    let raced = false;
+    (db as any).query = async (sql: string, vars?: Record<string, unknown>) => {
+      const result = await originalQuery(sql, vars);
+      if (!raced && sql.includes("SELECT id, user_id") && sql.includes("processing_lineage") && vars?.recordId === "native-generic-race-new") {
+        raced = true;
+        await db.query("UPDATE type::record('semiote', $id) SET processing_lineage = $lineage;", { id: "native-generic-race-prev", lineage: source.minted.lineage });
+      }
+      return result;
+    };
+    try {
+      await expect(supersedeMemory(
+        db,
+        { id: "native-generic-race-prev", l2: "generic race previous", similarity: 1, createdAt: new Date().toISOString() },
+        {
+          id: "native-generic-race-new",
+          text: "generic race replacement",
+          userId: source.targetUser.userId,
+          embedding: EMBEDDING,
+          scope: "user",
+          writeSource: "session_summary",
+        },
+        "deterministic",
+        undefined,
+        "superseded",
+        "semiote",
+      )).rejects.toThrow(/transaction failed/);
+    } finally {
+      (db as any).query = originalQuery;
+    }
+    expect(raced).toBe(true);
+    const previous = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-generic-race-prev" }))[0]?.[0];
+    const replacement = await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-generic-race-new" });
+    expect(previous?.active).toBe(true);
+    expect(replacement[0]).toHaveLength(0);
+  }, 30_000);
+
+  it("detects replacement-row user, lineage, deletion, status, and branch CAS races", async () => {
+    const mutations: Array<{ label: string; apply: (id: string, lineage: ProcessingLineageV1) => Promise<unknown> }> = [
+      { label: "user", apply: async (id: string, _lineage: ProcessingLineageV1) => db.query("UPDATE type::record('semiote', $id) SET user_id = $other;", { id, other: "other-survivor-user" }) },
+      { label: "lineage", apply: async (id: string, lineage: ProcessingLineageV1) => db.query("UPDATE type::record('semiote', $id) SET processing_lineage = $lineage;", { id, lineage: restrictedLineage(lineage, ["producer_local_only"]) }) },
+      { label: "deletion", apply: async (id: string, _lineage: ProcessingLineageV1) => db.query("DELETE type::record('semiote', $id);", { id }) },
+      { label: "status", apply: async (id: string, _lineage: ProcessingLineageV1) => db.query("UPDATE type::record('semiote', $id) SET active = false;", { id }) },
+      { label: "branch", apply: async (id: string, _lineage: ProcessingLineageV1) => db.query("UPDATE type::record('semiote', $id) SET supersedes = $other;", { id, other: "raced-survivor-branch" }) },
+    ];
+    for (const mutation of mutations) {
+      const source = fixture();
+      const previousId = `native-supersede-replacement-cas-prev-${mutation.label}`;
+      const replacementId = `native-supersede-replacement-cas-${mutation.label}`;
+      await insertRawMemory(db, { id: previousId, userId: source.targetUser.userId, text: previousId, lineage: source.minted.lineage });
+      await insertRawMemory(db, { id: replacementId, userId: source.targetUser.userId, text: replacementId, lineage: source.minted.lineage, tags: ["survivor"] });
+      const originalQuery = db.query.bind(db);
+      let mutated = false;
+      (db as any).query = async (sql: string, vars?: Record<string, unknown>) => {
+        const result = await originalQuery(sql, vars);
+        if (!mutated && sql.includes("SELECT id, user_id") && sql.includes("processing_lineage") && vars?.recordId === replacementId) {
+          mutated = true;
+          await mutation.apply(replacementId, source.minted.lineage);
+        }
+        return result;
+      };
+      try {
+        await expect(supersedeMemoryWithProcessingLineage(db, source.authority, source.minted, {
+          previousId,
+          replacement: {
+            id: replacementId,
+            text: "must not replace raced survivor",
+            userId: source.targetUser.userId,
+            embedding: EMBEDDING,
+            scope: "user",
+            writeSource: "session_summary",
+          },
+          supersedeProvenance: "deterministic",
+        })).rejects.toThrow(/transaction failed/);
+      } finally {
+        (db as any).query = originalQuery;
+      }
+      expect(mutated).toBe(true);
+      const previous = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: previousId }))[0]?.[0];
+      expect(previous?.active).toBe(true);
+    }
+  }, 30_000);
+
+  it("blocks the transaction when the exact producer registration is revoked after preflight", async () => {
+    const source = fixture();
+    await insertRawMemory(db, {
+      id: "native-supersede-revoke-prev",
+      userId: source.targetUser.userId,
+      text: "revoke previous",
+      lineage: source.minted.lineage,
+    });
+    const originalQuery = db.query.bind(db);
+    let revoked = false;
+    (db as any).query = async (sql: string, vars?: Record<string, unknown>) => {
+      const result = await originalQuery(sql, vars);
+      if (!revoked && sql.includes("SELECT id, user_id") && sql.includes("processing_lineage") && vars?.recordId === "native-supersede-revoke-new") {
+        revoked = true;
+        revokeProducerRegistration(source.authority, source.minted.context.registrationRef);
+      }
+      return result;
+    };
+    let transactionCalls = 0;
+    const originalTransaction = db.queryTransaction.bind(db);
+    (db as any).queryTransaction = async (...args: any[]) => {
+      transactionCalls++;
+      return originalTransaction(...args);
+    };
+    try {
+      await expect(supersedeMemoryWithProcessingLineage(db, source.authority, source.minted, {
+        previousId: "native-supersede-revoke-prev",
+        replacement: {
+          id: "native-supersede-revoke-new",
+          text: "must not write after revoke",
+          userId: source.targetUser.userId,
+          embedding: EMBEDDING,
+          scope: "user",
+          writeSource: "session_summary",
+        },
+        supersedeProvenance: "deterministic",
+      })).rejects.toMatchObject({ reason: "registration_revoked", contentFree: true });
+    } finally {
+      (db as any).query = originalQuery;
+      (db as any).queryTransaction = originalTransaction;
+    }
+    expect(revoked).toBe(true);
+    expect(transactionCalls).toBe(0);
+    const previous = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-supersede-revoke-prev" }))[0]?.[0];
+    const replacement = await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-supersede-revoke-new" });
+    expect(previous?.active).toBe(true);
+    expect(replacement[0]).toHaveLength(0);
+  }, 30_000);
+
+  it("preserves an other-user generic collision that appears after the absent pre-read", async () => {
+    const source = fixture();
+    await insertRawMemory(db, {
+      id: "native-generic-collision-prev",
+      userId: source.targetUser.userId,
+      text: "generic collision previous",
+    });
+    const originalQuery = db.query.bind(db);
+    let collided = false;
+    (db as any).query = async (sql: string, vars?: Record<string, unknown>) => {
+      const result = await originalQuery(sql, vars);
+      if (!collided && sql.includes("SELECT id, user_id") && sql.includes("processing_lineage") && vars?.recordId === "native-generic-collision-new") {
+        collided = true;
+        await insertRawMemory(db, {
+          id: "native-generic-collision-new",
+          userId: "other-generic-user",
+          text: "other user's collision",
+        });
+      }
+      return result;
+    };
+    try {
+      await expect(supersedeMemory(
+        db,
+        { id: "native-generic-collision-prev", l2: "generic collision previous", similarity: 1, createdAt: new Date().toISOString() },
+        {
+          id: "native-generic-collision-new",
+          text: "must not overwrite other user",
+          userId: source.targetUser.userId,
+          embedding: EMBEDDING,
+          scope: "user",
+          writeSource: "session_summary",
+        },
+        "deterministic",
+        undefined,
+        "superseded",
+        "semiote",
+      )).rejects.toThrow(/transaction failed/);
+    } finally {
+      (db as any).query = originalQuery;
+    }
+    expect(collided).toBe(true);
+    const previous = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-generic-collision-prev" }))[0]?.[0];
+    const collision = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-generic-collision-new" }))[0]?.[0];
+    expect(previous?.active).toBe(true);
+    expect(collision?.payload?.l2).toBe("other user's collision");
+    expect(collision?.user_id).toBe("other-generic-user");
+  }, 30_000);
+
+  it("classifies a post-COMMIT metadata mismatch as unresolved", async () => {
+    const source = fixture();
+    await insertRawMemory(db, {
+      id: "native-supersede-mismatch-prev",
+      userId: source.targetUser.userId,
+      text: "mismatch previous",
+      lineage: source.minted.lineage,
+    });
+    const originalTransaction = db.queryTransaction.bind(db);
+    let attempts = 0;
+    (db as any).queryTransaction = async (body: string, vars?: Record<string, unknown>) => {
+      attempts++;
+      await originalTransaction(body, vars);
+      await db.query("UPDATE type::record('semiote', $id) SET inactive_reason = $reason;", {
+        id: "native-supersede-mismatch-prev",
+        reason: "post-commit-tamper",
+      });
+      throw new Error("synthetic response failure after mismatched commit");
+    };
+    try {
+      const failure = await supersedeMemoryWithProcessingLineage(db, source.authority, source.minted, {
+        previousId: "native-supersede-mismatch-prev",
+        replacement: {
+          id: "native-supersede-mismatch-new",
+          text: "mismatch replacement",
+          userId: source.targetUser.userId,
+          embedding: EMBEDDING,
+          scope: "user",
+          writeSource: "session_summary",
+        },
+        supersedeProvenance: "deterministic",
+      }).then(() => null, (error: unknown) => error);
+      expect(failure).toMatchObject({ protectedSupersedeOutcome: "inconsistent_or_unresolved" });
+      expect(String((failure as Error).message)).toContain("mismatched commit");
+    } finally {
+      (db as any).queryTransaction = originalTransaction;
+    }
+    expect(attempts).toBe(1);
+  }, 30_000);
+
+  it("returns actual guarded archive affected rows when lineage races the pre-read", async () => {
+    const source = fixture();
+    await insertRawMemory(db, {
+      id: "native-archive-race",
+      userId: source.targetUser.userId,
+      text: "archive race",
+    });
+    await db.query("UPDATE type::record('semiote', $id) SET active = false, inactive_at = <datetime>$old;", {
+      id: "native-archive-race",
+      old: "2020-01-01T00:00:00.000Z",
+    });
+    const originalQuery = db.query.bind(db);
+    let raced = false;
+    (db as any).query = async (sql: string, vars?: Record<string, unknown>) => {
+      const result = await originalQuery(sql, vars);
+      if (!raced && sql.includes("SELECT id FROM semiote") && vars?.cutoff === "2021-01-01T00:00:00.000Z") {
+        raced = true;
+        await db.query("UPDATE type::record('semiote', $id) SET processing_lineage = $lineage;", { id: "native-archive-race", lineage: source.minted.lineage });
+      }
+      return result;
+    };
+    try {
+      const archived = await softArchiveInactiveOlderThan(db, source.targetUser.userId, "user", "2021-01-01T00:00:00.000Z", "semiote");
+      expect(archived).toBe(0);
+    } finally {
+      (db as any).query = originalQuery;
+    }
+    expect(raced).toBe(true);
+    const row = (await db.query<any>("SELECT * FROM type::record('semiote', $id);", { id: "native-archive-race" }))[0]?.[0];
+    expect(row?.archived).not.toBe(true);
   }, 30_000);
 });

@@ -142,8 +142,8 @@ describe("supersedeMemory — atomic transaction", () => {
     );
     expect(db.queryTransaction).toHaveBeenCalledTimes(1);
     const [body] = db.queryTransaction.mock.calls[0];
-    expect(body).toContain("UPSERT"); // fresh row created
-    expect(body).toContain("supersede_provenance = $provenance"); // tail provenance
+    expect(body).toContain("CREATE ONLY"); // fresh row created without collision overwrite
+    expect(body).toMatch(/supersede_provenance = \$provenance|supersede_provenance: \$sup_supersedeProvenance/);
     expect(body).toContain("active = false"); // previous-row inactivation
   });
 
@@ -163,8 +163,8 @@ describe("supersedeMemory — atomic transaction", () => {
       "deterministic",
     );
     const [body, vars] = db.queryTransaction.mock.calls[0];
-    expect(body).toContain("UPSERT");
-    // Fresh upsert (prefixed params) marks the new row active + supersedes the previous.
+    expect(body).toContain("CREATE ONLY");
+    // Fresh create (prefixed params) marks the new row active + supersedes the previous.
     expect(vars.sup_active).toBe(true);
     expect(vars.sup_supersedesId).toBe("old-memory-id");
     // Tail inactivation keys off the previous id; new id supersedes it.
@@ -216,7 +216,7 @@ describe("supersedeMemory — existing-replacement merge branch (Rúnir-xxa9)", 
     });
   });
 
-  it("FRESH branch: full upsert when the replacement does not exist", async () => {
+  it("FRESH branch: collision-safe create when the replacement does not exist", async () => {
     const db = {
       query: vi.fn().mockResolvedValue([[]]), // exists-check returns []
       queryTransaction: vi.fn().mockResolvedValue(undefined),
@@ -236,7 +236,7 @@ describe("supersedeMemory — existing-replacement merge branch (Rúnir-xxa9)", 
       true,
     );
     const [body] = db.queryTransaction.mock.calls[0];
-    expect(body).toContain("UPSERT");
+    expect(body).toContain("CREATE ONLY");
   });
 });
 
