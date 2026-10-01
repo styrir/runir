@@ -40,4 +40,5 @@ HTTP service shell: app creation, middleware, auth, runtime defaults, provider/D
 
 | Scope | Child DOX | Covers |
 |---|---|---|
+| `consumer-policy/` | `src/app/consumer-policy/AGENTS.md` | Internal consumer authority, empty production registry, current-state fail-closed delivery grants, and neutral Minni delivery decisions. |
 | `processing-policy/` | `src/app/processing-policy/AGENTS.md` | Internal Minni producer authority values, empty registry, fail-closed refusal contract, and runtime pre-egress context validation. |
