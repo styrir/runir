@@ -496,6 +496,8 @@ export type RawExtractedFact = {
   /** Index into the CaptureMessage[] array for the source turn. LLM-emitted; used to
    *  dereference raw_source_text without having the LLM emit verbatim text. */
   source_turn_index?: number;
+  /** Set only by post-processing after source turn validation and correction. */
+  sourceTurnIndex?: number;
   /** Verbatim source turn text, stamped post-LLM by dereferencing source_turn_index
    *  against the CaptureMessage[] array. Populated only when source_turn_index is
    *  present and in range; left undefined otherwise. */
@@ -518,6 +520,8 @@ export type ExtractedFact = {
   tags: string[];
   directives?: ContinuityDirective[];
   factKey: string;        // "category:slug-XXXXXX" or "category:XXXXXX" (hash-only for non-Latin)
+  /** Validated index into the compressed CaptureMessage array shown to the extractor. */
+  sourceTurnIndex?: number;
   /** Original user/assistant turn text before LLM paraphrasing.
    *  Populated during extraction post-processing by dereferencing source_turn_index. */
   raw_source_text?: string;

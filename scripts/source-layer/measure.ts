@@ -7,6 +7,7 @@ import { isAbsolute, join, resolve, sep } from "node:path";
 import { performance } from "node:perf_hooks";
 import { SOURCE_REDACTION_VERSION } from "../../src/shared/source-redaction.js";
 import { SOURCE_FORMAT } from "../../src/capture/source-turn-identity.js";
+import { postProcessExtractedFacts } from "../../src/capture/extraction/capture.js";
 import { loadSyntheticFixtures, OMITTED_QUALIFIER, CAPTURE_20X4K, CORRECTION_CASE, SCOPED_CASES, seedScopedFixtures, syntheticHmacKey } from "../../src/testing/source-layer/fixtures.js";
 import { privacyGate } from "../../src/testing/source-layer/gates/privacy.js";
 import { storageGate } from "../../src/testing/source-layer/gates/storage.js";
@@ -180,8 +181,11 @@ try {
   const correctionRows: Array<{ payload?: { l2?: string }; active?: boolean; superseded_by?: unknown }> = [];
   for (const id of correctionIds) correctionRows.push(...(await db.query<typeof correctionRows[number]>(
     "SELECT * FROM type::record('semiote', $id);", { id: id.replace(/^semiote:/, "") }))[0] ?? []);
-  const olderRow = correctionRows.find((row) => row.payload?.l2 === CORRECTION_CASE.older);
-  const newerRow = correctionRows.find((row) => row.payload?.l2 === CORRECTION_CASE.newer);
+  const expectedCorrectionText = (text: string) => postProcessExtractedFacts(
+    [{ l2: text, l0: "synthetic release window", confidence: 0.99, source_turn_index: 0 }],
+    [{ role: "user", content: text }], startedAt)[0]?.l2;
+  const olderRow = correctionRows.find((row) => row.payload?.l2 === expectedCorrectionText(CORRECTION_CASE.older));
+  const newerRow = correctionRows.find((row) => row.payload?.l2 === expectedCorrectionText(CORRECTION_CASE.newer));
   const cosine = cosineSimilarity(await runtime.provider.embedDocument(CORRECTION_CASE.older),
     await runtime.provider.embedDocument(CORRECTION_CASE.newer));
   results.push({ id: "harm.newer_correction", family: "harm", status: cosine < 0.95 && Boolean(newerRow)

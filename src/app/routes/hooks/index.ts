@@ -4,6 +4,7 @@ import { redactFact, redactFactText, redactSourceTurn, redactSourceTurnWithProof
 import { resolveLlmBaseUrl, resolveLlmTimeoutMs } from "../../../shared/config.js";
 import { prepareSourceTurn, sourceKeyFingerprint, type SourceTurn } from "../../../capture/source-turn-identity.js";
 import { SourceTurnSpool } from "../../../capture/source-turn-spool.js";
+import { countSourceLink } from "../../../capture/source-link-metrics.js";
 import { assertSourceKeyFingerprint, SourceKeyMismatchError, upsertSourceTurn } from "../../../storage/surreal/session-turn-store.js";
 import { markFactSourceLink, reconcileSourceTurnLinks } from "../../../storage/surreal/source-turn-link-store.js";
 import type { EntityMention, ExtractedFact, MemoryRole, RawExtractedFact } from "../../../domain/memory/types.js";
@@ -21,6 +22,7 @@ import {
   isNoisyFact,
   normalizeCaptureMessages,
   normalizeExtractedFact,
+  postProcessExtractedFacts,
   resolveCapturePrompt,
 } from "../../../capture/extraction/capture.js";
 import { compressMessages, compressMessagesWithIndices } from "../../../capture/continuity/session-compressor.js";
@@ -136,6 +138,16 @@ async function lockCaptureTurns(ids: string[]): Promise<() => void> {
   }
   return () => { for (const release of releases.reverse()) release(); };
 }
+/** Coarse failure class for logs; never the raw message, which can quote stored values. */
+function captureFailureKind(error: Error): string {
+  const message = error.message.toLowerCase();
+  if (/transaction|conflict|read or write conflict|can be retried/.test(message)) return "db-conflict";
+  if (/timed? ?out|timeout|aborted/.test(message)) return "timeout";
+  if (/econnrefused|econnreset|socket|connection|network/.test(message)) return "connection";
+  if (/redact|secret/.test(message)) return "redaction";
+  return "other";
+}
+
 function recordSourceKeyRefusal(error: SourceKeyMismatchError, model: string): void {
   recordPipelineDrop("capture", "element", "source_key_mismatch", model);
   console.error(`[runir] source-store write refused: key fingerprint mismatch configured=${error.configured} recorded=${error.recorded}`);
@@ -1460,7 +1472,10 @@ export function registerHookRoutes(app: Hono) {
         captureExtractionInvocations++;
         captureExtractionInputSizes.push(compressed.length);
       }
-      const extractedRawFacts = captureFixtureFacts ?? await extractMemories(
+      const extractedRawFacts = captureFixtureFacts !== undefined
+        ? postProcessExtractedFacts(captureFixtureFacts, compressed,
+          clientSessionTimestamp ?? new Date().toISOString(), onReject)
+        : await extractMemories(
         compressed,
         resolveCapturePrompt(cfg.customPrompt),
         apiKey,
@@ -1475,14 +1490,37 @@ export function registerHookRoutes(app: Hono) {
       timer.mark("extract_memories");
       let rawFacts: ExtractedFact[];
       const sourceIndexByFact = new Map<ExtractedFact, number>();
+      // A user turn and its following assistant turns form one exchange. A
+      // held assistant release keeps facts from that exchange eligible.
+      const exchangeStartByIndex: number[] = [];
+      let exchangeStart = 0;
+      for (let index = 0; index < formatted.length; index++) {
+        if (formatted[index]?.role === "user") exchangeStart = index;
+        exchangeStartByIndex[index] = exchangeStart;
+      }
+      const exchangeFullyExtracted = (originalIndex: number): boolean => {
+        const start = exchangeStartByIndex[originalIndex];
+        if (start === undefined) return false;
+        for (let index = start; index < formatted.length && exchangeStartByIndex[index] === start; index++) {
+          if (!alreadyExtractedIndices.has(index)) return false;
+        }
+        return true;
+      };
       try { rawFacts = extractedRawFacts.filter((fact) => {
-        if (!("source_turn_index" in fact) || typeof fact.source_turn_index !== "number") return true;
-        const originalIndex = compressedWithIndices?.[fact.source_turn_index]?.originalIndex;
-        return originalIndex === undefined || !alreadyExtractedIndices.has(originalIndex);
+        if (fact.sourceTurnIndex === undefined) {
+          countSourceLink("factsWithoutValidSourceIndex");
+          return true;
+        }
+        countSourceLink("factsWithValidSourceIndex");
+        const originalIndex = compressedWithIndices?.[fact.sourceTurnIndex]?.originalIndex;
+        const drop = originalIndex !== undefined && alreadyExtractedIndices.has(originalIndex)
+          && exchangeFullyExtracted(originalIndex);
+        if (drop) countSourceLink("completedTurnDrops");
+        return !drop;
       }).map((fact) => {
         const normalized = normalizeExtractedFact(redactFact(fact));
-        if ("source_turn_index" in fact && typeof fact.source_turn_index === "number")
-          sourceIndexByFact.set(normalized, fact.source_turn_index);
+        if (fact.sourceTurnIndex !== undefined)
+          sourceIndexByFact.set(normalized, fact.sourceTurnIndex);
         return normalized;
       }); }
       catch {
@@ -1627,9 +1665,11 @@ export function registerHookRoutes(app: Hono) {
             if (source) {
               await markFactSourceLink(runtime.db, result.memoryId, uid, source.turn,
                 source.available ? "pending" : "unavailable", result.outcome === "skip");
+              countSourceLink(source.available ? "linksPending" : "linksUnavailable");
               if (source.available) void reconcileSourceTurnLinks(runtime.db, source.turn).catch(() => undefined);
             } else if (sourceIndex !== undefined && result.outcome !== "skip") {
               await markFactSourceLink(runtime.db, result.memoryId, uid, undefined, "unavailable");
+              countSourceLink("linksUnavailable");
             }
           } catch (error) {
             if (error instanceof SourceKeyMismatchError) recordSourceKeyRefusal(error, cfg.extractModel ?? "unknown");
@@ -1767,6 +1807,8 @@ export function registerHookRoutes(app: Hono) {
       if (err instanceof CaptureReceiptRequestError) {
         return c.json({ error: err.message, ...debugTimings() }, err.status);
       }
+      const error = err instanceof Error ? err : new Error("Unknown capture error");
+      console.error(`runir-service: capture failed: ${error.name} (${captureFailureKind(error)})`);
       return c.json({ error: "capture failed", ...debugTimings() }, 500);
     } finally {
       if (!captureCommitted && reservedCaptureTurns.length) {

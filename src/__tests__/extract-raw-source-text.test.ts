@@ -73,6 +73,7 @@ describe("extractMemories — raw_source_text stamping (Rúnir-o2kz close-gap)",
     );
 
     expect(facts.length).toBe(1);
+    expect(facts[0]?.sourceTurnIndex).toBe(0);
     const fact = facts[0]!;
     expect(fact.raw_source_text).toBeDefined();
     // Verbatim diff content must be preserved.

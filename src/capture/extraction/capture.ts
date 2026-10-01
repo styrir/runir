@@ -392,6 +392,7 @@ export function normalizeExtractedFact(raw: RawExtractedFact): ExtractedFact {
     tags,
     ...(directives.length > 0 ? { directives } : {}),
     factKey,
+    ...(Number.isSafeInteger(raw.sourceTurnIndex) ? { sourceTurnIndex: raw.sourceTurnIndex } : {}),
     ...(raw.raw_source_text !== undefined ? { raw_source_text: raw.raw_source_text } : {}),
     ...(rawSpan !== undefined ? { rawSpan } : {}),
     ...(rawSpans !== undefined ? { rawSpans } : {}),
@@ -961,6 +962,18 @@ export async function extractMemories(
     );
   }
 
+  return postProcessExtractedFacts(parsed.facts, messages, ts, onReject, model, markTiming);
+}
+
+/** Apply the production extraction pipeline to raw model or fixture facts exactly once. */
+export function postProcessExtractedFacts(
+  parsedFacts: Array<RawExtractedFact | string>,
+  messages: CaptureMessage[],
+  ts: string,
+  onReject?: (raw: RawExtractedFact, reason: string) => void,
+  model = "fixture",
+  markTiming: (name: string) => void = () => undefined,
+): ExtractedFact[] {
   // `passed` is hoisted out of the processing block so the stage guard below
   // can return any facts already normalized when a later stage throws, instead
   // of losing the whole batch to a silent catch (Rúnir-sm9k.3).
@@ -980,7 +993,7 @@ export async function extractMemories(
     // relocate the crash. iter-2 (extraction-robustness mission).
     const rawFacts: RawExtractedFact[] = [];
     let malformedFactElementCount = 0;
-    for (const fact of parsed.facts) {
+    for (const fact of parsedFacts) {
       if (typeof fact === "string") {
         rawFacts.push({ l2: fact, confidence: 1.0 });
         continue;
@@ -989,7 +1002,7 @@ export async function extractMemories(
         malformedFactElementCount++;
         continue;
       }
-      rawFacts.push(fact as RawExtractedFact);
+      rawFacts.push({ ...(fact as RawExtractedFact) });
     }
     if (malformedFactElementCount > 0) {
       recordExtractDrop("malformed_fact_element", model, {
@@ -1022,6 +1035,7 @@ export async function extractMemories(
       // Always drop any LLM-emitted raw_source_text — only deterministic
       // stamping is authoritative. See Rúnir-o2kz.
       raw.raw_source_text = undefined;
+      raw.sourceTurnIndex = undefined;
 
       const idx = raw.source_turn_index;
       const llmPickedTurn =
@@ -1077,6 +1091,7 @@ export async function extractMemories(
       if (chosen) {
         raw.raw_source_text = chosen.msg.content;
         raw.source_turn_index = chosen.idx;
+        raw.sourceTurnIndex = chosen.idx;
         validIndexCount++;
       } else if (typeof idx === "number") {
         invalidIndexCount++;

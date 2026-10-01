@@ -43,3 +43,14 @@ it("scans live synthetic source rows without values in result", async (ctx) => {
   expect(result.counts).toMatchObject({ turn: 1, chunk: 1, fact: 1, rawSourcePresent: 0, secretHits: 0 });
   expect(JSON.stringify(result).includes(canaries.safe[0])).toBe(false);
 });
+
+it("reads linked state and stored rawSpan from the replay snapshot projection", async (ctx) => {
+  if (!available) return ctx.skip();
+  await db.query("DEFINE TABLE IF NOT EXISTS semiote SCHEMALESS;");
+  await db.query("CREATE semiote:projection SET payload = { l2: 'Synthetic linked fact', rawSpan: { text: 'synthetic source' } }, source_turn_link_state = 'linked', active = true, created_at = time::now(), updated_at = time::now();");
+  const rows = (await db.query<any>(
+    "SELECT id, payload, path, active, source_turn_link_state, created_at, updated_at FROM semiote ORDER BY created_at ASC;"))[0] ?? [];
+  const row = rows.find((candidate: any) => String(candidate.id).includes("projection"));
+  expect(row?.source_turn_link_state).toBe("linked");
+  expect(row?.payload?.rawSpan?.text).toBe("synthetic source");
+});

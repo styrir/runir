@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 import { getBootstrapReadinessReport, probeDatabaseReady } from "../readiness.js";
 import { cfg, db, supersessionJudge } from "../runtime.js";
+import { sourceLinkMetricsSnapshot } from "../../capture/source-link-metrics.js";
 
 export function registerHealthRoutes(app: Hono) {
   // Rúnir-pn1l.13.7 D7: supersessionJudge counters are ADDITIVE on /health regardless
@@ -12,6 +13,7 @@ export function registerHealthRoutes(app: Hono) {
       reranker: cfg.reranker.provider,
       topK: cfg.topK,
       supersessionJudge: supersessionJudge.getCounters(),
+      sourceLinks: sourceLinkMetricsSnapshot(),
     }),
   );
 

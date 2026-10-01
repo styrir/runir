@@ -68,6 +68,8 @@ vi.mock("../shared/config.js", () => ({
     fingerprint: vi.fn().mockReturnValue("mock-fingerprint"),
   }),
   resolveCaptureApiKey: vi.fn().mockReturnValue("test-api-key"),
+  resolveLlmBaseUrl: vi.fn().mockReturnValue("http://stub-model"),
+  resolveLlmTimeoutMs: vi.fn().mockReturnValue(1000),
 }));
 
 vi.mock("../storage/surreal/surreal-store.js", () => {
@@ -131,7 +133,8 @@ vi.mock("../storage/writes/write-arbitrator.js", () => ({
   arbitrateWrite: vi.fn().mockResolvedValue({ outcome: "create", memoryId: "m1" }),
 }));
 
-vi.mock("../capture/extraction/capture.js", () => ({
+vi.mock("../capture/extraction/capture.js", async (importOriginal) => ({
+  postProcessExtractedFacts: (await importOriginal<typeof import("../capture/extraction/capture.js")>()).postProcessExtractedFacts,
   extractMemories: vi.fn().mockResolvedValue([]),
   normalizeCaptureMessages: vi.fn().mockImplementation((msgs: any[]) => msgs),
   resolveCapturePrompt: vi.fn().mockReturnValue("test-prompt"),
@@ -293,6 +296,7 @@ import { normalizeCaptureMessages } from "../capture/extraction/capture.js";
 import { createApp } from "../../index.js";
 import { cfg, runtime, noiseBank } from "../app/runtime.js";
 import { scoreSessionSalience } from "../capture/continuity/session-salience.js";
+import { sourceLinkMetricsSnapshot } from "../capture/source-link-metrics.js";
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -418,6 +422,29 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
     });
     expect(failure.status).toBe(500);
     expect(await failure.json()).toMatchObject({ error: "capture failed" });
+  });
+
+  it("logs a capture failure name and message without request text", async () => {
+    const requestText = "Private request text RB-27712 must stay out of logs";
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const failure = new Error("synthetic extractor failure");
+    failure.name = "ExtractionFailure";
+    (extractMemories as Mock).mockRejectedValueOnce(failure);
+    try {
+      const response = await getApp().request("/hooks/capture", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: [{ role: "user", content: requestText }] }),
+      });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ error: "capture failed" });
+      const logLine = errorLog.mock.calls.map((args) => args.join(" ")).join("\n");
+      expect(logLine).toContain("ExtractionFailure");
+      expect(logLine).toContain("(other)");
+      expect(logLine).not.toContain("synthetic extractor failure");
+      expect(logLine).not.toContain(requestText);
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 
   // G004: body.sessionTimestamp must thread through to extractMemories' 4th arg
@@ -605,8 +632,8 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
     expect((extractMemories as Mock).mock.calls.length).toBe(extractionCount);
     expect(sourceAppend).toHaveBeenCalledTimes(1);
     (extractMemories as Mock).mockResolvedValueOnce([
-      { l2: "Synthetic old fact should be suppressed", confidence: 0.9, source_turn_index: 0 },
-      { l2: "Synthetic new fact should be written", confidence: 0.9, source_turn_index: 1 },
+      { l2: "Synthetic old fact should be suppressed", confidence: 0.9, sourceTurnIndex: 0 },
+      { l2: "Synthetic new fact should be written", confidence: 0.9, sourceTurnIndex: 1 },
     ]);
     expect((await post([first, second])).status).toBe(200);
     expect((extractMemories as Mock).mock.calls.at(-1)?.[0]).toEqual([first, second]);
@@ -618,6 +645,77 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
     expect(await (await post([{ ...first, content: "Synthetic changed first turn" }])).json())
       .toMatchObject({ skipped: true, reason: "already captured" });
     expect((extractMemories as Mock).mock.calls.length).toBe(beforeConflict + 1);
+  });
+
+  it("links real HTTP extraction through corrected compressed indices and drops reworded completed exchanges", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    const actual = await vi.importActual<typeof import("../capture/extraction/capture.js")>("../capture/extraction/capture.js");
+    (runtime.db.query as Mock).mockImplementation(async (sql: string) =>
+      String(sql).includes("SELECT user_id, scope, content_hmac FROM type::record('session_turn'")
+        ? [[{ user_id: "test-user", scope: "user", content_hmac: "verified" }]] : [[]]);
+    const { compressMessagesWithIndices } = await import("../capture/continuity/session-compressor.js");
+    const priorMax = cfg.extractMaxChars;
+    (cfg as { extractMaxChars: number }).extractMaxChars = 115;
+    const old = { role: "user", content: "The old exchange records a stable compiler setting.", turnKey: "http:old", sessionEpoch: "native" };
+    const oldReply = { role: "assistant", content: "I recorded the stable compiler setting.", turnKey: "http:old-reply", sessionEpoch: "native" };
+    const filler = { role: "user", content: "ok", turnKey: "http:filler", sessionEpoch: "native" };
+    const current = { role: "user", content: "The new exchange records the RB-9184 cargo identifier.", turnKey: "http:new", sessionEpoch: "native" };
+    const messages = [old, oldReply, filler, current];
+    const mapping = compressMessagesWithIndices(messages as any, 115);
+    const currentCompressedIndex = mapping.findIndex((item) => item.originalIndex === 3);
+    expect(currentCompressedIndex).toBeGreaterThanOrEqual(0);
+    expect(currentCompressedIndex).not.toBe(3);
+    let modelCalls = 0;
+    const fetchStub = vi.fn(async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ facts:
+      ++modelCalls === 1 ? [] : [
+        { l2: "The old compiler setting was reworded by the model.", confidence: 0.99, source_turn_index: 0 },
+        { l2: "The new cargo identifier is RB-9184.", confidence: 0.99, source_turn_index: currentCompressedIndex },
+      ] }) } }] }) }));
+    vi.stubGlobal("fetch", fetchStub);
+    (extractMemories as Mock).mockImplementation((...args: Parameters<typeof actual.extractMemories>) => actual.extractMemories(...args));
+    const app = getApp();
+    const beforeCounts = sourceLinkMetricsSnapshot();
+    const post = (turns: typeof messages) => app.request("/hooks/capture", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: "test-user",
+        sessionId: "http-shape", client: "claudecode", messages: turns }) });
+    try {
+      expect((await post([old, oldReply] as typeof messages)).status).toBe(200);
+      expect((await post(messages)).status).toBe(200);
+      expect(modelCalls).toBe(2);
+      expect((arbitrateWrite as Mock).mock.calls).toHaveLength(1);
+      const newTurn = (sourceAppend.mock.calls.flatMap(([turns]) => turns as Array<{ id: string; content: string }>))
+        .find((turn) => turn.content.includes("RB-9184"));
+      expect(newTurn).toBeDefined();
+      expect((runtime.db.query as Mock).mock.calls.some(([sql, params]) =>
+        String(sql).includes("source_turn_link_state") && params?.state === "pending" && params?.turnId === newTurn?.id)).toBe(true);
+      expect((runtime.db.query as Mock).mock.calls.some(([sql]) => String(sql).includes("source_turn_link_state = 'linked'"))).toBe(true);
+      const counts = sourceLinkMetricsSnapshot();
+      expect(counts.factsWithValidSourceIndex - beforeCounts.factsWithValidSourceIndex).toBe(2);
+      expect(counts.completedTurnDrops - beforeCounts.completedTurnDrops).toBe(1);
+      expect(counts.linksPending - beforeCounts.linksPending).toBe(1);
+      const health = await (await app.request("/health")).json() as { sourceLinks?: typeof counts };
+      expect(health.sourceLinks).toMatchObject(counts);
+    } finally {
+      (cfg as { extractMaxChars: number }).extractMaxChars = priorMax;
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps a fact indexed at a prior user turn when its assistant exchange grows", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    const user = { role: "user", content: "The release marker is RB-9184.", turnKey: "held:user", sessionEpoch: "native" };
+    const assistant = { role: "assistant", content: "The release marker has been recorded.", turnKey: "held:assistant", sessionEpoch: "native" };
+    const app = getApp();
+    const post = (messages: typeof user[]) => app.request("/hooks/capture", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: "test-user",
+        sessionId: "held-release", client: "claudecode", messages }) });
+    expect((await post([user])).status).toBe(200);
+    (extractMemories as Mock).mockResolvedValueOnce([{ l2: "The release marker is RB-9184 and remains current.",
+      confidence: 0.99, sourceTurnIndex: 0 }]);
+    expect((await post([user, assistant])).status).toBe(200);
+    expect(arbitrateWrite).toHaveBeenCalledTimes(1);
   });
 
   it("does not query record IDs for an absent turn", async () => {
@@ -845,7 +943,7 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
     vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
     sourceAppend.mockResolvedValueOnce([false]);
     (extractMemories as Mock).mockResolvedValueOnce([
-      { l2: "A synthetic compiler fact with sufficient length", confidence: 0.9, source_turn_index: 0 },
+      { l2: "A synthetic compiler fact with sufficient length", confidence: 0.9, sourceTurnIndex: 0 },
     ]);
     const app = getApp();
     const res = await app.request("/hooks/capture", {
@@ -869,7 +967,7 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
         ? [["0000000000000000"]] : [[]]);
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
     (extractMemories as Mock).mockResolvedValueOnce([
-      { l2: "A synthetic compiler fact with sufficient length", confidence: 0.9, source_turn_index: 0 },
+      { l2: "A synthetic compiler fact with sufficient length", confidence: 0.9, sourceTurnIndex: 0 },
     ]);
     try {
       const res = await getApp().request("/hooks/capture", {

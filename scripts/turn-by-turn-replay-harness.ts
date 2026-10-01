@@ -295,6 +295,8 @@ type ReplaySnapshotMemoryRow = {
   path?: string;
   client?: string;
   active: boolean;
+  linked?: boolean;
+  rawSpan?: boolean;
   updatedAt?: string;
 };
 
@@ -2320,7 +2322,7 @@ async function queryRows<T>(db: SurrealClient, sql: string): Promise<T[]> {
 
 async function collectReplaySnapshot(db: SurrealClient): Promise<ReplayDbSnapshot> {
   const [semioteRows, projectStateRows, retrievalTraceRows, sessionWatermarkRows, relationRows, rejectionRows] = await Promise.all([
-    queryRows<any>(db, "SELECT id, payload, path, active, created_at, updated_at FROM semiote ORDER BY created_at ASC;"),
+    queryRows<any>(db, "SELECT id, payload, path, active, source_turn_link_state, created_at, updated_at FROM semiote ORDER BY created_at ASC;"),
     queryRows<any>(db, "SELECT * FROM project_state ORDER BY updated_at ASC;"),
     queryRows<any>(db, "SELECT id, prompt, intent_label, retrieval_path, created_at, items FROM retrieval_trace ORDER BY created_at ASC;"),
     queryRows<any>(db, "SELECT * FROM session_watermarks ORDER BY captured_at ASC;"),
@@ -2347,6 +2349,8 @@ async function collectReplaySnapshot(db: SurrealClient): Promise<ReplayDbSnapsho
       path: typeof row.path === "string" ? row.path : typeof row.payload?.path === "string" ? row.payload.path : undefined,
       client: typeof row.payload?.client === "string" ? row.payload.client : undefined,
       active: row.active !== false,
+      linked: row.source_turn_link_state === "linked",
+      rawSpan: row.payload?.rawSpan != null,
       updatedAt: typeof row.updated_at === "string" ? row.updated_at : typeof row.payload?.updatedAt === "string" ? row.payload.updatedAt : undefined,
     })),
     projectStateRows: projectStateRows.map((row) => ({
@@ -2518,7 +2522,7 @@ async function executeWriteAction(
     const { status, payload } = await postJson<Record<string, unknown>>(`${serviceUrl}/hooks/capture`, action.body);
     const units = Array.isArray(payload.units) ? payload.units as Array<{ id?: string; outcome?: string }> : [];
     if (status >= 400 || payload.skipped === true || units.length === 0 || Number(payload.factsFound ?? 0) === 0) {
-      throw new Error(`Replay capture did not store facts: ${action.id} (status ${status})`);
+      throw new Error(`Replay capture did not store facts: ${action.id} (status ${status}${payload.error === undefined ? "" : `, error ${String(payload.error)}`})`);
     }
     const ids = units.flatMap((unit) => typeof unit.id === "string" && unit.outcome !== "skip" ? [unit.id] : []);
     if (ids.length === 0) throw new Error(`Replay capture has no stored fact IDs: ${action.id}`);
@@ -3609,6 +3613,13 @@ function stripSourceBlock(value: string | null): string {
   return (value ?? "").replace(/\s*<source_excerpts nonce="[^"]+">[\s\S]*?<\/source_excerpts nonce="[^"]+">\s*/gu, "\n").trim();
 }
 
+function exactDetailSource(value: string | null, detail: string): "excerpt" | "other-context" | "absent" {
+  const text = (value ?? "").replaceAll("\u2063", " ");
+  const block = text.match(/<source_excerpts nonce="[^"]+">([\s\S]*?)<\/source_excerpts nonce="[^"]+">/u)?.[1] ?? "";
+  if (block.includes(detail)) return "excerpt";
+  return stripSourceBlock(text).includes(detail) ? "other-context" : "absent";
+}
+
 function percentile(values: number[], pct: number): number | null {
   if (!values.length) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -3667,7 +3678,9 @@ function compareReplayModes(byMode: Map<string, ReplayScenarioArtifact[]>): Reco
           ...(probe ? { detailProbe: probe,
             probeStatus: after.mode === "read-only" ? READ_ONLY_PROBE_NOTE : "applicable",
             exactDetailRecoveredBefore: after.mode === "read-only" ? null : (prior.injectedContext ?? "").replaceAll("\u2063", " ").includes(probe.detail),
-            exactDetailRecoveredAfter: after.mode === "read-only" ? null : (current.injectedContext ?? "").replaceAll("\u2063", " ").includes(probe.detail) } : {}),
+            exactDetailRecoveredAfter: after.mode === "read-only" ? null : (current.injectedContext ?? "").replaceAll("\u2063", " ").includes(probe.detail),
+            recoveredFromBefore: after.mode === "read-only" ? "not-applicable" : exactDetailSource(prior.injectedContext, probe.detail),
+            recoveredFromAfter: after.mode === "read-only" ? "not-applicable" : exactDetailSource(current.injectedContext, probe.detail) } : {}),
           excerptCount: current.sourceExcerpts.length, excerptTokens,
           contextWithoutExcerptsChanged: stripSourceBlock(prior.injectedContext) !== stripSourceBlock(current.injectedContext),
           latencyBeforeMs: prior.recallLatencyMs, latencyAfterMs: current.recallLatencyMs, latencyDeltaMs: delta });
@@ -3677,7 +3690,9 @@ function compareReplayModes(byMode: Map<string, ReplayScenarioArtifact[]>): Reco
       const probeTurns = turns.filter((turn) => turn.turnId === probe.turnId && turn.probeStatus === "applicable");
       return { ...probe, cases: probeTurns.length,
         recoveredBefore: probeTurns.filter((turn) => turn.exactDetailRecoveredBefore === true).length,
-        recoveredAfter: probeTurns.filter((turn) => turn.exactDetailRecoveredAfter === true).length };
+        recoveredAfter: probeTurns.filter((turn) => turn.exactDetailRecoveredAfter === true).length,
+        recoveredFromExcerpt: probeTurns.filter((turn) => turn.recoveredFromAfter === "excerpt").length,
+        recoveredFromOtherContext: probeTurns.filter((turn) => turn.recoveredFromAfter === "other-context").length };
     });
     comparisons[`${beforeMode}_to_${afterMode}`] = {
       totalTurns: turns.length,
@@ -3688,18 +3703,27 @@ function compareReplayModes(byMode: Map<string, ReplayScenarioArtifact[]>): Reco
       detailProbes,
       exactDetailRecoveredBefore: detailProbes.reduce((sum, probe) => sum + probe.recoveredBefore, 0),
       exactDetailRecoveredAfter: detailProbes.reduce((sum, probe) => sum + probe.recoveredAfter, 0),
+      exactDetailRecoveredFromExcerpt: detailProbes.reduce((sum, probe) => sum + probe.recoveredFromExcerpt, 0),
+      exactDetailRecoveredFromOtherContext: detailProbes.reduce((sum, probe) => sum + probe.recoveredFromOtherContext, 0),
       latencyDeltaP50Ms: percentile(deltas, 0.5), latencyDeltaP95Ms: percentile(deltas, 0.95),
       turns,
     };
   }
   const onArtifacts = byMode.get("on") ?? [];
+  const linkedSpanCounts = onArtifacts.map((artifact) => {
+    const rows = artifact.dbEvolution.at(-1)?.snapshot.semioteRows ?? [];
+    const linked = rows.filter((row) => row.linked);
+    return { scenarioId: artifact.scenarioId, linkedFacts: linked.length,
+      linkedFactsWithRawSpan: linked.filter((row) => row.rawSpan).length };
+  });
   const checks = onArtifacts.flatMap((artifact) => artifact.turns.flatMap((turn) => turn.stages.flatMap((stage) => stage.checks)));
   const ineligible = checks.filter((check) => check.name === "verified-source-ineligible-excerpts-absent");
   const corrections = checks.filter((check) => check.name === "retired-fact-excerpt-absent");
   const positives = checks.filter((check) => check.name === "linked-in-scope-positive-control");
   const forbiddenFragmentHits = checks.filter((check) => check.name === "recall-required-fragments")
     .reduce((sum, check) => sum + ((check.details.presentForbiddenFragments as string[] | undefined)?.length ?? 0), 0);
-  return { precondition: "RUNIR_SOURCE_STORE=on in every mode", headline: comparisons.shadow_to_on ?? null,
+  return { precondition: "RUNIR_SOURCE_STORE=on in every mode", linkedSpanCounts,
+    headline: comparisons.shadow_to_on ?? null,
     secondary: comparisons.off_to_on ?? null, noiseFloor: comparisons["on_to_on-repeat"] ?? null,
     safety: { positiveControls: positives.length, positiveControlFailures: positives.filter((check) => !check.ok).length,
       verifiedSourceIneligibleExcerpts: ineligible.reduce((sum, check) => sum + Number(check.details.observed ?? 0), 0),
@@ -3708,7 +3732,7 @@ function compareReplayModes(byMode: Map<string, ReplayScenarioArtifact[]>): Reco
       correctionLeaks: corrections.reduce((sum, check) => sum + Number(check.details.observed ?? 0), 0),
       correctionCases: corrections.reduce((sum, check) => sum + Number(check.details.eligible ?? 0), 0),
       forbiddenFragmentHits },
-    note: "Fixture facts were used; the production extractor did not run. Session opener, compaction and /think do not attach excerpts. The excerpt window is placed by overlap with fact text, not by the question; exact-detail recovery is informational, not a gate, and is scored only on each probe question turn. Read-only probe rows are not applicable (read-only scenario does not write probe captures). The path case is a fact/turn path mismatch created by rewriting the fact path. A fact and turn sharing a different path from the request path are eligible by design because request path is not in the predicate. The old token appears inside the replacement fact's own source by design." };
+    note: "Fixture facts replaced the model response and passed through production post-processing; the HTTP model call did not run. Session opener, compaction and /think do not attach excerpts. The excerpt window is placed by overlap with fact text, not by the question; exact-detail recovery is informational, not a gate, and is scored only on each probe question turn. Recovery source distinguishes the excerpt block from other recalled context. Read-only probe rows are not applicable (read-only scenario does not write probe captures). The path case is a fact/turn path mismatch created by rewriting the fact path. A fact and turn sharing a different path from the request path are eligible by design because request path is not in the predicate. The old token appears inside the replacement fact's own source by design." };
 }
 
 export async function runTurnByTurnReplayHarness(options?: CliOptions): Promise<ReplayHarnessReport> {
