@@ -38,4 +38,6 @@ HTTP service shell: app creation, middleware, auth, runtime defaults, provider/D
 
 ## Child DOX Index
 
-This subtree has no child AGENTS.md files yet. Add one if a route family becomes a durable boundary with its own local rules.
+| Scope | Child DOX | Covers |
+|---|---|---|
+| `processing-policy/` | `src/app/processing-policy/AGENTS.md` | Internal Minni producer authority values, empty registry, fail-closed refusal contract, and runtime pre-egress context validation. |

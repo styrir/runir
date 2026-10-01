@@ -42,6 +42,10 @@ import { RetrievalStatsCollector } from "../recall/selection/retrieval-stats.js"
 import { NoisePrototypeBank } from "../capture/extraction/noise-prototype-bank.js";
 import { initializeUsefulnessState } from "../lifecycle/semion/usefulness-feedback.js";
 import { createOverlayRegistry } from "../storage/overlay/overlay-store.js";
+import {
+  assertTrustedProcessingPolicyContext,
+  type ProcessingPolicyContext,
+} from "./processing-policy/authority.js";
 
 export { resolveUserId } from "./resolve-user-id.js";
 
@@ -165,6 +169,12 @@ export async function writeWithArbitration(params: {
   hexisFit?: number;
   rankingExplanation?: string[];
   semioteProvenance?: SemioteProvenanceBuildInput;
+  /**
+   * Optional server-admitted Minni processing context. Generic callers omit
+   * this and retain their existing behavior; a protected producer operation
+   * must pass the authority-produced context before any provider call.
+   */
+  processingPolicyContext?: ProcessingPolicyContext;
   /** Rúnir-pn1l Q4 U2 (seeded-replay harness): OPTIONAL injected clock (epoch ms)
    *  forwarded RAW to `arbitrateWrite.nowMs`. Omitted by every production caller
    *  (`/hooks/capture`, `/memory/store`) ⇒ the arbitration path resolves `Date.now()`
@@ -172,6 +182,16 @@ export async function writeWithArbitration(params: {
    *  memory's original write time sets it to the replayed row's `created_at`. */
   nowMs?: number;
 }) {
+  // This is the runtime's pre-embedding fence. It validates an already
+  // server-admitted context before usefulness setup or provider egress. The
+  // current generic routes omit the context; later Minni ingress/lifecycle
+  // slices must resolve it from server-authenticated authority first.
+  if (params.processingPolicyContext !== undefined) {
+    assertTrustedProcessingPolicyContext(params.processingPolicyContext, {
+      operation: "capture_ingest",
+      targetUserId: params.userId,
+    });
+  }
   const initialUsefulness = initializeUsefulnessState(
     typeof params.metadata?.confidence === "number" ? params.metadata.confidence as number : undefined,
   );
