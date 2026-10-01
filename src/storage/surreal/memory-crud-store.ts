@@ -23,6 +23,7 @@ import {
   conservativeJoinProcessingLineage,
   type ProcessingLineageV1,
 } from "../../domain/memory/processing-lineage.js";
+import { attachSelectedSearchHitLineage } from "../../domain/memory/search-hit-lineage.js";
 import { SurrealClient } from "./surreal-client.js";
 import { extractId, ACTIVE_MEMORY_FILTER, mapMemoryRowToSearchHit } from "./surreal-client.js";
 
@@ -70,7 +71,9 @@ export async function hydrateLatestStateRepresentativeHits(
     },
   );
 
-  return (results[0] ?? []).map((row: any) => mapMemoryRowToSearchHit(row));
+  return (results[0] ?? []).map((row: any) =>
+    attachSelectedSearchHitLineage(mapMemoryRowToSearchHit(row), row?.processing_lineage),
+  );
 }
 
 /**
@@ -406,10 +409,12 @@ export async function listMemories(
 ): Promise<any[]> {
   const sf = scopeFilter ?? { whereClause: "", vars: {} };
   const results = await db.query<any>(
-    `SELECT id, payload, created_at, updated_at FROM ${tableName} WHERE payload.userId = $userId ${ACTIVE_MEMORY_FILTER} ${sf.whereClause} ORDER BY created_at DESC LIMIT 100;`,
+    `SELECT id, payload, processing_lineage, created_at, updated_at FROM ${tableName} WHERE payload.userId = $userId ${ACTIVE_MEMORY_FILTER} ${sf.whereClause} ORDER BY created_at DESC LIMIT 100;`,
     { userId, ...sf.vars },
   );
-  return results[0] ?? [];
+  return (results[0] ?? []).map((row: any) =>
+    attachSelectedSearchHitLineage(row, row?.processing_lineage),
+  );
 }
 
 /** Fetches a single user-scoped memory row by sanitized record id. */
@@ -420,10 +425,12 @@ export async function getMemoryById(
   tableName: MemoryRecordTable,
 ): Promise<any[]> {
   const results = await db.query<any>(
-    `SELECT id, payload, created_at, updated_at FROM type::record('${tableName}', $id) WHERE payload.userId = $userId ${ACTIVE_MEMORY_FILTER};`,
+    `SELECT id, payload, processing_lineage, created_at, updated_at FROM type::record('${tableName}', $id) WHERE payload.userId = $userId ${ACTIVE_MEMORY_FILTER};`,
     { id, userId },
   );
-  return results[0] ?? [];
+  return (results[0] ?? []).map((row: any) =>
+    attachSelectedSearchHitLineage(row, row?.processing_lineage),
+  );
 }
 
 /** Forgets one memory id scoped to user, soft-inactivating by default. */
@@ -472,10 +479,12 @@ export async function listRecentMemories(
 ): Promise<any[]> {
   const sf = scopeFilter ?? { whereClause: "", vars: {} };
   const results = await db.query<any>(
-    `SELECT id, payload, created_at, updated_at FROM ${tableName} WHERE payload.userId = $userId AND created_at > <datetime>$cutoff ${ACTIVE_MEMORY_FILTER} ${sf.whereClause} ORDER BY created_at DESC LIMIT $limit;`,
+    `SELECT id, payload, processing_lineage, created_at, updated_at FROM ${tableName} WHERE payload.userId = $userId AND created_at > <datetime>$cutoff ${ACTIVE_MEMORY_FILTER} ${sf.whereClause} ORDER BY created_at DESC LIMIT $limit;`,
     { userId, cutoff, limit, ...sf.vars },
   );
-  return results[0] ?? [];
+  return (results[0] ?? []).map((row: any) =>
+    attachSelectedSearchHitLineage(row, row?.processing_lineage),
+  );
 }
 
 function buildCaptureContextIdentityClauses(identity: CanonicalContextIdentity): {
@@ -530,7 +539,7 @@ export async function listRecentFactsForCaptureContext(
   const { clause, supported, vars } = buildCaptureContextIdentityClauses(identity);
   if (!supported) return [];
   const results = await db.query<any>(
-    `SELECT id, payload, created_at, updated_at, active, inactive_reason, superseded_by, lineage_root_id, valid_at, invalid_at
+    `SELECT id, payload, processing_lineage, created_at, updated_at, active, inactive_reason, superseded_by, lineage_root_id, valid_at, invalid_at
      FROM ${tableName}
      WHERE payload.userId = $userId
        ${ACTIVE_MEMORY_FILTER}
@@ -541,7 +550,9 @@ export async function listRecentFactsForCaptureContext(
      LIMIT $limit;`,
     { userId, cutoff, limit, ...vars },
   );
-  return (results[0] ?? []).map((row: any) => mapMemoryRowToSearchHit({ ...row, score: 0 }));
+  return (results[0] ?? []).map((row: any) =>
+    attachSelectedSearchHitLineage(mapMemoryRowToSearchHit({ ...row, score: 0 }), row?.processing_lineage),
+  );
 }
 
 export async function listNearbyExistingForCaptureContext(
@@ -555,7 +566,7 @@ export async function listNearbyExistingForCaptureContext(
   const { clause, supported, vars } = buildCaptureContextIdentityClauses(identity);
   if (!supported) return [];
   const results = await db.query<any>(
-    `SELECT id, payload, created_at, updated_at, active, inactive_reason, superseded_by, lineage_root_id, valid_at, invalid_at
+    `SELECT id, payload, processing_lineage, created_at, updated_at, active, inactive_reason, superseded_by, lineage_root_id, valid_at, invalid_at
      FROM ${tableName}
      WHERE payload.userId = $userId
        ${ACTIVE_MEMORY_FILTER}
@@ -565,7 +576,9 @@ export async function listNearbyExistingForCaptureContext(
      LIMIT $limit;`,
     { userId, limit, ...vars },
   );
-  return (results[0] ?? []).map((row: any) => mapMemoryRowToSearchHit({ ...row, score: 0 }));
+  return (results[0] ?? []).map((row: any) =>
+    attachSelectedSearchHitLineage(mapMemoryRowToSearchHit({ ...row, score: 0 }), row?.processing_lineage),
+  );
 }
 
 /**
@@ -609,7 +622,7 @@ export async function findSimilarMemories(
   }
 
   const results = await db.query<any>(
-    `SELECT id, payload, scope, session_id, memory_role, valid_at, invalid_at, lineage_root_id, vector::similarity::cosine(embedding, ${vectorLiteral}) AS sim, created_at, updated_at
+    `SELECT id, payload, processing_lineage, scope, session_id, memory_role, valid_at, invalid_at, lineage_root_id, vector::similarity::cosine(embedding, ${vectorLiteral}) AS sim, created_at, updated_at
      FROM ${tableName}
      WHERE payload.userId = $userId
        AND processing_lineage = NONE
@@ -622,7 +635,7 @@ export async function findSimilarMemories(
     vars,
   );
   const rows = results[0] ?? [];
-  return rows.map((r: any) => ({
+  return rows.map((r: any) => attachSelectedSearchHitLineage({
     id: extractId(r.id),
     l2: r.payload?.l2 ?? r.payload?.data ?? "",
     text: r.payload?.l2 ?? r.payload?.data ?? "",
@@ -646,7 +659,7 @@ export async function findSimilarMemories(
     factKey: r.payload?.factKey,
     noemaClaimKey: r.payload?.noemaClaimKey,
     atomicFact: r.payload?.atomicFact,
-  }));
+  }, r?.processing_lineage));
 }
 
 type ProtectedMemoryMergeInput = Readonly<{
