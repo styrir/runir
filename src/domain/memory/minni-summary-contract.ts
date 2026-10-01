@@ -227,6 +227,7 @@ export type SummaryClaim = Readonly<{
 export type MinniSummaryContract = Readonly<{
   version: typeof MINNI_SUMMARY_CONTRACT_VERSION;
   summary: string;
+  event_capture_or_index_interval: SummaryEventInterval;
   evidence_counts: Readonly<{
     returned_count: number;
     local_only_withheld_count: number;
@@ -236,6 +237,79 @@ export type MinniSummaryContract = Readonly<{
   claims: readonly SummaryClaim[];
   conclusion: SummaryConclusion;
 }>;
+
+type ParsedMinniTimestamp = Readonly<{
+  epochSeconds: bigint;
+  fraction: string;
+}>;
+
+const MINNI_TIMESTAMP_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/;
+
+function daysFromCivil(year: number, month: number, day: number): bigint {
+  const adjustedYear = year - (month <= 2 ? 1 : 0);
+  const era = Math.floor(adjustedYear / 400);
+  const yearOfEra = adjustedYear - era * 400;
+  const monthPrime = month + (month > 2 ? -3 : 9);
+  const dayOfYear = Math.floor((153 * monthPrime + 2) / 5) + day - 1;
+  const dayOfEra = yearOfEra * 365
+    + Math.floor(yearOfEra / 4)
+    - Math.floor(yearOfEra / 100)
+    + dayOfYear;
+  return BigInt(era * 146097 + dayOfEra - 719468);
+}
+
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) {
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    return leap ? 29 : 28;
+  }
+  return [4, 6, 9, 11].includes(month) ? 30 : 31;
+}
+
+/** Parse a source-compatible ISO timestamp without converting it to Date/ms. */
+export function parseMinniTimestamp(value: string): ParsedMinniTimestamp | undefined {
+  if (!boundedString(value, MAX_REFERENCE_UTF8_BYTES, true)) return undefined;
+  const match = MINNI_TIMESTAMP_PATTERN.exec(value);
+  if (!match) return undefined;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  if (month < 1 || month > 12
+    || day < 1 || day > daysInMonth(year, month)
+    || hour > 23 || minute > 59 || second > 59) return undefined;
+
+  const zone = match[8];
+  let offsetSeconds = 0;
+  if (zone !== "Z") {
+    const offsetHours = Number(zone.slice(1, 3));
+    const offsetMinutes = Number(zone.slice(4, 6));
+    if (offsetHours > 23 || offsetMinutes > 59) return undefined;
+    const sign = zone[0] === "-" ? -1 : 1;
+    offsetSeconds = sign * (offsetHours * 60 + offsetMinutes) * 60;
+  }
+  const epochSeconds = daysFromCivil(year, month, day) * 86_400n
+    + BigInt(hour * 3_600 + minute * 60 + second - offsetSeconds);
+  const fraction = (match[7] ?? "").replace(/0+$/, "");
+  return Object.freeze({ epochSeconds, fraction });
+}
+
+/** Compare exact source instants; returns undefined when either input is invalid. */
+export function compareMinniTimestamps(left: string, right: string): number | undefined {
+  const parsedLeft = parseMinniTimestamp(left);
+  const parsedRight = parseMinniTimestamp(right);
+  if (!parsedLeft || !parsedRight) return undefined;
+  if (parsedLeft.epochSeconds !== parsedRight.epochSeconds) {
+    return parsedLeft.epochSeconds < parsedRight.epochSeconds ? -1 : 1;
+  }
+  const scale = Math.max(parsedLeft.fraction.length, parsedRight.fraction.length);
+  const leftFraction = BigInt(parsedLeft.fraction.padEnd(scale, "0") || "0");
+  const rightFraction = BigInt(parsedRight.fraction.padEnd(scale, "0") || "0");
+  if (leftFraction === rightFraction) return 0;
+  return leftFraction < rightFraction ? -1 : 1;
+}
 
 export type SummaryBuildResult =
   | Readonly<{ ok: true; contract: MinniSummaryContract }>
@@ -314,11 +388,12 @@ function positiveInteger(value: unknown): value is number {
 }
 
 function isTimestamp(value: unknown): value is string {
-  return boundedString(value, MAX_REFERENCE_UTF8_BYTES, true) && Number.isFinite(Date.parse(value));
+  return typeof value === "string" && parseMinniTimestamp(value) !== undefined;
 }
 
 function intervalIsOrdered(start: string, end: string): boolean {
-  return Date.parse(start) <= Date.parse(end);
+  const comparison = compareMinniTimestamps(start, end);
+  return comparison !== undefined && comparison <= 0;
 }
 
 function isEnum<T extends string>(value: unknown, values: readonly T[]): value is T {
@@ -592,6 +667,27 @@ function validSummaryInterval(value: unknown): value is SummaryEventInterval {
     && value.meaning === "event_capture_or_index_interval";
 }
 
+function derivedEvidenceInterval(
+  evidence: readonly SummaryEvidenceReference[],
+): SummaryEventInterval | undefined {
+  if (evidence.length === 0) return undefined;
+  let start = evidence[0].event_capture_or_index_interval.start;
+  let end = evidence[0].event_capture_or_index_interval.end;
+  for (const item of evidence.slice(1)) {
+    const itemInterval = item.event_capture_or_index_interval;
+    const startComparison = compareMinniTimestamps(itemInterval.start, start);
+    const endComparison = compareMinniTimestamps(itemInterval.end, end);
+    if (startComparison === undefined || endComparison === undefined) return undefined;
+    if (startComparison < 0) start = itemInterval.start;
+    if (endComparison > 0) end = itemInterval.end;
+  }
+  return Object.freeze({
+    start,
+    end,
+    meaning: "event_capture_or_index_interval" as const,
+  });
+}
+
 function validOCRScreenshotInterval(value: unknown): value is SummaryOCRScreenshotInterval {
   return isRecord(value)
     && exactKeys(value, ["started_ms", "completed_ms", "meaning"])
@@ -703,9 +799,11 @@ function validateContract(value: unknown): MinniSummaryContract | SummaryCodecRe
   if (!isRecord(value)) return refusal("invalid_contract");
   if (value.version !== MINNI_SUMMARY_CONTRACT_VERSION) return refusal("unsupported_contract_version");
   if (!exactKeys(value, [
-    "version", "summary", "evidence_counts", "processing_lineage", "evidence", "claims", "conclusion",
+    "version", "summary", "event_capture_or_index_interval", "evidence_counts",
+    "processing_lineage", "evidence", "claims", "conclusion",
   ])) return refusal("invalid_contract");
   if (!nonEmptyString(value.summary)
+    || !validSummaryInterval(value.event_capture_or_index_interval)
     || !isEnum(value.conclusion, SUMMARY_CONCLUSIONS)
     || !isRecord(value.evidence_counts)
     || !exactKeys(value.evidence_counts, ["returned_count", "local_only_withheld_count"])
@@ -728,6 +826,11 @@ function validateContract(value: unknown): MinniSummaryContract | SummaryCodecRe
     evidenceIds.add(parsed.event_id);
     evidence.push(parsed);
   }
+  const overallInterval = derivedEvidenceInterval(evidence);
+  const suppliedOverallInterval = value.event_capture_or_index_interval as SummaryEventInterval;
+  if (!overallInterval
+    || suppliedOverallInterval.start !== overallInterval.start
+    || suppliedOverallInterval.end !== overallInterval.end) return refusal("invalid_contract");
   for (const item of evidence) {
     if (item.anchor_context === "authorized_context"
       && (!item.anchor_id
@@ -740,6 +843,14 @@ function validateContract(value: unknown): MinniSummaryContract | SummaryCodecRe
     const parsed = validateClaim(rawClaim);
     if (!parsed || claimIds.has(parsed.id)
       || parsed.support_event_ids.some((id) => !evidenceIds.has(id))) return refusal("invalid_contract");
+    const supportEvidence = parsed.support_event_ids.map((id) =>
+      evidence.find((item) => item.event_id === id)!);
+    const supportInterval = derivedEvidenceInterval(supportEvidence);
+    if (!supportInterval
+      || parsed.event_capture_or_index_interval.start !== supportInterval.start
+      || parsed.event_capture_or_index_interval.end !== supportInterval.end) {
+      return refusal("invalid_contract");
+    }
     claimIds.add(parsed.id);
     claims.push(parsed);
   }
@@ -763,6 +874,7 @@ function validateContract(value: unknown): MinniSummaryContract | SummaryCodecRe
   return Object.freeze({
     version: MINNI_SUMMARY_CONTRACT_VERSION,
     summary: value.summary,
+    event_capture_or_index_interval: Object.freeze({ ...value.event_capture_or_index_interval }),
     evidence_counts: Object.freeze({
       returned_count: value.evidence_counts.returned_count,
       local_only_withheld_count: value.evidence_counts.local_only_withheld_count,
