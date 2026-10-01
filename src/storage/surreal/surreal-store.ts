@@ -33,6 +33,7 @@ export {
   findSimilarMemories,
   updateMemoryText,
   mergeMemoryWithProcessingLineage,
+  supersedeMemoryWithProcessingLineage,
   supersedeMemory,
   restoreMemoryById,
   getMemoryLineage,
