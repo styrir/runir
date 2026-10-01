@@ -21,6 +21,50 @@ The [README](../README.md) remains the service entry point and
 route registrations determine the implemented surface. This policy is not an
 additional API contract or evidence that any current payload is Minni-origin.
 
+## Internal A1 summary codec
+
+The source-owned `runir.minni.summary/v1` codec in
+`src/domain/memory/minni-summary-contract.ts` is a pure structural boundary for
+the later summary builder. It decodes a response already admitted by the
+authenticated producer seam and validates only its published `get_events` shape;
+the codec does not authenticate callers or grant processing authority. It
+rejects duplicate returned event IDs, preserves the unique returned count and
+the producer's aggregate `localOnlyWithheld` count without reconciling either
+against an unretained request, and maps empty, missing, or wholly withheld
+evidence to the exact content-free `no_authorized_evidence` result. That result
+contains no event IDs, interval, lineage, prose, or callback value.
+
+The OCR observation is optional metadata on an accepted Minni OCR event. The
+codec validates the published screen-ocr caps and Swift coverage relationships,
+deep-copies accepted nested metadata, and omits malformed, future, oversized,
+or semantically inconsistent observation metadata while retaining the base
+event. It excludes pixels, alternate candidates, and storage-only full-text
+hashes. A durable OCR evidence or claim entry must carry the structural
+uncertainties `ocr_source`, `source_clip_unknown`, and
+`source_completeness_unknown`; a supported observation can add collector
+coverage but cannot clear those uncertainties. Event capture/index intervals
+and OCR screenshot capture intervals remain separate and neither is a message
+sent-time claim. The complete closed uncertainty vocabulary is
+`ocr_source`, `source_clip_unknown`, `source_completeness_unknown`,
+`partial_delta`, `anchor_unavailable`, `contradictory_evidence`, and
+`scope_linkage_unknown`; collector coverage is represented in its collector
+metadata rather than as an additional uncertainty. Every claim in a conflict
+relationship and each supporting evidence reference carries
+`contradictory_evidence`.
+
+The durable codec requires non-empty evidence and claims for an accepted
+contract, links an authorized anchor only to a different event in the same
+accepted evidence set, preserves contradictory claims as symmetric
+relationships, and allows only the closed claim states and conclusions defined
+by the source contract. Raw producer event IDs and summary/claim prose have no
+invented A1 byte cap; existing reviewed bounds remain on durable reference and
+label fields, while later ingest/storage work owns any additional prose or
+locator limits. Structural field allowlists do not establish that arbitrary
+summary or claim prose is masked, true, complete, or safe, and later builders
+must retain that limitation. It has no authority constructor, write path,
+route, provider, model, persistence, or delivery capability. Parsing lineage
+is evidence only.
+
 ## Lifetime processing requirement
 
 Local-only is a **lifetime Rúnir processing policy**, not an ingest-time hint.
@@ -122,13 +166,15 @@ must each retain their own evidence; none proves the others.
 
 ## Unselected decisions
 
-The reviewed dependent work must choose route and wire fields/versioning,
-registration/token issuance and storage, stable idempotency identity and
-receipt persistence, provenance/claim representation and bounds, the exact
-registered local runtime/model and compatible embeddings, and deletion method
-(hard deletion versus irreversible inactivation) with full derivative lineage
-semantics. Partial evidence must not become a definitive completion claim;
-the claim representation awaits the producer contract.
+The reviewed dependent work must choose public route and wire
+fields/versioning, registration/token issuance and storage, stable idempotency
+identity and receipt persistence, the protected all-input provenance binding,
+the exact registered local runtime/model and compatible embeddings, and
+deletion method (hard deletion versus irreversible inactivation) with full
+derivative lineage semantics. The source-owned A1 internal summary shape and
+its structural bounds are selected above; they do not select a public wire
+schema, persistence implementation, actual ingestion, or claim truth. Partial
+evidence must not become a definitive completion claim.
 
 This policy does not choose how a supporting-event deletion retracts a whole
 derivative versus a narrower lineage, or how related evidence/index/cache
