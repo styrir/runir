@@ -18,7 +18,11 @@ import {
   type MintedProcessingLineage,
   type ProducerAuthority,
 } from "../../app/processing-policy/authority.js";
-import type { ProcessingLineageV1 } from "../../domain/memory/processing-lineage.js";
+import {
+  classifyProcessingLineage,
+  conservativeJoinProcessingLineage,
+  type ProcessingLineageV1,
+} from "../../domain/memory/processing-lineage.js";
 import { SurrealClient } from "./surreal-client.js";
 import { extractId, ACTIVE_MEMORY_FILTER, mapMemoryRowToSearchHit } from "./surreal-client.js";
 
@@ -569,6 +573,7 @@ export async function findSimilarMemories(
     `SELECT id, payload, scope, session_id, memory_role, valid_at, invalid_at, lineage_root_id, vector::similarity::cosine(embedding, ${vectorLiteral}) AS sim, created_at, updated_at
      FROM ${tableName}
      WHERE payload.userId = $userId
+       AND processing_lineage = NONE
        AND embedding != NONE
        ${ACTIVE_MEMORY_FILTER}
        AND (updated_at > <datetime>$cutoff OR created_at > <datetime>$cutoff)
@@ -603,6 +608,163 @@ export async function findSimilarMemories(
     noemaClaimKey: r.payload?.noemaClaimKey,
     atomicFact: r.payload?.atomicFact,
   }));
+}
+
+type ProtectedMemoryMergeInput = Readonly<{
+  id: string;
+  userId: string;
+  newText: string;
+  embedding: number[];
+  writeSource: WriteSource;
+  atomicFactAction: "retain" | "clear";
+  continuityMetadata?: {
+    memoryRole?: MemoryRole;
+    validAt?: string;
+    continuitySubjectKey?: string;
+  };
+  tableName?: MemoryRecordTable;
+}>;
+
+type ProtectedMemoryMergePreflight = Readonly<{
+  expectedUserId: string;
+  expectedProcessingLineage: unknown;
+  mergedProcessingLineage: ProcessingLineageV1;
+}>;
+
+function refusalForStoredLineage(
+  storedValue: unknown,
+  incomingLineage: ProcessingLineageV1,
+): { expectedProcessingLineage: unknown; mergedProcessingLineage: ProcessingLineageV1 } {
+  const stored = classifyProcessingLineage(storedValue);
+  const joined = conservativeJoinProcessingLineage(
+    stored,
+    { state: "minni_verified", lineage: incomingLineage },
+  );
+  if (!joined.ok) throw new ProducerPolicyRefusalError("lineage_invalid");
+  return {
+    // Keep the exact persisted snapshot for the transaction CAS. The parsed
+    // value above is used only for strict compatibility and the monotonic join;
+    // a normalized surrogate must not hide a concurrent stored-field change.
+    expectedProcessingLineage: storedValue,
+    mergedProcessingLineage: joined.lineage,
+  };
+}
+
+function composeProtectedMergeMemory(
+  input: ProtectedMemoryMergeInput,
+  preflight: ProtectedMemoryMergePreflight,
+): { statement: string; vars: Record<string, unknown> } {
+  if (!input.newText || input.newText.trim() === '') {
+    throw new Error("mergeMemoryWithProcessingLineage: newText must be non-empty");
+  }
+  const now = new Date().toISOString();
+  const textNorm = input.newText.toLowerCase().trim();
+  const atomicFactClearClause = input.atomicFactAction === "clear"
+    ? ",\n       payload.atomicFact = NONE"
+    : "";
+  const statement = `
+    LET $mergeRows = (
+      UPDATE type::record('${input.tableName ?? PRIMARY_MEMORY_TABLE}', $recordId) SET
+        processing_lineage = $mergedProcessingLineage,
+        embedding = $embedding ?? NONE,
+        payload.l2 = $newText,
+        payload.updatedAt = $now,
+        payload.writeSource = $writeSource,
+        payload.arbitrationOutcome = $arbitrationOutcome,
+        payload.active = true,
+        payload.inactiveAt = NONE,
+        payload.inactiveReason = NONE,
+        payload.invalidAt = NONE,
+        payload.memoryRole = $memoryRole,
+        payload.validAt = $validAt,
+        payload.continuitySubjectKey = $continuitySubjectKey,
+        text_norm = $textNorm,
+        active = true,
+        inactive_at = NONE,
+        inactive_reason = NONE,
+        invalid_at = NONE,
+        memory_role = $memoryRole,
+        valid_at = IF $validAt != NONE THEN <datetime>$validAt ELSE NONE END,
+        updated_at = <datetime>$now${atomicFactClearClause}
+      WHERE user_id = $expectedUserId
+        AND processing_lineage = $expectedProcessingLineage
+      RETURN VALUE id
+    );
+    IF array::len($mergeRows) != 1 {
+      THROW "processing lineage compare-and-set failed";
+    };
+  `;
+  return {
+    statement,
+    vars: {
+      recordId: input.id,
+      expectedUserId: preflight.expectedUserId,
+      expectedProcessingLineage: preflight.expectedProcessingLineage,
+      mergedProcessingLineage: preflight.mergedProcessingLineage,
+      embedding: embeddingForStore(input.embedding),
+      newText: input.newText,
+      now,
+      writeSource: input.writeSource,
+      arbitrationOutcome: "merge-update",
+      textNorm,
+      memoryRole: input.continuityMetadata?.memoryRole ?? undefined,
+      validAt: input.continuityMetadata?.validAt ?? undefined,
+      continuitySubjectKey: input.continuityMetadata?.continuitySubjectKey ?? undefined,
+    },
+  };
+}
+
+/**
+ * Merges a known protected row after exact Sourceb-A authority revalidation.
+ * The first authority seam admits a lineage-only preflight; the second seam
+ * runs immediately before the guarded transaction, so a revoked or changed
+ * registration cannot reuse a successful pre-read. No content is selected
+ * during preflight.
+ */
+export async function mergeMemoryWithProcessingLineage(
+  db: SurrealClient,
+  authority: ProducerAuthority,
+  minted: MintedProcessingLineage | unknown,
+  input: ProtectedMemoryMergeInput,
+): Promise<void> {
+  const tableName = input.tableName ?? PRIMARY_MEMORY_TABLE;
+  const preflightResult = await runWithMintedProcessingLineage(
+    authority,
+    minted,
+    async (incomingLineage, context): Promise<ProtectedMemoryMergePreflight> => {
+      const results = await db.query<{
+        id: unknown;
+        user_id: unknown;
+        processing_lineage: unknown;
+      }>(
+        `SELECT id, user_id, processing_lineage FROM type::record('${tableName}', $recordId);`,
+        { recordId: input.id },
+      );
+      const rows = results[0] ?? [];
+      if (rows.length !== 1) throw new ProducerPolicyRefusalError("lineage_invalid");
+      const row = rows[0];
+      if (row.user_id !== context.targetUserId || row.user_id !== input.userId) {
+        throw new ProducerPolicyRefusalError("lineage_invalid");
+      }
+      const compatible = refusalForStoredLineage(row.processing_lineage, incomingLineage);
+      return {
+        expectedUserId: context.targetUserId,
+        expectedProcessingLineage: compatible.expectedProcessingLineage,
+        mergedProcessingLineage: compatible.mergedProcessingLineage,
+      };
+    },
+    { targetUserId: input.userId },
+  );
+  if (!preflightResult.ok) throw new ProducerPolicyRefusalError(preflightResult.reason);
+
+  const { statement, vars } = composeProtectedMergeMemory(input, preflightResult.value);
+  const transactionResult = await runWithMintedProcessingLineage(
+    authority,
+    minted,
+    async () => db.queryTransaction(statement, vars),
+    { targetUserId: input.userId },
+  );
+  if (!transactionResult.ok) throw new ProducerPolicyRefusalError(transactionResult.reason);
 }
 
 /**
@@ -642,7 +804,7 @@ export async function updateMemoryText(
   // Rúnir-h435.1 PIN-7: clear appends payload.atomicFact = NONE; retain is byte-identical to HEAD.
   const atomicFactClearClause =
     atomicFactAction === "clear" ? ",\n       payload.atomicFact = NONE" : "";
-  await db.query(
+  const result = await db.query(
     `UPDATE type::record('${tableName}', $recordId) SET
        embedding = $embedding ?? NONE,
        payload.l2 = $newText,
@@ -663,7 +825,9 @@ export async function updateMemoryText(
        invalid_at = NONE,
        memory_role = $memoryRole,
        valid_at = IF $validAt != NONE THEN <datetime>$validAt ELSE NONE END,
-       updated_at = <datetime>$now${atomicFactClearClause};`,
+       updated_at = <datetime>$now${atomicFactClearClause}
+     WHERE processing_lineage = NONE
+     RETURN VALUE id;`,
     {
       recordId: id,
       embedding: embeddingForStore(embedding),
@@ -677,6 +841,19 @@ export async function updateMemoryText(
       continuitySubjectKey: continuityMetadata?.continuitySubjectKey ?? undefined,
     },
   );
+  if (db instanceof SurrealClient && Array.isArray(result[0]) && result[0].length === 0) {
+    // A guarded no-op must not look like a committed merge. Re-read only the
+    // row identity and lineage so the refusal stays content-free; a missing
+    // row is also refused, rather than inventing a successful write receipt.
+    const presence = await db.query<{ id: unknown; processing_lineage: unknown }>(
+      `SELECT id, processing_lineage FROM type::record('${tableName}', $recordId);`,
+      { recordId: id },
+    );
+    if ((presence[0] ?? []).length > 0) {
+      throw new ProducerPolicyRefusalError("lineage_present");
+    }
+    throw new ProducerPolicyRefusalError("lineage_invalid");
+  }
 }
 
 export async function supersedeMemory(
