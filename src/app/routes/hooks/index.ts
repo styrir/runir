@@ -1072,21 +1072,7 @@ export function registerHookRoutes(app: Hono) {
       patch.hexisFit = item.hexisFit;
       patch.rankingExplanation = item.rankingExplanation;
       await patchSemioteUsefulness(runtime.db, normalizedId, patch);
-      const updatedRow = {
-        ...row,
-        usefulness_alpha: patch.usefulnessAlpha,
-        usefulness_beta: patch.usefulnessBeta,
-        usefulness_score: patch.usefulnessScore,
-        retrieved_count: patch.retrievedCount,
-        used_count: patch.usedCount,
-        successful_use_count: patch.successfulUseCount,
-        cross_session_use_count: patch.crossSessionUseCount,
-        contradiction_count: patch.contradictionCount,
-        last_retrieved_at: patch.lastRetrievedAt,
-        last_used_at: patch.lastUsedAt,
-        last_evaluated_at: patch.lastEvaluatedAt,
-      };
-      const promotion = await promoteSemioteToNoema(runtime.db, updatedRow);
+      const promotion = await promoteSemioteToNoema(runtime.db, normalizedId);
       if (promotion.promoted && promotion.id) {
         promotedIds.add(promotion.id);
       }

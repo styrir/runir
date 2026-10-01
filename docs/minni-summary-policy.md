@@ -63,7 +63,54 @@ locator limits. Structural field allowlists do not establish that arbitrary
 summary or claim prose is masked, true, complete, or safe, and later builders
 must retain that limitation. It has no authority constructor, write path,
 route, provider, model, persistence, or delivery capability. Parsing lineage
-is evidence only.
+is evidence only. An accepted contract also carries the required top-level
+`event_capture_or_index_interval`, whose start is the exact minimum event
+capture/index start and whose end is the exact maximum event capture/index end
+across every durable evidence reference, including uncited evidence. Claim
+intervals remain support-only and OCR screenshot intervals remain separate. The
+strict codec rederives each claim extent from its ordered support references
+and refuses mismatched original-string endpoints. Equivalent-instant ties retain
+the first supporting reference, matching the builder.
+The A1 codec and A2 builder share one source-compatible ISO timestamp parser
+and exact precision-preserving comparator; accepted original timestamp strings
+are retained, while invalid or reversed intervals refuse. The comparator uses
+calendar/clock/offset validation and integer/rational fraction comparison; it
+does not use `Date.parse`, millisecond conversion, or lexical tie-breaking.
+
+## Internal A2 evidence builder
+
+`src/domain/memory/minni-summary-builder.ts` builds the same internal v1
+contract from an A1-decoded accepted event set, an explicit hand-labeled claim
+set, and one stored `ProcessingLineageV1` value for every event made available
+to the builder. It preserves every accepted event reference, folds every
+lineage with `classifyProcessingLineage` and
+`conservativeJoinProcessingLineage`, and refuses content-free when a lineage
+is missing, legacy, invalid, mismatched, or when a claim reference is invalid.
+An uncited restricted input therefore remains part of the conservative joined
+delivery classification. Empty A1 evidence passes through the exact
+`no_authorized_evidence` result without prose, claims, IDs, intervals,
+lineage, or a callback value.
+
+The builder derives each event interval and the required top-level overall
+interval from `ts`/`end` with the fixed
+`event_capture_or_index_interval` meaning. The overall interval covers every
+accepted event even when no claim cites it; each claim interval covers only its
+own support events. A supported `source=minni`,
+`kind=ocr` event always carries `ocr_source`, `source_clip_unknown`, and
+`source_completeness_unknown`; a supported observation may add its separate
+screenshot interval and collector counts. A source `delta` flag adds
+`partial_delta`. An anchor is serialized only when its different event ID is
+in the accepted set; otherwise the builder records unavailable context and
+`anchor_unavailable` without identifying why.
+
+Claim state, modality, scope, statement, supports, conflicts, and explicit
+scope-linkage uncertainty are hand-labeled inputs. The builder performs no
+prose interpretation, keyword inference, success promotion, identity
+inference, or model/provider call. It keeps claims for different scopes
+separate, symmetrizes declared conflicts, and propagates
+`contradictory_evidence` to both claims and their supporting evidence. The
+parsed or joined lineage remains structural evidence and grants no processing,
+persistence, consumer-delivery, or mutation authority.
 
 ## Lifetime processing requirement
 
@@ -172,9 +219,9 @@ identity and receipt persistence, the protected all-input provenance binding,
 the exact registered local runtime/model and compatible embeddings, and
 deletion method (hard deletion versus irreversible inactivation) with full
 derivative lineage semantics. The source-owned A1 internal summary shape and
-its structural bounds are selected above; they do not select a public wire
-schema, persistence implementation, actual ingestion, or claim truth. Partial
-evidence must not become a definitive completion claim.
+A2 builder are selected above; they do not select a public wire schema,
+persistence implementation, actual ingestion, or claim truth. Partial evidence
+must not become a definitive completion claim.
 
 This policy does not choose how a supporting-event deletion retracts a whole
 derivative versus a narrower lineage, or how related evidence/index/cache

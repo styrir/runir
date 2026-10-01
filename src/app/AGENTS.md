@@ -21,6 +21,7 @@ HTTP service shell: app creation, middleware, auth, runtime defaults, provider/D
 - `POST /hooks/enroll` is the HTTP face of store `upsertProjectEnrollment` (same `RUNIR_EVIDENCE_SECRET` + `PUBLIC_PATHS` posture as evidence). It accepts the ratified A-1 enrollment write (`userId`, `workspaceId`, `projectKey`, optional `projectId` / `defaultNamespaceId` / `repoRemote` / `repoRootFingerprint`, `source: "leit" | "manual"`). No raw paths or raw remote URLs; `workspaceId` canonicalizes to `"-"`. Do not invent a second enrollment store.
 - Runtime config comes from environment parsing, not hardcoded credentials or `.env` assumptions.
 - Route handlers may delegate to service modules, but must not duplicate storage/retrieval/capture policy logic.
+- The feedback promotion caller passes the normalized semiote id after usefulness persistence. It must not pass a hydrated or locally modified row; the storage promotion boundary performs its own metadata and guarded-content reads.
 
 ## Work Guidance
 
