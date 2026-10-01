@@ -12,7 +12,14 @@ import type {
 import { PRIMARY_MEMORY_TABLE } from "../../domain/memory/types";
 import type { CanonicalContextIdentity } from "../../identity/canonical-context.js";
 import type { ScopeFilter } from "../../recall/query/scope-predicate";
-import type { SurrealClient } from "./surreal-client.js";
+import {
+  ProducerPolicyRefusalError,
+  runWithMintedProcessingLineage,
+  type MintedProcessingLineage,
+  type ProducerAuthority,
+} from "../../app/processing-policy/authority.js";
+import type { ProcessingLineageV1 } from "../../domain/memory/processing-lineage.js";
+import { SurrealClient } from "./surreal-client.js";
 import { extractId, ACTIVE_MEMORY_FILTER, mapMemoryRowToSearchHit } from "./surreal-client.js";
 
 const DEFAULT_ACTIVE_LIFECYCLE: MemoryLifecycleState = {
@@ -86,7 +93,8 @@ export function embeddingForStore(
  * prefix reproduces {@link upsertMemory}'s original param names exactly. DML-only
  * (a single UPSERT, no DDL), so it is safe to concatenate into a BEGIN/COMMIT.
  */
-export function composeUpsertMemory(
+function composeMemoryRecord(
+  operation: "UPSERT" | "CREATE ONLY",
   id: string,
   text: string,
   userId: string,
@@ -97,6 +105,7 @@ export function composeUpsertMemory(
   lifecycle: MemoryLifecycleState,
   tableName: MemoryRecordTable,
   paramPrefix = "",
+  processingLineage?: ProcessingLineageV1,
 ): { statement: string; vars: Record<string, unknown> } {
   if (!text || text.trim() === '') {
     throw new Error('upsertMemory: text must be non-empty');
@@ -119,6 +128,28 @@ export function composeUpsertMemory(
     lineageRootId: lifecycle.lineageRootId ?? undefined,
     ...metadata,
   };
+  // Caller metadata is never an authority source and cannot place lineage in
+  // the payload. Protected creation adds the canonical value at the top level.
+  delete payload.processing_lineage;
+  if (processingLineage) {
+    // Protected content and lifecycle facts are writer arguments, never
+    // metadata. Keep unrelated metadata (tags, category, etc.) intact.
+    Object.assign(payload, {
+      l2: text,
+      userId,
+      createdAt: now,
+      updatedAt: now,
+      source: "memory-hybrid",
+      scope,
+      sessionId: sessionId ?? undefined,
+      active: lifecycle.active,
+      inactiveAt: lifecycle.inactiveAt ?? undefined,
+      inactiveReason: lifecycle.inactiveReason ?? undefined,
+      supersededById: lifecycle.supersededById ?? undefined,
+      supersedesId: lifecycle.supersedesId ?? undefined,
+      lineageRootId: lifecycle.lineageRootId ?? undefined,
+    });
+  }
   const topLevelPath = typeof payload.path === "string" ? payload.path : undefined;
   const topLevelMemoryRole = typeof payload.memoryRole === "string" ? payload.memoryRole : undefined;
   const topLevelValidAt = typeof payload.validAt === "string" ? payload.validAt : undefined;
@@ -132,8 +163,12 @@ export function composeUpsertMemory(
   }
 
   const p = paramPrefix;
+  const processingLineageClause = processingLineage
+    ? `,\n       processing_lineage: $${p}processingLineage`
+    : "";
+  const absentLineageWhere = operation === "UPSERT" ? " WHERE processing_lineage = NONE" : "";
   const statement =
-    `UPSERT type::record('${tableName}', $${p}recordId) CONTENT {
+    `${operation} type::record('${tableName}', $${p}recordId) CONTENT {
        embedding: $${p}embedding ?? NONE,
        payload: $${p}payload,
        text_norm: $${p}text_norm,
@@ -152,8 +187,8 @@ export function composeUpsertMemory(
        inactive_reason: $${p}inactiveReason,
        superseded_by: $${p}supersededById,
        supersedes: $${p}supersedesId,
-       lineage_root_id: $${p}lineageRootId
-     };`;
+       lineage_root_id: $${p}lineageRootId${processingLineageClause}
+     }${absentLineageWhere};`;
   const vars: Record<string, unknown> = {
     [`${p}recordId`]: id,
     [`${p}embedding`]: embeddingForStore(embedding),
@@ -175,7 +210,64 @@ export function composeUpsertMemory(
     [`${p}supersedesId`]: lifecycle.supersedesId ?? undefined,
     [`${p}lineageRootId`]: lifecycle.lineageRootId ?? undefined,
   };
+  if (processingLineage) vars[`${p}processingLineage`] = processingLineage;
   return { statement, vars };
+}
+
+export function composeUpsertMemory(
+  id: string,
+  text: string,
+  userId: string,
+  embedding: number[],
+  metadata: Record<string, unknown> | undefined,
+  scope: MemoryScope,
+  sessionId: string | undefined,
+  lifecycle: MemoryLifecycleState,
+  tableName: MemoryRecordTable,
+  paramPrefix = "",
+): { statement: string; vars: Record<string, unknown> } {
+  return composeMemoryRecord(
+    "UPSERT",
+    id,
+    text,
+    userId,
+    embedding,
+    metadata,
+    scope,
+    sessionId,
+    lifecycle,
+    tableName,
+    paramPrefix,
+  );
+}
+
+function composeProtectedCreateMemory(
+  id: string,
+  text: string,
+  userId: string,
+  embedding: number[],
+  metadata: Record<string, unknown> | undefined,
+  scope: MemoryScope,
+  sessionId: string | undefined,
+  lifecycle: MemoryLifecycleState,
+  tableName: MemoryRecordTable,
+  lineage: ProcessingLineageV1,
+  paramPrefix = "",
+): { statement: string; vars: Record<string, unknown> } {
+  return composeMemoryRecord(
+    "CREATE ONLY",
+    id,
+    text,
+    userId,
+    embedding,
+    metadata,
+    scope,
+    sessionId,
+    lifecycle,
+    tableName,
+    paramPrefix,
+    lineage,
+  );
 }
 
 /** Inserts or updates a memory row in SurrealDB with explicit id, embedding, and scope metadata. */
@@ -203,8 +295,62 @@ export async function upsertMemory(
     lifecycle,
     tableName,
   );
-  await db.query(statement, vars);
+  const result = await db.query(statement, vars);
+  if (db instanceof SurrealClient && Array.isArray(result[0]) && result[0].length === 0) {
+    // The guarded UPSERT matched an existing row with present lineage. The
+    // database correctly performed no update; surface that no-op as a
+    // content-free refusal so callers do not emit a false commit/overlay.
+    throw new ProducerPolicyRefusalError("lineage_present");
+  }
   return id;
+}
+
+export type ProtectedMemoryCreateInput = Readonly<{
+  id: string;
+  text: string;
+  userId: string;
+  embedding: number[];
+  metadata?: Record<string, unknown>;
+  scope?: MemoryScope;
+  sessionId?: string;
+  lifecycle?: MemoryLifecycleState;
+  tableName?: MemoryRecordTable;
+}>;
+
+/**
+ * Creates one protected Minni row using the exact private-map mint result.
+ * CREATE ONLY makes every id collision a transaction error; it never rewrites
+ * an existing row. The canonical lineage is written beside payload/content and
+ * lifecycle fields in the same queryTransaction.
+ */
+export async function createMemoryWithProcessingLineage(
+  db: SurrealClient,
+  authority: ProducerAuthority,
+  minted: MintedProcessingLineage | unknown,
+  input: ProtectedMemoryCreateInput,
+): Promise<string> {
+  const result = await runWithMintedProcessingLineage(
+    authority,
+    minted,
+    async (lineage) => {
+      const { statement, vars } = composeProtectedCreateMemory(
+        input.id,
+        input.text,
+        input.userId,
+        input.embedding,
+        input.metadata,
+        input.scope ?? "user",
+        input.sessionId,
+        input.lifecycle ?? DEFAULT_ACTIVE_LIFECYCLE,
+        input.tableName ?? PRIMARY_MEMORY_TABLE,
+        lineage,
+      );
+      await db.queryTransaction(statement, vars);
+    },
+    { targetUserId: input.userId },
+  );
+  if (!result.ok) throw new ProducerPolicyRefusalError(result.reason);
+  return input.id;
 }
 
 /** Lists user memories newest-first, optionally filtered by scope. */

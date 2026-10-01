@@ -23,6 +23,7 @@ export {
   embeddingForStore,
   composeUpsertMemory,
   upsertMemory,
+  createMemoryWithProcessingLineage,
   listMemories,
   getMemoryById,
   deleteMemoryById,
