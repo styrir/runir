@@ -24,6 +24,7 @@ import {
   mapMemoryRowToSearchHit,
   type SurrealClient,
 } from "../../storage/surreal/surreal-store";
+import { attachSelectedSearchHitLineage } from "../../domain/memory/search-hit-lineage.js";
 import type { ScopeFilter } from "./scope-predicate";
 import { rerankWithProvider, attachRerankerStages } from "../../storage/reranking/ranker";
 import { RERANK_CANDIDATE_FLOOR } from "../../shared/config";
@@ -298,7 +299,7 @@ export async function vectorSearch(
   const sf = scopeFilter ?? { whereClause: "", vars: {} };
   const vecStr = `[${embedding.join(",")}]`;
   const results = await db.query<any>(
-    `SELECT id, payload, vector::similarity::cosine(embedding, ${vecStr}) AS sim
+    `SELECT id, payload, processing_lineage, vector::similarity::cosine(embedding, ${vecStr}) AS sim
      FROM ${tableName}
      WHERE payload.userId = $userId AND embedding != NONE ${ACTIVE_MEMORY_FILTER} ${sf.whereClause}
      ORDER BY sim DESC
@@ -307,7 +308,10 @@ export async function vectorSearch(
   );
   const rows = results[0] ?? [];
   return rows.map((r: any, idx: number) => {
-    const hit = mapMemoryRowToSearchHit({ ...r, score: r.sim ?? 0 });
+    const hit = attachSelectedSearchHitLineage(
+      mapMemoryRowToSearchHit({ ...r, score: r.sim ?? 0 }),
+      r?.processing_lineage,
+    );
     hit.scoreStages = {
       vector: {
         score: r.sim ?? 0,
@@ -342,8 +346,9 @@ export async function bm25Search(
     return [];
   }
 
-  const quotedTerms = queryTokens.map((t) => `"${t.replace(/"/g, "\\\"")}"`);
-  const fulltextQuery = quotedTerms.join(" OR ");
+  const queryTerms = queryTokens.map((t) => t.replace(/"/g, "\\\""));
+  const fulltextQuery = queryTerms.join(" ");
+  const matchOperator = queryTokens.length > 1 ? "@0,OR@" : "@0@";
   // NOTE: Inline query text (no bound param for MATCHES) — required by SurrealDB design;
   // bug where MATCHES returns all rows instead of matching rows.
   const escapedFtQuery = fulltextQuery.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
@@ -351,9 +356,9 @@ export async function bm25Search(
   try {
     const [matchesRes, stats] = await Promise.all([
       db.query<any>(
-        `SELECT id, payload, text_norm
+        `SELECT id, payload, processing_lineage, text_norm
          FROM ${tableName}
-         WHERE payload.userId = $userId AND text_norm @0@ '${escapedFtQuery}' ${ACTIVE_MEMORY_FILTER} ${sf.whereClause}
+         WHERE payload.userId = $userId AND text_norm ${matchOperator} '${escapedFtQuery}' ${ACTIVE_MEMORY_FILTER} ${sf.whereClause}
          LIMIT $limit;`,
         { userId, limit: safeLimit, ...sf.vars },
       ),
@@ -416,7 +421,10 @@ export async function bm25Search(
 
     // Attach bm25 scoreStages with rank (rank is 1-based after sort)
     const withStages: SearchHit[] = scored.map((h, idx) => {
-      const hit = mapMemoryRowToSearchHit({ ...h.raw, score: h.score });
+      const hit = attachSelectedSearchHitLineage(
+        mapMemoryRowToSearchHit({ ...h.raw, score: h.score }),
+        h.raw?.processing_lineage,
+      );
       hit.scoreStages = {
         bm25: {
           score: h.score,
@@ -701,7 +709,7 @@ async function queryNoemaCandidatesInner(
   const fullResults = await db.query<any>(
     `SELECT id, canonical, canonical_text, canonical_norm, stable_claim, scope, path, memory_role,
             claim_key, revision_hash, status, support_semiote_ids, created_at, updated_at,
-            confidence, stability, active
+            confidence, stability, active, processing_lineage
        FROM noema
        WHERE id IN $ids;`,
     { ids: idRefs },
@@ -715,10 +723,13 @@ async function queryNoemaCandidatesInner(
     const row = rowById.get(extractId(f.id));
     if (!row) continue;
     hits.push(
-      mapNoemaRowToSearchHit(row, f.score, f.matchedTerms, {
-        vectorRank: f.vectorRank,
-        bm25Rank: f.bm25Rank,
-      }),
+      attachSelectedSearchHitLineage(
+        mapNoemaRowToSearchHit(row, f.score, f.matchedTerms, {
+          vectorRank: f.vectorRank,
+          bm25Rank: f.bm25Rank,
+        }),
+        row?.processing_lineage,
+      ),
     );
   }
   return hits;
@@ -1532,7 +1543,7 @@ export async function nativeRrfSearch(
     // from BM25/entity/recency legs whose embedding column is NONE in the DB carry
     // undefined here, triggering the fallback embedDocument path in rerankLocal.
     const fullResults = await db.query<any>(
-      `SELECT id, payload, active, inactive_reason, superseded_by, lineage_root_id, memory_role, valid_at, invalid_at, embedding FROM ${tableName} WHERE id IN $ids;`,
+      `SELECT id, payload, processing_lineage, active, inactive_reason, superseded_by, lineage_root_id, memory_role, valid_at, invalid_at, embedding FROM ${tableName} WHERE id IN $ids;`,
       { ids: fusedIdRefs },
     );
     const fullRows: any[] = fullResults[0] ?? [];
@@ -1549,6 +1560,7 @@ export async function nativeRrfSearch(
         memoryRole: r.memory_role ?? r.payload?.memoryRole,
         validAt: r.valid_at ?? r.payload?.validAt,
         invalidAt: r.invalid_at ?? r.payload?.invalidAt,
+        processingLineage: r.processing_lineage,
         // undefined when embedding column is NONE (BM25/entity/recency-only candidates).
         embedding: Array.isArray(r.embedding) ? (r.embedding as number[]) : undefined,
       });
@@ -1628,7 +1640,7 @@ export async function nativeRrfSearch(
         };
       }
 
-      return {
+      return attachSelectedSearchHitLineage({
         id,
         text: payload?.l2 ?? payload?.data ?? "",
         score: r.score,
@@ -1664,7 +1676,7 @@ export async function nativeRrfSearch(
         scoreStages,
         // Transient: stored vector for rerankLocal cosine path; undefined → falls back to embedDocument.
         embedding: row?.embedding,
-      };
+      }, row?.processingLineage);
     }).map((hit: SearchHit): SearchHit => {
       if (!exactQaIntent) return hit;
       const exactScore = scoreExactQaCandidate(queryText, hit);
