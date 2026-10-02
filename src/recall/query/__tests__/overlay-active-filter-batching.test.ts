@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { RecordId } from "surrealdb";
 import type { SearchHit } from "../../../domain/memory/types.js";
 import type { SurrealClient } from "../../../storage/surreal/surreal-store.js";
 import type { OverlayLockKey } from "../../../storage/writes/overlay-supersession.js";
@@ -98,11 +99,12 @@ describe("mergeOverlayLeg — active-filter batching (Rúnir-yod0.3.16)", () => 
       { id: "M1", text: "durable-M1", score: 0.4, active: true },
     ];
 
-    // Batched fallback: M2 active=true, M3 active=false (so M3 is dropped).
+    // Batched fallback: both rows carry the real projected identities. M2 is
+    // active and M3 is inactive (so M3 is dropped).
     const dbQuery = vi.fn().mockResolvedValueOnce([
       [
-        { id: "M2", active: true },
-        { id: "M3", active: false },
+        { id: new RecordId("semiote", "M2"), user_id: "user-a", payload_user_id: "user-a", active: true },
+        { id: new RecordId("semiote", "M3"), user_id: "user-a", payload_user_id: "user-a", active: false },
       ],
     ]);
     const db = { query: dbQuery } as unknown as SurrealClient;
@@ -120,7 +122,11 @@ describe("mergeOverlayLeg — active-filter batching (Rúnir-yod0.3.16)", () => 
     const [sql, params] = dbQuery.mock.calls[0];
     expect(typeof sql).toBe("string");
     // The bound parameter is the residual id ARRAY (no per-id loop).
-    expect(params).toEqual({ ids: ["M2", "M3"] });
+    expect(params.requestedUser).toBe("user-a");
+    expect(params.ids.map((id: RecordId<string>) => id.toJSON())).toEqual([
+      "semiote:M2",
+      "semiote:M3",
+    ]);
 
     // M1 (overlay-wins on durable hit), M2 (residual + active) kept;
     // M3 (residual + inactive) dropped.
