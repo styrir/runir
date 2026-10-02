@@ -22,6 +22,17 @@ import type { RetrievalAuditRecord } from "../../recall/policy/policy-types.js";
 import { embeddingForStore, extractId, type SurrealClient } from "./surreal-store.js";
 import { redactFact, redactFactText } from "../../shared/source-redaction.js";
 import { ensureProcessingLineageSchema } from "./processing-lineage-schema.js";
+import {
+  conservativeJoinProcessingLineage,
+  classifyProcessingLineage,
+  type ProcessingLineageV1,
+} from "../../domain/memory/processing-lineage.js";
+import {
+  ProducerPolicyRefusalError,
+  runWithMintedProcessingLineage,
+  type MintedProcessingLineage,
+  type ProducerAuthority,
+} from "../../app/processing-policy/authority.js";
 
 export type RetrievalFootprintIdentitySnapshot = {
   userId: string;
@@ -1443,6 +1454,24 @@ function promotionOwnerUserId(metadata: NoemaPromotionMetadata): string | undefi
   return normalized || undefined;
 }
 
+/**
+ * Protected maintenance has a stricter ownership contract than the generic
+ * N1/G compatibility helper above: both persisted bindings are required,
+ * typed, nonempty, and equal. This validator never infers ownership from one
+ * field.
+ */
+function protectedOwnerUserId(metadata: NoemaPromotionMetadata): string | undefined {
+  const root = metadata.user_id;
+  const payload = metadata.payload_user_id;
+  if (typeof root !== "string" || typeof payload !== "string") return undefined;
+  const normalizedRoot = root.trim();
+  const normalizedPayload = payload.trim();
+  if (!normalizedRoot || normalizedRoot !== root || normalizedPayload !== payload || normalizedRoot !== normalizedPayload) {
+    return undefined;
+  }
+  return normalizedRoot;
+}
+
 const NOEMA_PROMOTION_MARKER_FIELDS: ReadonlyArray<readonly [string, keyof NoemaPromotionMetadata, string]> = [
   ["payload.promotedToNoemaId", "payload_promoted_to_noema_id", "expectedSourcePromotedToNoemaId"],
   ["payload.noemaSupportSemioteIds", "payload_noema_support_semiote_ids", "expectedSourceNoemaSupportSemioteIds"],
@@ -2292,4 +2321,593 @@ export async function promoteSemioteToNoema(
   }
 
   return { promoted: true, id: noemaRecordId, embeddingWritten };
+}
+
+type SyntheticNoemaMaintenanceOperation = "scheduled_maintenance" | "forced_maintenance";
+
+type SyntheticNoemaMaintenanceResult = Readonly<{
+  promoted: true;
+  id: string;
+  operation: SyntheticNoemaMaintenanceOperation;
+  embeddingWritten: false;
+}>;
+
+type SyntheticNoemaMaintenancePlan = Readonly<{
+  authority: ProducerAuthority;
+  db: SurrealClient;
+  operation: SyntheticNoemaMaintenanceOperation;
+  expectedTargetUserId: string;
+  sourceId: string;
+  noemaId: string;
+  source: NoemaPromotionMetadata;
+  supports: readonly NoemaPromotionMetadata[];
+  target: NoemaPromotionTargetMetadata | undefined;
+  supportIds: readonly string[];
+  joinedLineage: ProcessingLineageV1;
+  canonicalText: string;
+  canonical: Readonly<Record<string, unknown>>;
+  canonicalNorm: string;
+  scope: string;
+  path: string;
+  memoryRole: string;
+  factKey: string;
+  claimKey: string;
+  revisionHash: string;
+  stableClaim: unknown;
+  status: string;
+  active: boolean;
+  now: DateTime;
+}>;
+
+/** Private source-owned plan identity; no caller can construct or serialize it. */
+const syntheticNoemaPlanIdentity = new WeakMap<object, SyntheticNoemaMaintenancePlan>();
+
+function syntheticMaintenanceText(operation: SyntheticNoemaMaintenanceOperation): string {
+  return operation === "scheduled_maintenance"
+    ? "Synthetic scheduled maintenance proof content."
+    : "Synthetic forced maintenance proof content.";
+}
+
+function requireSyntheticTargetUser(value: unknown): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new ProducerPolicyRefusalError("target_user_untrusted");
+  }
+  return value.trim();
+}
+
+function requireProtectedCaptureLineage(
+  metadata: NoemaPromotionMetadata,
+  expectedTargetUserId: string,
+): ProcessingLineageV1 {
+  if (protectedOwnerUserId(metadata) !== expectedTargetUserId) {
+    throw new ProducerPolicyRefusalError("target_user_mismatch");
+  }
+  if (metadata.active !== true || (metadata.payload_active !== undefined && metadata.payload_active !== true)) {
+    throw new ProducerPolicyRefusalError("lineage_invalid");
+  }
+  const branchValues = [
+    metadata.superseded_by,
+    metadata.lineage_root_id,
+    metadata.inactive_at,
+    metadata.inactive_reason,
+    metadata.payload_inactive_at,
+    metadata.payload_inactive_reason,
+    metadata.payload_superseded_by_id,
+    metadata.payload_lineage_root_id,
+  ];
+  if (branchValues.some((value) => value !== undefined && value !== null)) {
+    throw new ProducerPolicyRefusalError("lineage_invalid");
+  }
+  const classified = classifyProcessingLineage(metadata.processing_lineage);
+  if (classified.state !== "minni_verified") {
+    throw new ProducerPolicyRefusalError("lineage_invalid");
+  }
+  if (classified.lineage.admitted_operation !== "capture_ingest"
+    || classified.lineage.target_user_id !== expectedTargetUserId) {
+    throw new ProducerPolicyRefusalError("lineage_invalid");
+  }
+  return classified.lineage;
+}
+
+function joinProtectedCaptureLineages(
+  left: ProcessingLineageV1,
+  right: ProcessingLineageV1,
+): ProcessingLineageV1 {
+  const joined = conservativeJoinProcessingLineage(
+    classifyProcessingLineage(left),
+    classifyProcessingLineage(right),
+  );
+  if (!joined.ok) throw new ProducerPolicyRefusalError("lineage_invalid");
+  return joined.lineage;
+}
+
+function protectedSourceMarkers(metadata: NoemaPromotionMetadata): NoemaPromotionSourceMarkers {
+  return {
+    promoted_to_noema_id: metadata.payload_promoted_to_noema_id,
+    noema_support_semiote_ids: metadata.payload_noema_support_semiote_ids,
+    noema_claim_key: metadata.payload_noema_claim_key,
+    noema_revision_hash: metadata.payload_noema_revision_hash,
+    noema_status: metadata.payload_noema_status,
+    noema_stable_claim: metadata.payload_noema_stable_claim,
+  };
+}
+
+function protectedTargetLineage(
+  target: NoemaPromotionTargetMetadata,
+  expectedTargetUserId: string,
+): ProcessingLineageV1 | undefined {
+  if (target.processing_lineage === undefined) return undefined;
+  const classified = classifyProcessingLineage(target.processing_lineage);
+  if (classified.state !== "minni_verified"
+    || classified.lineage.admitted_operation !== "capture_ingest"
+    || classified.lineage.target_user_id !== expectedTargetUserId) {
+    throw new ProducerPolicyRefusalError("lineage_invalid");
+  }
+  return classified.lineage;
+}
+
+function protectedMetadataMatches(
+  expected: NoemaPromotionMetadata,
+  actual: NoemaPromotionMetadata,
+  includeMarkers: boolean,
+  ignoreUpdatedAt = false,
+): boolean {
+  if (normalizePromotionSourceId(actual.id) !== normalizePromotionSourceId(expected.id)) return false;
+  if (!samePromotionMetadataValue(actual.processing_lineage, expected.processing_lineage)) return false;
+  const expectedOwner = protectedOwnerUserId(expected);
+  const actualOwner = protectedOwnerUserId(actual);
+  if (expectedOwner === undefined || actualOwner === undefined || expectedOwner !== actualOwner) return false;
+  if (!NOEMA_PROMOTION_GUARDED_FIELDS.every(({ key }) =>
+    (ignoreUpdatedAt && key === "updated_at") || samePromotionMetadataValue(actual[key], expected[key]))) return false;
+  if (includeMarkers && !NOEMA_PROMOTION_MARKER_FIELDS.every(([, key]) =>
+    samePromotionMetadataValue(actual[key], expected[key]))) return false;
+  return true;
+}
+
+function protectedTargetMatches(
+  expected: NoemaPromotionTargetMetadata,
+  actual: NoemaPromotionTargetMetadata,
+): boolean {
+  return normalizePromotionSourceId(actual.id) === normalizePromotionSourceId(expected.id)
+    && samePromotionMetadataValue(actual.user_id, expected.user_id)
+    && samePromotionMetadataValue(actual.processing_lineage, expected.processing_lineage)
+    && samePromotionMetadataValue(actual.status, expected.status)
+    && samePromotionMetadataValue(actual.claim_key, expected.claim_key)
+    && samePromotionMetadataValue(actual.revision_hash, expected.revision_hash)
+    && samePromotionMetadataValue(actual.support_semiote_ids, expected.support_semiote_ids)
+    && samePromotionMetadataValue(actual.active, expected.active)
+    && samePromotionMetadataValue(actual.updated_at, expected.updated_at);
+}
+
+function protectedSupportReadbackStable(
+  expected: readonly NoemaPromotionMetadata[],
+  actual: readonly (NoemaPromotionMetadata | undefined)[],
+): boolean {
+  return expected.length === actual.length
+    && actual.every((row, index) => row !== undefined && protectedMetadataMatches(expected[index], row, true));
+}
+
+function protectedTargetCommitted(
+  plan: SyntheticNoemaMaintenancePlan,
+  target: NoemaPromotionTargetMetadata | undefined,
+): boolean {
+  if (!target
+    || normalizePromotionSourceId(target.id) !== plan.noemaId
+    || !samePromotionMetadataValue(target.user_id, plan.expectedTargetUserId)
+    || !samePromotionMetadataValue(target.processing_lineage, plan.joinedLineage)
+    || !samePromotionMetadataValue(target.status, plan.status)
+    || !samePromotionMetadataValue(target.claim_key, plan.claimKey)
+    || !samePromotionMetadataValue(target.revision_hash, plan.revisionHash)
+    || !sameSupportIdSet(target.support_semiote_ids, plan.supportIds)
+    || !samePromotionMetadataValue(target.active, plan.active)) return false;
+  return promotionUpdatedAtMatchesExpected(plan.target?.updated_at, target.updated_at, plan.now, Boolean(plan.target));
+}
+
+function protectedSourceCommitted(
+  plan: SyntheticNoemaMaintenancePlan,
+  source: NoemaPromotionMetadata | undefined,
+): boolean {
+  const metadataMatch = source !== undefined && protectedMetadataMatches(plan.source, source, false, true);
+  const timestampMatch = source !== undefined && samePromotionMetadataValue(source.updated_at, plan.now);
+  const timestampChanged = source !== undefined && samePromotionMetadataValue(plan.source.updated_at, source.updated_at) === false;
+  const markerMatch = source !== undefined && sourceMarkersMatch(
+    protectedSourceMarkers(source),
+    `noema:${plan.noemaId}`,
+    plan.supportIds,
+    plan.claimKey,
+    plan.revisionHash,
+    plan.status,
+    plan.stableClaim,
+  );
+  return Boolean(source && metadataMatch && timestampMatch && timestampChanged && markerMatch);
+}
+
+function protectedSourceRolledBack(
+  plan: SyntheticNoemaMaintenancePlan,
+  source: NoemaPromotionMetadata | undefined,
+): boolean {
+  return source !== undefined && protectedMetadataMatches(plan.source, source, true);
+}
+
+function protectedTargetRolledBack(
+  plan: SyntheticNoemaMaintenancePlan,
+  target: NoemaPromotionTargetMetadata | undefined,
+): boolean {
+  return plan.target ? target !== undefined && protectedTargetMatches(plan.target, target) : target === undefined;
+}
+
+async function prepareSyntheticNoemaMaintenancePlan(
+  db: SurrealClient,
+  authority: ProducerAuthority,
+  operation: SyntheticNoemaMaintenanceOperation,
+  expectedTargetUserId: string,
+  source: string | { readonly id?: unknown },
+): Promise<SyntheticNoemaMaintenancePlan> {
+  const sourceId = normalizePromotionSourceId(source);
+  if (!sourceId) throw new ProducerPolicyRefusalError("lineage_invalid");
+  const sourceMetadata = await readNoemaPromotionMetadata(db, sourceId);
+  if (!sourceMetadata) throw new ProducerPolicyRefusalError("lineage_invalid");
+  let joinedLineage = requireProtectedCaptureLineage(sourceMetadata, expectedTargetUserId);
+  const sourceSupportIds = normalizePromotionSupportIds(sourceMetadata.payload_noema_support_semiote_ids);
+  if (sourceSupportIds === undefined) throw new ProducerPolicyRefusalError("lineage_invalid");
+
+  const canonicalText = syntheticMaintenanceText(operation);
+  const scope = "user";
+  const path = "/synthetic/protected-maintenance";
+  const memoryRole = "current_status";
+  const factKey = `synthetic:protected:${operation}`;
+  const claimContract = deriveNoemaClaimContract({
+    userId: expectedTargetUserId,
+    scope,
+    path,
+    memoryRole,
+    factKey,
+    canonicalText,
+    category: "synthetic",
+    continuitySubjectKey: `synthetic:${operation}`,
+    claimSubject: "synthetic protected maintenance",
+    claimPredicate: "records",
+  });
+  const noemaId = buildNoemaId({
+    userId: expectedTargetUserId,
+    scope,
+    path,
+    memoryRole,
+    factKey,
+    claimKey: claimContract.claimKey,
+    canonicalText,
+  });
+  const target = await readNoemaPromotionTargetMetadata(db, noemaId);
+  let targetSupportIds: string[] = [];
+  const targetStatus = typeof target?.status === "string" && NOEMA_PROMOTION_STATUSES.has(target.status)
+    ? target.status
+    : "active";
+  if (target) {
+    if (target.processing_lineage === undefined
+      || target.status === undefined
+      || target.claim_key === undefined
+      || target.revision_hash === undefined
+      || target.support_semiote_ids === undefined
+      || target.active === undefined
+      || target.updated_at === undefined
+      || !isWellFormedNoemaPromotionTarget(target)
+      || !samePromotionMetadataValue(target.user_id, expectedTargetUserId)) {
+      throw new ProducerPolicyRefusalError("lineage_invalid");
+    }
+    targetSupportIds = normalizePromotionSupportIds(target.support_semiote_ids) ?? [];
+    const targetLineage = protectedTargetLineage(target, expectedTargetUserId);
+    if (targetLineage) joinedLineage = joinProtectedCaptureLineages(joinedLineage, targetLineage);
+  }
+
+  const allSupportIds = Array.from(new Set([sourceId, ...sourceSupportIds, ...targetSupportIds]));
+  const supportSnapshots: NoemaPromotionMetadata[] = [];
+  for (const supportId of allSupportIds) {
+    if (supportId === sourceId) continue;
+    const support = await readNoemaPromotionMetadata(db, supportId);
+    if (!support) throw new ProducerPolicyRefusalError("lineage_invalid");
+    const supportLineage = requireProtectedCaptureLineage(support, expectedTargetUserId);
+    joinedLineage = joinProtectedCaptureLineages(joinedLineage, supportLineage);
+    supportSnapshots.push(support);
+  }
+
+  const supportIds = Object.freeze(allSupportIds);
+  const plan = Object.freeze({
+    authority,
+    db,
+    operation,
+    expectedTargetUserId,
+    sourceId,
+    noemaId,
+    source: sourceMetadata,
+    supports: Object.freeze(supportSnapshots),
+    target,
+    supportIds,
+    joinedLineage,
+    canonicalText,
+    canonical: Object.freeze({
+      text: canonicalText,
+      l0: "Synthetic protected maintenance",
+      l1: operation,
+      factKey,
+      claimKey: claimContract.claimKey,
+      revisionHash: claimContract.revisionHash,
+      status: targetStatus,
+      stableClaim: claimContract.stableClaim,
+    }),
+    canonicalNorm: normalizeText(canonicalText),
+    scope,
+    path,
+    memoryRole,
+    factKey,
+    claimKey: claimContract.claimKey,
+    revisionHash: claimContract.revisionHash,
+    stableClaim: claimContract.stableClaim,
+    status: targetStatus,
+    active: target?.active ?? true,
+    now: DateTime.now(),
+  }) as unknown as SyntheticNoemaMaintenancePlan;
+  syntheticNoemaPlanIdentity.set(plan, plan);
+  return plan;
+}
+
+function appendProtectedSupportCasStatements(
+  statements: string[],
+  variables: Record<string, unknown>,
+  supports: readonly NoemaPromotionMetadata[],
+): void {
+  supports.forEach((metadata, index) => {
+    const supportId = normalizePromotionSourceId(metadata.id);
+    if (!supportId) throw new ProducerPolicyRefusalError("lineage_invalid");
+    const prefix = `expectedSupport${index}`;
+    variables[`supportId${index}`] = supportId;
+    variables[`${prefix}ProcessingLineage`] = metadata.processing_lineage;
+    const predicates = [`processing_lineage = $${prefix}ProcessingLineage`];
+    appendSupportPromotionMetadataGuards(predicates, variables, metadata, prefix);
+    statements.push(`
+      LET $supportRows${index} = (
+        UPDATE type::record('semiote', $supportId${index}) SET
+          updated_at = updated_at
+        WHERE ${predicates.join(" AND ")}
+        RETURN VALUE [id]
+      );
+      IF array::len($supportRows${index}) != 1 {
+        THROW "protected maintenance support compare-and-set failed";
+      };
+    `);
+  });
+}
+
+function appendProtectedMaintenanceStatements(
+  plan: SyntheticNoemaMaintenancePlan,
+): { statements: string[]; variables: Record<string, unknown> } {
+  const variables: Record<string, unknown> = {
+    noemaId: plan.noemaId,
+    sourceId: plan.sourceId,
+    noemaRecordId: `noema:${plan.noemaId}`,
+    userId: plan.expectedTargetUserId,
+    now: plan.now,
+    canonical: plan.canonical,
+    canonicalText: plan.canonicalText,
+    canonicalNorm: plan.canonicalNorm,
+    scope: plan.scope,
+    path: plan.path,
+    memoryRole: plan.memoryRole,
+    factKey: plan.factKey,
+    claimKey: plan.claimKey,
+    revisionHash: plan.revisionHash,
+    stableClaim: plan.stableClaim,
+    status: plan.status,
+    active: plan.active,
+    joinedProcessingLineage: plan.joinedLineage,
+    supportSemioteIds: plan.supportIds,
+    embedding: embeddingForStore([]),
+    confidence: 0.5,
+    stability: 0.5,
+    authority: 0.5,
+    evidenceCount: plan.supportIds.length,
+    confirmationCount: 0,
+    contradictionCount: 0,
+    expectedSourceProcessingLineage: plan.source.processing_lineage,
+  };
+  const statements: string[] = [];
+  if (plan.target) {
+    const targetPredicates: string[] = [];
+    appendNoemaTargetGuards(targetPredicates, variables, plan.target);
+    statements.push(`
+      LET $noemaRows = (
+        UPDATE type::record('noema', $noemaId) SET
+          canonical = $canonical,
+          canonical_text = $canonicalText,
+          canonical_norm = $canonicalNorm,
+          scope = $scope,
+          path = $path,
+          memory_role = $memoryRole,
+          fact_key = $factKey,
+          claim_key = $claimKey,
+          revision_hash = $revisionHash,
+          status = $status,
+          stable_claim = $stableClaim,
+          embedding = $embedding ?? NONE,
+          confidence = $confidence,
+          stability = $stability,
+          authority = $authority,
+          evidence_count = IF evidence_count != NONE AND evidence_count > $evidenceCount THEN evidence_count ELSE $evidenceCount END,
+          confirmation_count = IF confirmation_count != NONE AND confirmation_count > $confirmationCount THEN confirmation_count ELSE $confirmationCount END,
+          contradiction_count = $contradictionCount,
+          support_semiote_ids = array::union(support_semiote_ids ?? [], $supportSemioteIds),
+          processing_lineage = $joinedProcessingLineage,
+          user_id = $userId,
+          active = $active,
+          last_reinforced_at = <datetime>$now,
+          updated_at = <datetime>$now
+        WHERE ${targetPredicates.join(" AND ")}
+        RETURN VALUE [id]
+      );
+      IF array::len($noemaRows) != 1 {
+        THROW "protected maintenance target compare-and-set failed";
+      };
+    `);
+  } else {
+    statements.push(`
+      LET $noemaRows = (
+        CREATE ONLY type::record('noema', $noemaId) CONTENT {
+          canonical: $canonical,
+          canonical_text: $canonicalText,
+          canonical_norm: $canonicalNorm,
+          scope: $scope,
+          path: $path,
+          memory_role: $memoryRole,
+          fact_key: $factKey,
+          claim_key: $claimKey,
+          revision_hash: $revisionHash,
+          status: $status,
+          stable_claim: $stableClaim,
+          embedding: $embedding ?? NONE,
+          confidence: $confidence,
+          stability: $stability,
+          authority: $authority,
+          evidence_count: $evidenceCount,
+          confirmation_count: $confirmationCount,
+          contradiction_count: $contradictionCount,
+          support_semiote_ids: $supportSemioteIds,
+          processing_lineage: $joinedProcessingLineage,
+          user_id: $userId,
+          active: $active,
+          first_derived_at: <datetime>$now,
+          last_reinforced_at: <datetime>$now,
+          created_at: <datetime>$now,
+          updated_at: <datetime>$now
+        } RETURN VALUE [id]
+      );
+      IF array::len($noemaRows) != 1 {
+        THROW "protected maintenance target create affected unexpected rows";
+      };
+    `);
+  }
+
+  appendProtectedSupportCasStatements(statements, variables, plan.supports);
+  const sourceMarkers = protectedSourceMarkers(plan.source);
+  variables.expectedSourceProcessingLineage = plan.source.processing_lineage;
+  const sourcePredicates = ["processing_lineage = $expectedSourceProcessingLineage"];
+  appendSourcePromotionMetadataGuards(sourcePredicates, variables, plan.source);
+  appendSourcePromotionMarkerGuards(sourcePredicates, variables, sourceMarkers);
+  statements.push(`
+    LET $sourceRows = (
+      UPDATE type::record('semiote', $sourceId) SET
+        payload.promotedToNoemaId = $noemaRecordId,
+        payload.noemaSupportSemioteIds = $supportSemioteIds,
+        payload.noemaClaimKey = $claimKey,
+        payload.noemaRevisionHash = $revisionHash,
+        payload.noemaStatus = $status,
+        payload.noemaStableClaim = $stableClaim,
+        updated_at = <datetime>$now
+      WHERE ${sourcePredicates.join(" AND ")}
+      RETURN VALUE [id]
+    );
+    IF array::len($sourceRows) != 1 {
+      THROW "protected maintenance source marker compare-and-set failed";
+    };
+  `);
+  return { statements, variables };
+}
+
+async function reconcileSyntheticNoemaMaintenance(
+  plan: SyntheticNoemaMaintenancePlan,
+): Promise<NoemaPromotionReadbackOutcome> {
+  try {
+    const [targetAfter, sourceAfter, supportAfter] = await Promise.all([
+      readNoemaPromotionTargetMetadata(plan.db, plan.noemaId),
+      readNoemaPromotionMetadata(plan.db, plan.sourceId),
+      Promise.all(plan.supports.map((support) => readNoemaPromotionMetadata(plan.db, normalizePromotionSourceId(support.id) ?? ""))),
+    ]);
+    const supportStable = protectedSupportReadbackStable(plan.supports, supportAfter);
+    const sourceCommitted = protectedSourceCommitted(plan, sourceAfter);
+    const targetCommitted = protectedTargetCommitted(plan, targetAfter);
+    const sourceRolledBack = protectedSourceRolledBack(plan, sourceAfter);
+    const targetRolledBack = protectedTargetRolledBack(plan, targetAfter);
+    if (sourceCommitted && targetCommitted && supportStable) return "committed";
+    if (sourceRolledBack && targetRolledBack && supportStable) return "rolled_back";
+  } catch {
+    // The only safe fallback after a transaction error is unresolved.
+  }
+  return "inconsistent_or_unresolved";
+}
+
+async function promoteSyntheticMaintenanceToNoema(
+  db: SurrealClient,
+  authority: ProducerAuthority,
+  minted: MintedProcessingLineage | unknown,
+  expectedTargetUserId: string,
+  source: string | { readonly id?: unknown },
+  operation: SyntheticNoemaMaintenanceOperation,
+): Promise<SyntheticNoemaMaintenanceResult> {
+  const targetUserId = requireSyntheticTargetUser(expectedTargetUserId);
+  const preflight = await runWithMintedProcessingLineage(
+    authority,
+    minted,
+    async () => prepareSyntheticNoemaMaintenancePlan(db, authority, operation, targetUserId, source),
+    { operation, targetUserId },
+  );
+  if (!preflight.ok) throw new ProducerPolicyRefusalError(preflight.reason);
+  const plan = preflight.value;
+  if (syntheticNoemaPlanIdentity.get(plan) !== plan || plan.db !== db || plan.authority !== authority) {
+    throw new ProducerPolicyRefusalError("authority_mismatch");
+  }
+  const { statements, variables } = appendProtectedMaintenanceStatements(plan);
+  let transactionGate: Awaited<ReturnType<typeof runWithMintedProcessingLineage<void>>>;
+  try {
+    transactionGate = await runWithMintedProcessingLineage(
+      authority,
+      minted,
+      async () => db.queryTransaction(statements.join("\n"), variables),
+      { operation, targetUserId: plan.expectedTargetUserId },
+    );
+  } catch (error) {
+    const outcome = await reconcileSyntheticNoemaMaintenance(plan);
+    if (error instanceof Error) {
+      Object.assign(error, {
+        noemaPromotionOutcome: outcome,
+        noemaPromotionReadback: { targetId: plan.noemaId, sourceId: plan.sourceId },
+      });
+    }
+    throw error;
+  }
+  if (!transactionGate.ok) throw new ProducerPolicyRefusalError(transactionGate.reason);
+  return { promoted: true, id: `noema:${plan.noemaId}`, operation, embeddingWritten: false };
+}
+
+/** Fixed source-owned proof seam; this does not activate scheduled processing. */
+export async function promoteSyntheticScheduledMaintenanceToNoema(
+  db: SurrealClient,
+  authority: ProducerAuthority,
+  minted: MintedProcessingLineage | unknown,
+  expectedTargetUserId: string,
+  source: string | { readonly id?: unknown },
+): Promise<SyntheticNoemaMaintenanceResult> {
+  return promoteSyntheticMaintenanceToNoema(
+    db,
+    authority,
+    minted,
+    expectedTargetUserId,
+    source,
+    "scheduled_maintenance",
+  );
+}
+
+/** Fixed source-owned proof seam; this does not activate forced processing. */
+export async function promoteSyntheticForcedMaintenanceToNoema(
+  db: SurrealClient,
+  authority: ProducerAuthority,
+  minted: MintedProcessingLineage | unknown,
+  expectedTargetUserId: string,
+  source: string | { readonly id?: unknown },
+): Promise<SyntheticNoemaMaintenanceResult> {
+  return promoteSyntheticMaintenanceToNoema(
+    db,
+    authority,
+    minted,
+    expectedTargetUserId,
+    source,
+    "forced_maintenance",
+  );
 }
