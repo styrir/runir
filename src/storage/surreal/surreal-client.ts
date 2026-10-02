@@ -2,6 +2,7 @@ import { Surreal } from "surrealdb";
 import type {
   SearchHit,
 } from "../../domain/memory/types";
+import { attachSearchHitLineage } from "../../domain/memory/search-hit-lineage.js";
 import {
   buildProjectStateRecordId,
 } from "../../identity/canonical-context.js";
@@ -26,7 +27,7 @@ export function projectStateRecordId(
 
 export function mapMemoryRowToSearchHit(row: any): SearchHit {
   const payload = row?.payload ?? {};
-  return {
+  const hit: SearchHit = {
     id: extractId(row?.id),
     text: payload?.l2 ?? payload?.data ?? "",
     score: Number(row?.score ?? 0),
@@ -61,6 +62,7 @@ export function mapMemoryRowToSearchHit(row: any): SearchHit {
     event: payload?.event,
     atomicClaims: Array.isArray(payload?.atomicClaims) ? payload.atomicClaims : undefined,
   };
+  return attachSearchHitLineage(hit);
 }
 
 

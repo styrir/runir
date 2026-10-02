@@ -63,6 +63,7 @@ Persistence, indexing, write lifecycle, embeddings, reranking providers, and rea
 - Preserve lineage, trace event separation (`memory_committed` vs `memory_indexed`), and overlay read-your-writes semantics.
 - SurrealDB planner quirks are load-bearing: verify query shape before “simplifying” graph edge or `id IN` patterns.
 - Embedding dimension/model fingerprints are correctness guards, not cosmetic metadata.
+- Owned read projections select the top-level `processing_lineage` field and call the named `attachSelectedSearchHitLineage` helper for memory list/get/recent/similar, capture-context, latest-state, and continuity hits. The shared one-argument mapper remains selection-agnostic and returns `unavailable`, preserving vector/BM25 and other foreign callers until their own projections select the field. The module-private non-wire carrier preserves `minni_verified`, `legacy_unknown`, and `invalid` evidence without adding a public string field; generic similarity search keeps its existing `processing_lineage = NONE` containment predicate.
 
 ## Work Guidance
 
