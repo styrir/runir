@@ -42,6 +42,12 @@ export interface OverlayEntry {
   readonly outcome: "create" | "merge-update" | "supersede";
 }
 
+// Overlay entries can be extended at runtime with the retrieval layer's
+// module-private enumerable symbol carrier. The store does not interpret that
+// evidence, but every clone below intentionally uses object spread so the
+// carrier survives get/touch and snapshot handoff without becoming a string
+// field or changing overlay authority.
+
 export interface OverlayStore {
   put(lockKey: OverlayLockKey, entry: OverlayEntry): void;
   get(lockKey: OverlayLockKey): OverlayEntry | null;
@@ -129,7 +135,7 @@ class PerTenantStore implements OverlayStore {
   snapshot(): readonly OverlayEntry[] {
     this.lazyExpire();
     const out: OverlayEntry[] = [];
-    for (const e of this.entries.values()) out.push(e);
+    for (const e of this.entries.values()) out.push({ ...e });
     return Object.freeze(out);
   }
 
