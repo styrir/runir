@@ -35,6 +35,7 @@
 
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { RecordId } from "surrealdb";
 
 vi.mock("../../src/lifecycle/semion/dag-guard.js", () => ({
   wouldCreateCycle: vi.fn().mockResolvedValue(false),
@@ -174,13 +175,16 @@ describe("RYW overlay recall trio (Rúnir-yod0.3.17)", () => {
       // its memoryId goes to the residual bucket and the batched fallback
       // confirms `active=true` against the durable row (which DID succeed
       // at write time).
-      dbQuery.mockResolvedValueOnce([[{ id: admittedId, active: true }]]);
+      dbQuery.mockResolvedValueOnce([[
+        { id: new RecordId("semiote", admittedId), user_id: userId, payload_user_id: userId, active: true },
+      ]]);
       const durableHits: SearchHit[] = [];
       const merged = await mergeOverlayLeg({
         db,
         userId,
         overlay: { registry },
         durableHits,
+        tableName: "semiote",
       });
 
       // must_contain: the admitted memoryId is visible at s1-t2.
@@ -199,7 +203,10 @@ describe("RYW overlay recall trio (Rúnir-yod0.3.17)", () => {
       // (ADR 0009 §Active-filter batching) — never per-id.
       expect(dbQuery).toHaveBeenCalledTimes(1);
       const [, params] = dbQuery.mock.calls[0];
-      expect(params).toEqual({ ids: [admittedId] });
+      expect(params.requestedUser).toBe(userId);
+      expect(params.ids.map((id: RecordId<string>) => id.toJSON())).toEqual([
+        new RecordId("semiote", admittedId).toJSON(),
+      ]);
     });
   }
 });
