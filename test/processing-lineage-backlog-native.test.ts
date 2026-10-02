@@ -6,19 +6,35 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SurrealClient } from "../src/storage/surreal/surreal-client.js";
 import {
   ensureStalenessBacklogTable,
+  writeSyntheticForcedStalenessBacklog,
+  writeSyntheticScheduledStalenessBacklog,
   writeCurrentSnapshotStalenessBacklog,
 } from "../src/lifecycle/semion/lock.js";
 import { ensurePhase2Schema } from "../src/storage/surreal/phase2-store.js";
 import { processingLineageSchemaStatements } from "../src/storage/surreal/processing-lineage-schema.js";
+import {
+  createProducerAuthority,
+  createServerAuthenticatedProducerPrincipal,
+  createServerResolvedTargetUser,
+  createServerSelectedProducerOperation,
+  createTrustedProducerRegistration,
+  mintProcessingLineage,
+  syntheticProducerDeliveryResolver,
+} from "../src/app/processing-policy/authority.js";
 
 const runNative = process.env.RUNIR_LINEAGE_NATIVE_BACKLOG === "1";
 const PASSWORD = "backlog-native-synthetic";
 const USER = "root";
 const NAMESPACE = "backlog_native_ns";
 const DATABASE = "backlog_native_db";
+const RUN_ID = `sourcec_cp_${process.pid}`;
 const SENTINEL_ENV_KEYS = ["SURREAL_URL", "SURREAL_USER", "SURREAL_PASS", "SURREAL_NS", "SURREAL_DB", "SURREAL_DATABASE"] as const;
 
 type OwnedChild = Pick<ChildProcess, "exitCode" | "signalCode" | "pid"> & { kill: (signal?: NodeJS.Signals) => boolean };
+
+function id(label: string): string {
+  return `${RUN_ID}_${label}`;
+}
 
 function resolvedPackageVersion(packageName: string): string {
   const entry = execFileSync(process.execPath, ["-e", `process.stdout.write(require.resolve(${JSON.stringify(packageName)}))`], { encoding: "utf8" }).trim();
@@ -120,6 +136,73 @@ function legacyCreate(id: string, text = "stored native fact", confidence = 0.9,
   return `CREATE semiote:${id} SET user_id = 'native-user', scope = 'user', payload = { userId: 'native-user', scope: 'user', active: true, l2: '${text}', confidence: ${confidence}${support} }, active = true, created_at = time::now(), updated_at = time::now();`;
 }
 
+function protectedLineage(userId = USER, restrictions: readonly string[] = []): Record<string, unknown> {
+  return {
+    state: "minni_verified",
+    origin: "minni",
+    producer_principal_ref: "capture-principal.native",
+    producer_registration_ref: "capture-registration.native",
+    processing_policy_version: "runir.minni.local/v1",
+    admitted_operation: "capture_ingest",
+    target_user_id: userId,
+    delivery: {
+      version: "runir.minni.delivery/v1",
+      disposition: restrictions.length > 0 ? "local_only" : "ordinary",
+      restrictions,
+    },
+  };
+}
+
+async function createProtectedSource(
+  client: SurrealClient,
+  id: string,
+  options: { userId?: string; supportIds?: readonly string[]; restrictions?: readonly string[]; updatedAt?: string } = {},
+): Promise<void> {
+  const userId = options.userId ?? USER;
+  await client.query(
+    `CREATE type::record('semiote', $id) CONTENT {
+       user_id: $userId,
+       scope: 'user',
+       session_id: NONE,
+       payload: { userId: $userId, scope: 'user', active: true, l2: 'protected payload must never be read', confidence: 0.91, noemaSupportSemioteIds: $supportIds },
+       active: true,
+       support_semiote_ids: $supportIds,
+       processing_lineage: $lineage,
+       created_at: <datetime>$createdAt,
+       updated_at: <datetime>$updatedAt
+     };`,
+    {
+      id,
+      userId,
+      supportIds: options.supportIds ?? [],
+      lineage: protectedLineage(userId, options.restrictions ?? []),
+      createdAt: "2026-10-02T00:00:00.000000000Z",
+      updatedAt: options.updatedAt ?? "2026-10-02T00:00:00.000000000Z",
+    },
+  );
+}
+
+function protectedAuthority(operation: "scheduled_maintenance" | "forced_maintenance", userId = USER) {
+  const principalRef = `principal.backlog.native.${operation}`;
+  const registrationRef = `registration.backlog.native.${operation}`;
+  const principal = createServerAuthenticatedProducerPrincipal(principalRef);
+  const authority = createProducerAuthority([createTrustedProducerRegistration({
+    registrationRef,
+    principalRef,
+    authorizedOperations: [operation],
+    authorizedTargetUsers: [userId],
+  })]);
+  const admission = authority.resolve({
+    principal,
+    operation: createServerSelectedProducerOperation(operation),
+    targetUser: createServerResolvedTargetUser(userId),
+  });
+  if (!admission.ok) throw new Error(`native protected authority admission failed: ${admission.reason}`);
+  const minted = mintProcessingLineage(authority, admission.context, syntheticProducerDeliveryResolver);
+  if (!minted.ok) throw new Error(`native protected mint failed: ${minted.reason}`);
+  return { authority, minted };
+}
+
 async function removeAndDefineTable(db: SurrealClient, factsDDL: string[] = []): Promise<void> {
   await db.query("REMOVE TABLE IF EXISTS staleness_backlog;");
   await db.query("DEFINE TABLE staleness_backlog SCHEMAFULL;");
@@ -133,6 +216,15 @@ function insertThrowAfter(sql: string, marker: string, message: string): string 
   const end = sql.indexOf("};", markerIndex);
   if (end < 0) throw new Error(`native injection end missing: ${marker}`);
   const insertion = end + 2;
+  return `${sql.slice(0, insertion)}\nTHROW "${message}";\n${sql.slice(insertion)}`;
+}
+
+function insertThrowAfterAnyStatement(sql: string, marker: string, message: string): string {
+  const markerIndex = sql.indexOf(marker);
+  if (markerIndex < 0) throw new Error(`native injection marker missing: ${marker}`);
+  const end = sql.indexOf(";", markerIndex);
+  if (end < 0) throw new Error(`native injection end missing: ${marker}`);
+  const insertion = end + 1;
   return `${sql.slice(0, insertion)}\nTHROW "${message}";\n${sql.slice(insertion)}`;
 }
 
@@ -420,6 +512,154 @@ describe.skipIf(!runNative)("Sourcec CG generic current-snapshot backlog native 
       expect(await fullRowDigest(db, "staleness_backlog", result.backlogId)).toBeDefined();
       await db.query("DELETE type::record('staleness_backlog', $id);", { id: result.backlogId });
     }
+  }, 30_000);
+
+  it("rejects object-like carrier ids without nested getter calls or native SQL", async () => {
+    const originalQuery = db.query.bind(db);
+    const originalTransaction = db.queryTransaction.bind(db);
+    let queryCalls = 0;
+    let transactionCalls = 0;
+    let getterCalls = 0;
+    (db as any).query = async (...args: unknown[]) => {
+      queryCalls += 1;
+      return originalQuery(...args as [string, Record<string, unknown>?]);
+    };
+    (db as any).queryTransaction = async (...args: unknown[]) => {
+      transactionCalls += 1;
+      return originalTransaction(...args as [string, Record<string, unknown>?]);
+    };
+    const nestedId = {} as Record<string, unknown>;
+    Object.defineProperty(nestedId, "id", { get: () => { getterCalls += 1; return "native_missing"; } });
+    const nestedToString = {} as Record<string, unknown>;
+    Object.defineProperty(nestedToString, "toString", { get: () => { getterCalls += 1; return () => "native_missing"; } });
+    try {
+      const malformed = [nestedId, nestedToString, { tb: "semiote", id: "native_missing" }, () => "native_missing"];
+      for (const value of malformed) {
+        await expect(writeCurrentSnapshotStalenessBacklog(db, USER, "user", undefined, [{ replacementMemoryId: value as never }]))
+          .resolves.toMatchObject({ status: "refused", reason: "invalid_input", contentFree: true });
+      }
+      for (const [operation, writer] of [
+        ["scheduled_maintenance", writeSyntheticScheduledStalenessBacklog],
+        ["forced_maintenance", writeSyntheticForcedStalenessBacklog],
+      ] as const) {
+        const fixture = protectedAuthority(operation);
+        for (const value of malformed) {
+          await expect(writer(db, fixture.authority, fixture.minted, USER, [{ replacementMemoryId: value as never }]))
+            .resolves.toMatchObject({ status: "refused", reason: "invalid_input", contentFree: true });
+        }
+      }
+      expect(getterCalls).toBe(0);
+      expect(queryCalls).toBe(0);
+      expect(transactionCalls).toBe(0);
+    } finally {
+      (db as any).query = originalQuery;
+      (db as any).queryTransaction = originalTransaction;
+    }
+  }, 30_000);
+
+  it.each([
+    ["scheduled_maintenance", writeSyntheticScheduledStalenessBacklog],
+    ["forced_maintenance", writeSyntheticForcedStalenessBacklog],
+  ] as const)("executes the protected %s seam with a real transaction and fixed facts", async (operation, writer) => {
+    const sourceId = id(`cp_${operation}_source`);
+    const supportId = id(`cp_${operation}_support`);
+    await createProtectedSource(db, supportId, { restrictions: ["excluded_source"] });
+    await createProtectedSource(db, sourceId, { supportIds: [supportId], restrictions: ["audio_derived"] });
+    const fixture = protectedAuthority(operation);
+    const sourceBefore = await fullRowDigest(db, "semiote", sourceId);
+    const result = await writer(db, fixture.authority, fixture.minted, USER, [{ replacementMemoryId: sourceId }]);
+    expect(result.status).toBe("committed");
+    if (result.status !== "committed") return;
+    expect(await fullRowDigest(db, "semiote", sourceId)).toBe(sourceBefore);
+    const rows = await db.query<Record<string, unknown>>(
+      "SELECT * FROM type::record('staleness_backlog', $id) LIMIT 1;",
+      { id: result.backlogId },
+    );
+    const row = rows[0]?.[0] as Record<string, unknown> | undefined;
+    expect(row).toMatchObject({ user_id: USER, scope: "user", status: "pending" });
+    expect(row).not.toHaveProperty("processing_lineage");
+    expect(row?.facts).toEqual([{
+      text: operation === "scheduled_maintenance"
+        ? "Synthetic scheduled maintenance proof content."
+        : "Synthetic forced maintenance proof content.",
+      confidence: 0.5,
+      replacementMemoryId: sourceId,
+    }]);
+  }, 30_000);
+
+  it("refuses a collision before the second authority gate and leaves no transaction effect", async () => {
+    const sourceId = id("cp_collision_source");
+    const collisionId = id("cp_collision_backlog");
+    await createProtectedSource(db, sourceId);
+    await db.query(
+      "CREATE ONLY type::record('staleness_backlog', $id) CONTENT { user_id: $userId, scope: 'user', session_id: NONE, triggered_at: time::now(), facts: [], status: 'pending' };",
+      { id: collisionId, userId: USER },
+    );
+    const fixture = protectedAuthority("scheduled_maintenance");
+    const originalRandomUUID = globalThis.crypto.randomUUID;
+    globalThis.crypto.randomUUID = () => collisionId;
+    try {
+      await expect(writeSyntheticScheduledStalenessBacklog(db, fixture.authority, fixture.minted, USER, [{ replacementMemoryId: sourceId }]))
+        .resolves.toMatchObject({ status: "refused", reason: "backlog_collision", contentFree: true });
+    } finally {
+      globalThis.crypto.randomUUID = originalRandomUUID;
+    }
+  }, 30_000);
+
+  it("rolls back at every protected source/support/create statement with full rows unchanged", async () => {
+    const sourceId = id("cp_rollback_source");
+    const supportId = id("cp_rollback_support");
+    await createProtectedSource(db, supportId);
+    await createProtectedSource(db, sourceId, { supportIds: [supportId] });
+    const fixture = protectedAuthority("forced_maintenance");
+    const originalTransaction = db.queryTransaction.bind(db);
+    for (const [index, marker] of ["$sourceRows0", "$supportRows0", "$backlogRows"].entries()) {
+      const sourceBefore = await fullRowDigest(db, "semiote", sourceId);
+      const supportBefore = await fullRowDigest(db, "semiote", supportId);
+      (db as any).queryTransaction = async (sql: string, vars: Record<string, unknown>) => originalTransaction(
+        insertThrowAfterAnyStatement(sql, marker, `CP failure ${index}`),
+        vars,
+      );
+      const result = await writeSyntheticForcedStalenessBacklog(db, fixture.authority, fixture.minted, USER, [{ replacementMemoryId: sourceId }]);
+      expect(result.status).toBe("rolled_back");
+      if (result.status === "rolled_back") expect(await fullRowDigest(db, "staleness_backlog", result.backlogId)).toBeUndefined();
+      expect(await fullRowDigest(db, "semiote", sourceId)).toBe(sourceBefore);
+      expect(await fullRowDigest(db, "semiote", supportId)).toBe(supportBefore);
+    }
+    (db as any).queryTransaction = originalTransaction;
+  }, 30_000);
+
+  it("keeps one-nanosecond source races indeterminate and classifies a real post-commit error as committed", async () => {
+    const sourceId = id("cp_nanosecond_source");
+    await createProtectedSource(db, sourceId);
+    const fixture = protectedAuthority("scheduled_maintenance");
+    const originalTransaction = db.queryTransaction.bind(db);
+    (db as any).queryTransaction = async (sql: string, vars: Record<string, unknown>) => {
+      await db.query(
+        "UPDATE type::record('semiote', $id) SET updated_at = <datetime>'2026-10-02T00:00:00.000000001Z';",
+        { id: sourceId },
+      );
+      return originalTransaction(sql, vars);
+    };
+    const raced = await writeSyntheticScheduledStalenessBacklog(db, fixture.authority, fixture.minted, USER, [{ replacementMemoryId: sourceId }]);
+    expect(raced).toMatchObject({ status: "indeterminate", contentFree: true });
+    if (raced.status === "indeterminate") expect(await fullRowDigest(db, "staleness_backlog", raced.backlogId)).toBeUndefined();
+    (db as any).queryTransaction = originalTransaction;
+
+    const postCommitId = id("cp_postcommit_source");
+    await createProtectedSource(db, postCommitId);
+    const sourceBefore = await fullRowDigest(db, "semiote", postCommitId);
+    (db as any).queryTransaction = async (sql: string, vars: Record<string, unknown>) => {
+      await originalTransaction(sql, vars);
+      throw new Error("synthetic CP post-commit wrapper rejection");
+    };
+    const committed = await writeSyntheticScheduledStalenessBacklog(db, fixture.authority, fixture.minted, USER, [{ replacementMemoryId: postCommitId }]);
+    expect(committed.status).toBe("committed");
+    if (committed.status === "committed") {
+      expect(await fullRowDigest(db, "semiote", postCommitId)).toBe(sourceBefore);
+      expect(await fullRowDigest(db, "staleness_backlog", committed.backlogId)).toBeDefined();
+    }
+    (db as any).queryTransaction = originalTransaction;
   }, 30_000);
 
   it("bounds rejected and hanging SDK close diagnostics", async () => {
