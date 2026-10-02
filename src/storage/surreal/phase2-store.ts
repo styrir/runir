@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { RecordId } from "surrealdb";
+import { DateTime, RecordId } from "surrealdb";
 import {
   isSemioteRelationKind,
   type MemoryRecordTable,
@@ -283,18 +283,6 @@ function buildNoemaId(input: {
     )
     .digest("hex")
     .slice(0, 24);
-}
-
-async function getExistingNoemaStatus(
-  db: SurrealClient,
-  noemaId: string,
-): Promise<ReturnType<typeof normalizeNoemaClaimStatus> | undefined> {
-  const results = await db.query<any>(
-    "SELECT status FROM type::record('noema', $id) LIMIT 1;",
-    { id: noemaId },
-  );
-  const row = (results[0] ?? [])[0];
-  return row?.status ? normalizeNoemaClaimStatus(row.status) : undefined;
 }
 
 function toPersistedSemiosis(
@@ -1296,6 +1284,12 @@ type NoemaPromotionMetadata = Readonly<{
   payload_is_stale: unknown;
   payload_stale_since: unknown;
   payload_contradicted_by: unknown;
+  payload_promoted_to_noema_id: unknown;
+  payload_noema_support_semiote_ids: unknown;
+  payload_noema_claim_key: unknown;
+  payload_noema_revision_hash: unknown;
+  payload_noema_status: unknown;
+  payload_noema_stable_claim: unknown;
 }>;
 
 const NOEMA_PROMOTION_GUARDED_FIELDS = [
@@ -1327,6 +1321,56 @@ const NOEMA_PROMOTION_GUARDED_FIELDS = [
   key: keyof NoemaPromotionMetadata;
   parameter: string;
 }>[];
+
+type NoemaPromotionTargetMetadata = Readonly<{
+  id: unknown;
+  user_id: unknown;
+  processing_lineage: unknown;
+  status: unknown;
+  claim_key: unknown;
+  revision_hash: unknown;
+  support_semiote_ids: unknown;
+  active: unknown;
+  updated_at: unknown;
+}>;
+
+type NoemaPromotionSourceMarkers = Readonly<{
+  promoted_to_noema_id: unknown;
+  noema_support_semiote_ids: unknown;
+  noema_claim_key: unknown;
+  noema_revision_hash: unknown;
+  noema_status: unknown;
+  noema_stable_claim: unknown;
+}>;
+
+type NoemaPromotionSourceReadback = Readonly<{
+  id: unknown;
+  user_id: unknown;
+  processing_lineage: unknown;
+  updated_at: unknown;
+  markers: NoemaPromotionSourceMarkers;
+}>;
+
+type NoemaPromotionReadbackOutcome =
+  | "committed"
+  | "rolled_back"
+  | "inconsistent_or_unresolved";
+
+const NOEMA_PROMOTION_STATUSES = new Set(["active", "superseded", "conflicted", "rejected"]);
+
+function isWellFormedNoemaPromotionTarget(target: NoemaPromotionTargetMetadata): boolean {
+  if (target.status !== undefined
+    && (typeof target.status !== "string" || !NOEMA_PROMOTION_STATUSES.has(target.status))) return false;
+  if (target.claim_key !== undefined && typeof target.claim_key !== "string") return false;
+  if (target.revision_hash !== undefined && typeof target.revision_hash !== "string") return false;
+  if (target.support_semiote_ids !== undefined
+    && (!Array.isArray(target.support_semiote_ids)
+      || target.support_semiote_ids.some((value) => typeof value !== "string"))) {
+    return false;
+  }
+  if (target.active !== undefined && typeof target.active !== "boolean") return false;
+  return target.updated_at === undefined || canonicalPromotionMetadataValue(target.updated_at) !== undefined;
+}
 
 function normalizePromotionSourceId(source: unknown): string | undefined {
   let candidate = source;
@@ -1372,12 +1416,365 @@ async function readNoemaPromotionMetadata(
             payload.arbitrationOutcome AS payload_arbitration_outcome,
             payload.isStale AS payload_is_stale,
             payload.staleSince AS payload_stale_since,
-            payload.contradictedBy AS payload_contradicted_by
+            payload.contradictedBy AS payload_contradicted_by,
+            payload.promotedToNoemaId AS payload_promoted_to_noema_id,
+            payload.noemaSupportSemioteIds AS payload_noema_support_semiote_ids,
+            payload.noemaClaimKey AS payload_noema_claim_key,
+            payload.noemaRevisionHash AS payload_noema_revision_hash,
+            payload.noemaStatus AS payload_noema_status,
+            payload.noemaStableClaim AS payload_noema_stable_claim
      FROM type::record('semiote', $id) LIMIT 1;`,
     { id },
   );
   const rows = results[0] ?? [];
   return rows.length === 1 ? rows[0] : undefined;
+}
+
+function promotionOwnerUserId(metadata: NoemaPromotionMetadata): string | undefined {
+  const topLevel = metadata.user_id;
+  const payload = metadata.payload_user_id;
+  if (topLevel !== undefined && payload !== undefined
+    && !samePromotionMetadataValue(topLevel, payload)) {
+    return undefined;
+  }
+  const candidate = topLevel ?? payload;
+  if (typeof candidate !== "string") return undefined;
+  const normalized = candidate.trim();
+  return normalized || undefined;
+}
+
+const NOEMA_PROMOTION_MARKER_FIELDS: ReadonlyArray<readonly [string, keyof NoemaPromotionMetadata, string]> = [
+  ["payload.promotedToNoemaId", "payload_promoted_to_noema_id", "expectedSourcePromotedToNoemaId"],
+  ["payload.noemaSupportSemioteIds", "payload_noema_support_semiote_ids", "expectedSourceNoemaSupportSemioteIds"],
+  ["payload.noemaClaimKey", "payload_noema_claim_key", "expectedSourceNoemaClaimKey"],
+  ["payload.noemaRevisionHash", "payload_noema_revision_hash", "expectedSourceNoemaRevisionHash"],
+  ["payload.noemaStatus", "payload_noema_status", "expectedSourceNoemaStatus"],
+  ["payload.noemaStableClaim", "payload_noema_stable_claim", "expectedSourceNoemaStableClaim"],
+];
+
+function promotionMetadataFieldsMatch(
+  expected: NoemaPromotionMetadata,
+  actual: NoemaPromotionMetadata,
+  includeMarkers: boolean,
+  ignoreUpdatedAt = false,
+): boolean {
+  if (normalizePromotionSourceId(actual.id) !== normalizePromotionSourceId(expected.id)) return false;
+  if (actual.processing_lineage !== undefined) return false;
+  if (promotionOwnerUserId(expected) !== promotionOwnerUserId(actual)) return false;
+  if (!NOEMA_PROMOTION_GUARDED_FIELDS.every(({ key }) =>
+    (ignoreUpdatedAt && key === "updated_at")
+      || samePromotionMetadataValue(actual[key], expected[key]))) return false;
+  if (includeMarkers && !NOEMA_PROMOTION_MARKER_FIELDS.every(([, key]) =>
+    samePromotionMetadataValue(actual[key], expected[key]))) return false;
+  return true;
+}
+
+function isWellFormedPromotionMetadata(metadata: NoemaPromotionMetadata): boolean {
+  if (!promotionOwnerUserId(metadata)) return false;
+  if (metadata.processing_lineage !== undefined) return false;
+  if (normalizePromotionSourceId(metadata.id) === undefined) return false;
+  if (normalizePromotionSupportIds(metadata.payload_noema_support_semiote_ids) === undefined) return false;
+  return NOEMA_PROMOTION_GUARDED_FIELDS.every(({ key }) =>
+    canonicalPromotionMetadataValue(metadata[key]) !== undefined,
+  ) && NOEMA_PROMOTION_MARKER_FIELDS.every(([, key]) =>
+    canonicalPromotionMetadataValue(metadata[key]) !== undefined,
+  );
+}
+
+function normalizePromotionSupportIds(value: unknown): string[] | undefined {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return undefined;
+  const ids: string[] = [];
+  for (const candidate of value) {
+    const normalized = normalizePromotionSourceId(candidate);
+    if (!normalized) return undefined;
+    if (!ids.includes(normalized)) ids.push(normalized);
+  }
+  return ids;
+}
+
+async function readNoemaPromotionSupportMetadata(
+  db: SurrealClient,
+  supportIds: readonly string[],
+  sourceUserId: string,
+  sourceId: string,
+  sourceMetadata: NoemaPromotionMetadata,
+): Promise<NoemaPromotionMetadata[] | undefined> {
+  const snapshots: NoemaPromotionMetadata[] = [];
+  for (const supportId of supportIds) {
+    const metadata = supportId === sourceId
+      ? sourceMetadata
+      : await readNoemaPromotionMetadata(db, supportId);
+    if (!metadata
+      || normalizePromotionSourceId(metadata.id) !== supportId
+      || !isWellFormedPromotionMetadata(metadata)
+      || promotionOwnerUserId(metadata) !== sourceUserId) {
+      return undefined;
+    }
+    snapshots.push(metadata);
+  }
+  return snapshots;
+}
+
+async function readNoemaPromotionTargetMetadata(
+  db: SurrealClient,
+  id: string,
+): Promise<NoemaPromotionTargetMetadata | undefined> {
+  const results = await db.query<NoemaPromotionTargetMetadata>(
+    `SELECT id, user_id, processing_lineage, status, claim_key, revision_hash,
+            support_semiote_ids, active, updated_at
+     FROM type::record('noema', $id) LIMIT 1;`,
+    { id },
+  );
+  const rows = results[0] ?? [];
+  return rows.length === 1 ? rows[0] : undefined;
+}
+
+async function readNoemaPromotionSourceReadback(
+  db: SurrealClient,
+  id: string,
+): Promise<NoemaPromotionSourceReadback | undefined> {
+  const results = await db.query<NoemaPromotionSourceReadback>(
+    `SELECT id, user_id, processing_lineage, updated_at,
+            payload.promotedToNoemaId AS promoted_to_noema_id,
+            payload.noemaSupportSemioteIds AS noema_support_semiote_ids,
+            payload.noemaClaimKey AS noema_claim_key,
+            payload.noemaRevisionHash AS noema_revision_hash,
+            payload.noemaStatus AS noema_status,
+            payload.noemaStableClaim AS noema_stable_claim
+     FROM type::record('semiote', $id) LIMIT 1;`,
+    { id },
+  );
+  const rows = results[0] ?? [];
+  const row = rows.length === 1 ? rows[0] : undefined;
+  if (!row) return undefined;
+  const record = row as unknown as Record<string, unknown>;
+  return {
+    id: record.id,
+    user_id: record.user_id,
+    processing_lineage: record.processing_lineage,
+    updated_at: record.updated_at,
+    markers: {
+      promoted_to_noema_id: record.promoted_to_noema_id,
+      noema_support_semiote_ids: record.noema_support_semiote_ids,
+      noema_claim_key: record.noema_claim_key,
+      noema_revision_hash: record.noema_revision_hash,
+      noema_status: record.noema_status,
+      noema_stable_claim: record.noema_stable_claim,
+    },
+  };
+}
+
+function appendExactPromotionGuard(
+  predicates: string[],
+  variables: Record<string, unknown>,
+  field: string,
+  value: unknown,
+  parameter: string,
+): void {
+  if (value === undefined) {
+    predicates.push(`${field} = NONE`);
+  } else {
+    predicates.push(`${field} = $${parameter}`);
+    variables[parameter] = value;
+  }
+}
+
+function appendSourcePromotionMetadataGuards(
+  predicates: string[],
+  variables: Record<string, unknown>,
+  metadata: NoemaPromotionMetadata,
+): void {
+  for (const { field, key, parameter } of NOEMA_PROMOTION_GUARDED_FIELDS) {
+    appendExactPromotionGuard(predicates, variables, field, metadata[key], parameter);
+  }
+}
+
+function sourcePromotionMarkersFromRow(row: Record<string, unknown>): NoemaPromotionSourceMarkers {
+  const payload = row.payload && typeof row.payload === "object"
+    ? row.payload as Record<string, unknown>
+    : {};
+  return {
+    promoted_to_noema_id: payload.promotedToNoemaId,
+    noema_support_semiote_ids: payload.noemaSupportSemioteIds,
+    noema_claim_key: payload.noemaClaimKey,
+    noema_revision_hash: payload.noemaRevisionHash,
+    noema_status: payload.noemaStatus,
+    noema_stable_claim: payload.noemaStableClaim,
+  };
+}
+
+function appendSourcePromotionMarkerGuards(
+  predicates: string[],
+  variables: Record<string, unknown>,
+  markers: NoemaPromotionSourceMarkers,
+): void {
+  const fields: ReadonlyArray<readonly [string, keyof NoemaPromotionSourceMarkers, string]> = [
+    ["payload.promotedToNoemaId", "promoted_to_noema_id", "expectedSourcePromotedToNoemaId"],
+    ["payload.noemaSupportSemioteIds", "noema_support_semiote_ids", "expectedSourceNoemaSupportSemioteIds"],
+    ["payload.noemaClaimKey", "noema_claim_key", "expectedSourceNoemaClaimKey"],
+    ["payload.noemaRevisionHash", "noema_revision_hash", "expectedSourceNoemaRevisionHash"],
+    ["payload.noemaStatus", "noema_status", "expectedSourceNoemaStatus"],
+    ["payload.noemaStableClaim", "noema_stable_claim", "expectedSourceNoemaStableClaim"],
+  ];
+  for (const [field, key, parameter] of fields) {
+    appendExactPromotionGuard(predicates, variables, field, markers[key], parameter);
+  }
+}
+
+function appendSupportPromotionMetadataGuards(
+  predicates: string[],
+  variables: Record<string, unknown>,
+  metadata: NoemaPromotionMetadata,
+  prefix: string,
+): void {
+  for (const { field, key, parameter } of NOEMA_PROMOTION_GUARDED_FIELDS) {
+    const supportParameter = `${prefix}${parameter.replace(/^expected/, "")}`;
+    appendExactPromotionGuard(predicates, variables, field, metadata[key], supportParameter);
+  }
+  for (const [field, key, parameter] of NOEMA_PROMOTION_MARKER_FIELDS) {
+    const supportParameter = `${prefix}${parameter.replace(/^expectedSource/, "")}`;
+    appendExactPromotionGuard(predicates, variables, field, metadata[key], supportParameter);
+  }
+}
+
+function appendSupportPromotionCasStatements(
+  statements: string[],
+  variables: Record<string, unknown>,
+  snapshots: readonly NoemaPromotionMetadata[],
+): void {
+  snapshots.forEach((metadata, index) => {
+    const supportId = normalizePromotionSourceId(metadata.id);
+    if (!supportId) throw new Error("invalid Noema promotion support id");
+    const supportIdParameter = `supportId${index}`;
+    variables[supportIdParameter] = supportId;
+    const predicates = ["processing_lineage = NONE"];
+    appendSupportPromotionMetadataGuards(predicates, variables, metadata, `expectedSupport${index}`);
+    statements.push(`
+      LET $supportRows${index} = (
+        UPDATE type::record('semiote', $${supportIdParameter}) SET
+          updated_at = updated_at
+        WHERE ${predicates.join(" AND ")}
+        RETURN VALUE [id]
+      );
+      IF array::len($supportRows${index}) != 1 {
+        THROW "semiote support metadata compare-and-set failed";
+      };
+    `);
+  });
+}
+
+function appendSourcePromotionSnapshotGuards(
+  predicates: string[],
+  variables: Record<string, unknown>,
+  row: Record<string, unknown>,
+): void {
+  const payload = row.payload && typeof row.payload === "object"
+    ? row.payload as Record<string, unknown>
+    : {};
+  const fields: ReadonlyArray<readonly [string, unknown, string]> = [
+    ["scope", row.scope, "expectedSourceScope"],
+    ["path", row.path, "expectedSourcePath"],
+    ["memory_role", row.memory_role, "expectedSourceMemoryRole"],
+    ["payload.l0", payload.l0, "expectedSourceL0"],
+    ["payload.l1", payload.l1, "expectedSourceL1"],
+    ["payload.data", payload.data, "expectedSourceData"],
+    ["payload.category", payload.category, "expectedSourceCategory"],
+    ["payload.factKey", payload.factKey, "expectedSourceFactKey"],
+    ["payload.continuitySubjectKey", payload.continuitySubjectKey, "expectedSourceContinuitySubjectKey"],
+    ["payload.claimSubject", payload.claimSubject, "expectedSourceClaimSubject"],
+    ["payload.claimPredicate", payload.claimPredicate, "expectedSourceClaimPredicate"],
+    ["confidence", row.confidence, "expectedSourceConfidence"],
+    ["usefulness_score", row.usefulness_score, "expectedSourceUsefulnessScore"],
+    ["successful_use_count", row.successful_use_count, "expectedSourceSuccessfulUseCount"],
+    ["cross_session_use_count", row.cross_session_use_count, "expectedSourceCrossSessionUseCount"],
+    ["contradiction_count", row.contradiction_count, "expectedSourceContradictionCount"],
+    ["usefulness_alpha", row.usefulness_alpha, "expectedSourceUsefulnessAlpha"],
+    ["usefulness_beta", row.usefulness_beta, "expectedSourceUsefulnessBeta"],
+    ["retrieved_count", row.retrieved_count, "expectedSourceRetrievedCount"],
+    ["last_evaluated_at", row.last_evaluated_at, "expectedSourceLastEvaluatedAt"],
+    ["embedding", row.embedding, "expectedSourceEmbedding"],
+    ["payload.scope", payload.scope, "expectedSourcePayloadScope"],
+    ["payload.path", payload.path, "expectedSourcePayloadPath"],
+    ["payload.memoryRole", payload.memoryRole, "expectedSourcePayloadMemoryRole"],
+    ["payload.usefulnessScore", payload.usefulnessScore, "expectedSourcePayloadUsefulnessScore"],
+    ["payload.successfulUseCount", payload.successfulUseCount, "expectedSourcePayloadSuccessfulUseCount"],
+    ["payload.crossSessionUseCount", payload.crossSessionUseCount, "expectedSourcePayloadCrossSessionUseCount"],
+    ["payload.contradictionCount", payload.contradictionCount, "expectedSourcePayloadContradictionCount"],
+    ["payload.usefulnessAlpha", payload.usefulnessAlpha, "expectedSourcePayloadUsefulnessAlpha"],
+    ["payload.usefulnessBeta", payload.usefulnessBeta, "expectedSourcePayloadUsefulnessBeta"],
+    ["payload.retrievedCount", payload.retrievedCount, "expectedSourcePayloadRetrievedCount"],
+    ["payload.lastEvaluatedAt", payload.lastEvaluatedAt, "expectedSourcePayloadLastEvaluatedAt"],
+    ["payload.confidence", payload.confidence, "expectedSourcePayloadConfidence"],
+  ];
+  for (const [field, value, parameter] of fields) {
+    appendExactPromotionGuard(predicates, variables, field, value, parameter);
+  }
+}
+
+function appendNoemaTargetGuards(
+  predicates: string[],
+  variables: Record<string, unknown>,
+  target: NoemaPromotionTargetMetadata,
+): void {
+  appendExactPromotionGuard(predicates, variables, "user_id", target.user_id, "expectedTargetUserId");
+  appendExactPromotionGuard(predicates, variables, "processing_lineage", target.processing_lineage, "expectedTargetProcessingLineage");
+  appendExactPromotionGuard(predicates, variables, "status", target.status, "expectedTargetStatus");
+  appendExactPromotionGuard(predicates, variables, "claim_key", target.claim_key, "expectedTargetClaimKey");
+  appendExactPromotionGuard(predicates, variables, "revision_hash", target.revision_hash, "expectedTargetRevisionHash");
+  appendExactPromotionGuard(predicates, variables, "support_semiote_ids", target.support_semiote_ids, "expectedTargetSupportSemioteIds");
+  appendExactPromotionGuard(predicates, variables, "active", target.active, "expectedTargetActive");
+  appendExactPromotionGuard(predicates, variables, "updated_at", target.updated_at, "expectedTargetUpdatedAt");
+}
+
+function sameSupportIdSet(left: unknown, right: readonly string[]): boolean {
+  if (!Array.isArray(left)) return false;
+  const leftIds = normalizePromotionSupportIds(left);
+  const rightIds = normalizePromotionSupportIds(right);
+  if (!leftIds || !rightIds) return false;
+  return leftIds.length === rightIds.length
+    && leftIds.every((id) => rightIds.includes(id));
+}
+
+function promotionUpdatedAtMatchesExpected(
+  before: unknown,
+  after: unknown,
+  expected: unknown,
+  requiresChangeFromBefore: boolean,
+): boolean {
+  if (!samePromotionMetadataValue(after, expected)) return false;
+  return !requiresChangeFromBefore || !samePromotionMetadataValue(before, expected);
+}
+
+function sourceMarkersEqual(
+  actual: NoemaPromotionSourceMarkers | undefined,
+  expected: NoemaPromotionSourceMarkers,
+): boolean {
+  if (!actual) return false;
+  return samePromotionMetadataValue(actual.promoted_to_noema_id, expected.promoted_to_noema_id)
+    && samePromotionMetadataValue(actual.noema_support_semiote_ids, expected.noema_support_semiote_ids)
+    && samePromotionMetadataValue(actual.noema_claim_key, expected.noema_claim_key)
+    && samePromotionMetadataValue(actual.noema_revision_hash, expected.noema_revision_hash)
+    && samePromotionMetadataValue(actual.noema_status, expected.noema_status)
+    && samePromotionMetadataValue(actual.noema_stable_claim, expected.noema_stable_claim);
+}
+
+function sourceMarkersMatch(
+  actual: NoemaPromotionSourceMarkers | undefined,
+  noemaRecordId: string,
+  supportSemioteIds: readonly string[],
+  claimKey: string,
+  revisionHash: string,
+  status: string,
+  stableClaim: unknown,
+): boolean {
+  if (!actual) return false;
+  return samePromotionMetadataValue(actual.promoted_to_noema_id, noemaRecordId)
+    && sameSupportIdSet(actual.noema_support_semiote_ids, supportSemioteIds)
+    && samePromotionMetadataValue(actual.noema_claim_key, claimKey)
+    && samePromotionMetadataValue(actual.noema_revision_hash, revisionHash)
+    && samePromotionMetadataValue(actual.noema_status, status)
+    && samePromotionMetadataValue(actual.noema_stable_claim, stableClaim);
 }
 
 function isPromotionRecordId(value: object): boolean {
@@ -1501,15 +1898,7 @@ async function readGuardedNoemaPromotionRow(
 ): Promise<Record<string, unknown> | undefined> {
   const variables: Record<string, unknown> = { id };
   const predicates = ["processing_lineage = NONE"];
-  for (const { field, key, parameter } of NOEMA_PROMOTION_GUARDED_FIELDS) {
-    const expected = metadata[key];
-    if (expected === undefined) {
-      predicates.push(`${field} = NONE`);
-    } else {
-      predicates.push(`${field} = $${parameter}`);
-      variables[parameter] = expected;
-    }
-  }
+  appendSourcePromotionMetadataGuards(predicates, variables, metadata);
   const results = await db.query<Record<string, unknown>>(
     `SELECT * FROM type::record('semiote', $id)
      WHERE ${predicates.join(" AND ")};`,
@@ -1531,7 +1920,7 @@ export async function promoteSemioteToNoema(
   }
 
   const metadata = await readNoemaPromotionMetadata(db, id);
-  if (!metadata || metadata.processing_lineage !== undefined) {
+  if (!metadata || !isWellFormedPromotionMetadata(metadata)) {
     return { promoted: false, id: null, embeddingWritten: false };
   }
   const row = await readGuardedNoemaPromotionRow(db, id, metadata);
@@ -1539,27 +1928,28 @@ export async function promoteSemioteToNoema(
     return { promoted: false, id: null, embeddingWritten: false };
   }
 
-  const payload: any = row?.payload ?? {};
-  const canonicalText = redactFactText(String(payload.l2 ?? payload.data ?? "")).trim();
-  const userId = String(row?.user_id ?? payload.userId ?? "").trim();
+  const payload: any = row.payload ?? {};
+  const rawSourceText = String(payload.l2 ?? payload.data ?? "");
+  const canonicalText = redactFactText(rawSourceText).trim();
+  const userId = promotionOwnerUserId(metadata) ?? "";
   if (!canonicalText || !userId) {
     return { promoted: false, id: null, embeddingWritten: false };
   }
 
   const usefulness = {
-    usefulnessScore: Number(row?.usefulness_score ?? payload.usefulnessScore ?? payload.confidence ?? 0.5),
-    successfulUseCount: Number(row?.successful_use_count ?? payload.successfulUseCount ?? 0),
-    crossSessionUseCount: Number(row?.cross_session_use_count ?? payload.crossSessionUseCount ?? 0),
-    contradictionCount: Number(row?.contradiction_count ?? payload.contradictionCount ?? 0),
+    usefulnessScore: Number(row.usefulness_score ?? payload.usefulnessScore ?? payload.confidence ?? 0.5),
+    successfulUseCount: Number(row.successful_use_count ?? payload.successfulUseCount ?? 0),
+    crossSessionUseCount: Number(row.cross_session_use_count ?? payload.crossSessionUseCount ?? 0),
+    contradictionCount: Number(row.contradiction_count ?? payload.contradictionCount ?? 0),
   };
   if (!shouldPromoteToNoema(usefulness)) {
     return { promoted: false, id: null, embeddingWritten: false };
   }
 
-  const scope = typeof row?.scope === "string" ? row.scope : payload.scope;
-  const rawPath = typeof row?.path === "string" ? row.path : payload.path;
+  const scope = typeof row.scope === "string" ? row.scope : payload.scope;
+  const rawPath = typeof row.path === "string" ? row.path : payload.path;
   const path = typeof rawPath === "string" ? redactFactText(rawPath) : rawPath;
-  const memoryRole = typeof row?.memory_role === "string" ? row.memory_role : payload.memoryRole;
+  const memoryRole = typeof row.memory_role === "string" ? row.memory_role : payload.memoryRole;
   const factKey = typeof payload.factKey === "string" ? redactFactText(payload.factKey) : undefined;
   const claimContract = deriveNoemaClaimContract({
     userId,
@@ -1574,15 +1964,15 @@ export async function promoteSemioteToNoema(
     claimPredicate: typeof payload.claimPredicate === "string" ? redactFactText(payload.claimPredicate) : undefined,
     status: payload.noemaStatus,
   });
-  const normalizedId = extractId(row?.id ?? "").replace(/^semiote:/, "");
-  const supportSemioteIds = Array.from(
-    new Set(
-      [normalizedId, ...(Array.isArray(payload.noemaSupportSemioteIds) ? payload.noemaSupportSemioteIds.map(String) : [])]
-        .filter(Boolean)
-        .map((value) => value.replace(/^semiote:/, "")),
-    ),
+  const normalizedId = extractId(row.id ?? "").replace(/^semiote:/, "");
+  const sourceSupportSemioteIds = Array.from(
+    new Set([normalizedId, ...(
+      normalizePromotionSupportIds(metadata.payload_noema_support_semiote_ids) ?? []
+    )]),
   );
-  const now = new Date().toISOString();
+  if (sourceSupportSemioteIds.length === 0) {
+    return { promoted: false, id: null, embeddingWritten: false };
+  }
   const noemaId = buildNoemaId({
     userId,
     scope,
@@ -1592,23 +1982,59 @@ export async function promoteSemioteToNoema(
     claimKey: claimContract.claimKey,
     canonicalText,
   });
-  const existingStatus = await getExistingNoemaStatus(db, noemaId);
+
+  // The target read is metadata-only and occurs before any provider call. A
+  // present lineage or cross-user target is protected/invalid and cannot be
+  // treated as a legacy reinforcement candidate.
+  const existingTarget = await readNoemaPromotionTargetMetadata(db, noemaId);
+  if (existingTarget) {
+    if (existingTarget.processing_lineage !== undefined) {
+      return { promoted: false, id: null, embeddingWritten: false };
+    }
+    if (!isWellFormedNoemaPromotionTarget(existingTarget)) {
+      return { promoted: false, id: null, embeddingWritten: false };
+    }
+    if (!samePromotionMetadataValue(existingTarget.user_id, userId)) {
+      return { promoted: false, id: null, embeddingWritten: false };
+    }
+  }
+  const existingStatus = existingTarget?.status === undefined
+    ? undefined
+    : normalizeNoemaClaimStatus(existingTarget.status);
   const noemaStatus = existingStatus && !isValidNoemaStatusTransition(existingStatus, claimContract.status)
     ? existingStatus
     : claimContract.status;
+  const targetSupportSemioteIds = existingTarget && Array.isArray(existingTarget.support_semiote_ids)
+    ? normalizePromotionSupportIds(existingTarget.support_semiote_ids)
+    : existingTarget ? normalizePromotionSupportIds(existingTarget.support_semiote_ids) : [];
+  if (targetSupportSemioteIds === undefined) {
+    return { promoted: false, id: null, embeddingWritten: false };
+  }
+  const supportSemioteIds = Array.from(new Set([...targetSupportSemioteIds, ...sourceSupportSemioteIds]));
+  const supportSnapshots = await readNoemaPromotionSupportMetadata(
+    db,
+    supportSemioteIds,
+    userId,
+    normalizedId,
+    metadata,
+  );
+  if (!supportSnapshots) {
+    return { promoted: false, id: null, embeddingWritten: false };
+  }
+  const sourceMarkers = sourcePromotionMarkersFromRow(row);
   const semiosis = buildSemiosisSnapshot({
-    confidence: Number(row?.confidence ?? payload.confidence ?? 0.5),
-    usefulnessAlpha: Number(row?.usefulness_alpha ?? payload.usefulnessAlpha ?? 0),
-    usefulnessBeta: Number(row?.usefulness_beta ?? payload.usefulnessBeta ?? 0),
+    confidence: Number(row.confidence ?? payload.confidence ?? 0.5),
+    usefulnessAlpha: Number(row.usefulness_alpha ?? payload.usefulnessAlpha ?? 0),
+    usefulnessBeta: Number(row.usefulness_beta ?? payload.usefulnessBeta ?? 0),
     usefulnessScore: usefulness.usefulnessScore,
     contradictionCount: usefulness.contradictionCount,
-    retrievedCount: Number(row?.retrieved_count ?? payload.retrievedCount ?? 0),
-    lastEvaluatedAt: typeof row?.last_evaluated_at === "string" ? row.last_evaluated_at : payload.lastEvaluatedAt,
+    retrievedCount: Number(row.retrieved_count ?? payload.retrievedCount ?? 0),
+    lastEvaluatedAt: typeof row.last_evaluated_at === "string" ? row.last_evaluated_at : payload.lastEvaluatedAt,
   });
 
   // A source-derived vector cannot be reused when the canonical text changes.
-  let computedEmbedding: number[] = canonicalText === String(payload.l2 ?? payload.data ?? "").trim()
-    && Array.isArray(row?.embedding) ? row.embedding : [];
+  let computedEmbedding: number[] = canonicalText === rawSourceText.trim()
+    && Array.isArray(row.embedding) ? row.embedding : [];
   let embeddingWritten = false;
   if (embedText) {
     try {
@@ -1617,105 +2043,253 @@ export async function promoteSemioteToNoema(
         computedEmbedding = embedResult;
         embeddingWritten = true;
       } else {
-        // Provider returned an empty vector; use only a safe existing vector.
         console.warn("[promoteSemioteToNoema] embedText returned empty vector; using fallback embedding");
       }
     } catch {
-      // Report count-only degradation; caller sees embeddingWritten=false.
       console.warn("[promoteSemioteToNoema] embedText failed; using fallback embedding");
     }
   }
 
-  await db.query(
-    `UPSERT type::record('noema', $id) SET
-       canonical = $canonical,
-       canonical_text = $canonicalText,
-       canonical_norm = $canonicalNorm,
-       scope = $scope,
-       path = IF $path != NONE AND $path != NULL THEN $path ELSE NONE END,
-       memory_role = $memoryRole,
-       fact_key = $factKey,
-       claim_key = $claimKey,
-       revision_hash = $revisionHash,
-       status = $status,
-       stable_claim = $stableClaim,
-       identity_version = $identityVersion,
-       fact_key_seed = $factKeySeed,
-       embedding = $embedding ?? NONE,
-       confidence = $confidence,
-       stability = $stability,
-       authority = $authority,
-       evidence_count = IF evidence_count != NONE AND evidence_count > $evidenceCount THEN evidence_count ELSE $evidenceCount END,
-       confirmation_count = IF confirmation_count != NONE AND confirmation_count > $confirmationCount THEN confirmation_count ELSE $confirmationCount END,
-       contradiction_count = $contradictionCount,
-       support_semiote_ids = array::union(support_semiote_ids ?? [], $supportSemioteIds),
-       user_id = $userId,
-       active = true,
-       first_derived_at = IF first_derived_at != NONE THEN first_derived_at ELSE <datetime>$now END,
-       last_reinforced_at = <datetime>$now,
-       created_at = IF created_at != NONE THEN created_at ELSE <datetime>$now END,
-       updated_at = <datetime>$now;`,
-    {
-      id: noemaId,
-      canonical: {
-        text: canonicalText,
-        l0: typeof payload.l0 === "string" ? redactFactText(payload.l0) : null,
-        l1: typeof payload.l1 === "string" ? redactFactText(payload.l1) : null,
-        factKey: factKey ?? null,
-        claimKey: claimContract.claimKey,
-        revisionHash: claimContract.revisionHash,
-        status: noemaStatus,
-        stableClaim: claimContract.stableClaim,
-      },
-      canonicalText,
-      canonicalNorm: normalizeText(canonicalText),
-      scope: scope ?? null,
-      // imaf.11 #1: pathless noema MUST land as NONE (field absent), never SQL
-      // NULL — SurrealDB treats them as distinct, and the recall predicate
-      // matches `path = NONE` only, so NULL-stored pathless noema was
-      // invisible under any requestedPath recall. The SQL IF above normalizes;
-      // existing NULL rows were backfilled live (UPDATE ... SET path = NONE).
-      path: path ?? null,
-      memoryRole: memoryRole ?? null,
+  const noemaRecordId = `noema:${noemaId}`;
+  // One SDK DateTime is bound once and written to both the target and source.
+  // Readback must match this exact nanosecond value; independent time::now()
+  // calls cannot prove that one transaction changed both rows.
+  const now = DateTime.now();
+  const variables: Record<string, unknown> = {
+    id: noemaId,
+    noemaId,
+    sourceId: normalizedId,
+    noemaRecordId,
+    canonical: {
+      text: canonicalText,
+      l0: typeof payload.l0 === "string" ? redactFactText(payload.l0) : null,
+      l1: typeof payload.l1 === "string" ? redactFactText(payload.l1) : null,
       factKey: factKey ?? null,
       claimKey: claimContract.claimKey,
       revisionHash: claimContract.revisionHash,
       status: noemaStatus,
       stableClaim: claimContract.stableClaim,
-      identityVersion: claimContract.identityVersion,
-      factKeySeed: claimContract.factKeySeed ?? null,
-      embedding: embeddingForStore(computedEmbedding),
-      confidence: semiosis.utility,
-      stability: semiosis.stability,
-      authority: semiosis.authority,
-      evidenceCount: supportSemioteIds.length,
-      confirmationCount: usefulness.successfulUseCount,
-      contradictionCount: usefulness.contradictionCount,
-      supportSemioteIds,
-      userId,
-      now,
     },
-  );
+    canonicalText,
+    canonicalNorm: normalizeText(canonicalText),
+    scope: scope ?? null,
+    path: path ?? null,
+    memoryRole: memoryRole ?? null,
+    factKey: factKey ?? null,
+    claimKey: claimContract.claimKey,
+    revisionHash: claimContract.revisionHash,
+    status: noemaStatus,
+    stableClaim: claimContract.stableClaim,
+    identityVersion: claimContract.identityVersion,
+    factKeySeed: claimContract.factKeySeed ?? null,
+    embedding: embeddingForStore(computedEmbedding),
+    confidence: semiosis.utility,
+    stability: semiosis.stability,
+    authority: semiosis.authority,
+    evidenceCount: supportSemioteIds.length,
+    confirmationCount: usefulness.successfulUseCount,
+    contradictionCount: usefulness.contradictionCount,
+    supportSemioteIds,
+    userId,
+    now,
+    expectedSourceRawText: rawSourceText,
+  };
+  const statements: string[] = [];
 
-  await db.query(
-    `UPDATE type::record('semiote', $id) SET
-      payload.promotedToNoemaId = $noemaRecordId,
-      payload.noemaSupportSemioteIds = $supportSemioteIds,
-      payload.noemaClaimKey = $claimKey,
-      payload.noemaRevisionHash = $revisionHash,
-      payload.noemaStatus = $status,
-      payload.noemaStableClaim = $stableClaim,
-      updated_at = time::now();`,
-    {
-      id: normalizedId,
-      noemaRecordId: `noema:${noemaId}`,
-      supportSemioteIds,
-      claimKey: claimContract.claimKey,
-      revisionHash: claimContract.revisionHash,
-      status: noemaStatus,
-      stableClaim: claimContract.stableClaim,
-    },
-  );
+  if (existingTarget) {
+    const targetPredicates: string[] = [];
+    appendNoemaTargetGuards(targetPredicates, variables, existingTarget);
+    statements.push(`
+      LET $noemaRows = (
+        UPDATE type::record('noema', $noemaId) SET
+          canonical = $canonical,
+          canonical_text = $canonicalText,
+          canonical_norm = $canonicalNorm,
+          scope = IF $scope != NONE AND $scope != NULL THEN $scope ELSE NONE END,
+          path = IF $path != NONE AND $path != NULL THEN $path ELSE NONE END,
+          memory_role = $memoryRole,
+          fact_key = $factKey,
+          claim_key = $claimKey,
+          revision_hash = $revisionHash,
+          status = $status,
+          stable_claim = $stableClaim,
+          identity_version = $identityVersion,
+          fact_key_seed = $factKeySeed,
+          embedding = $embedding ?? NONE,
+          confidence = $confidence,
+          stability = $stability,
+          authority = $authority,
+          evidence_count = IF evidence_count != NONE AND evidence_count > $evidenceCount THEN evidence_count ELSE $evidenceCount END,
+          confirmation_count = IF confirmation_count != NONE AND confirmation_count > $confirmationCount THEN confirmation_count ELSE $confirmationCount END,
+          contradiction_count = $contradictionCount,
+          support_semiote_ids = array::union(support_semiote_ids ?? [], $supportSemioteIds),
+          user_id = $userId,
+          last_reinforced_at = <datetime>$now,
+          updated_at = <datetime>$now
+        WHERE ${targetPredicates.join(" AND ")}
+        RETURN VALUE [id]
+      );
+      IF array::len($noemaRows) != 1 {
+        THROW "noema legacy reinforcement compare-and-set failed";
+      };
+    `);
+  } else {
+    statements.push(`
+      LET $noemaRows = (
+        CREATE ONLY type::record('noema', $noemaId) CONTENT {
+          canonical: $canonical,
+          canonical_text: $canonicalText,
+          canonical_norm: $canonicalNorm,
+          scope: IF $scope != NONE AND $scope != NULL THEN $scope ELSE NONE END,
+          path: IF $path != NONE AND $path != NULL THEN $path ELSE NONE END,
+          memory_role: $memoryRole,
+          fact_key: $factKey,
+          claim_key: $claimKey,
+          revision_hash: $revisionHash,
+          status: $status,
+          stable_claim: $stableClaim,
+          identity_version: $identityVersion,
+          fact_key_seed: $factKeySeed,
+          embedding: $embedding ?? NONE,
+          confidence: $confidence,
+          stability: $stability,
+          authority: $authority,
+          evidence_count: $evidenceCount,
+          confirmation_count: $confirmationCount,
+          contradiction_count: $contradictionCount,
+          support_semiote_ids: $supportSemioteIds,
+          user_id: $userId,
+          active: true,
+          first_derived_at: <datetime>$now,
+          last_reinforced_at: <datetime>$now,
+          created_at: <datetime>$now,
+          updated_at: <datetime>$now
+        } RETURN VALUE [id]
+      );
+      IF array::len($noemaRows) != 1 {
+        THROW "noema create affected unexpected rows";
+      };
+    `);
+  }
 
-  return { promoted: true, id: `noema:${noemaId}`, embeddingWritten };
+  appendSupportPromotionCasStatements(statements, variables, supportSnapshots);
+
+  const sourceTextField = payload.l2 !== undefined && payload.l2 !== null ? "payload.l2" : "payload.data";
+  const sourcePredicates = ["processing_lineage = NONE", `${sourceTextField} = $expectedSourceRawText`];
+  appendSourcePromotionMetadataGuards(sourcePredicates, variables, metadata);
+  appendSourcePromotionMarkerGuards(sourcePredicates, variables, sourceMarkers);
+  appendSourcePromotionSnapshotGuards(sourcePredicates, variables, row);
+  statements.push(`
+    LET $sourceRows = (
+      UPDATE type::record('semiote', $sourceId) SET
+        payload.promotedToNoemaId = $noemaRecordId,
+        payload.noemaSupportSemioteIds = $supportSemioteIds,
+        payload.noemaClaimKey = $claimKey,
+        payload.noemaRevisionHash = $revisionHash,
+        payload.noemaStatus = $status,
+        payload.noemaStableClaim = $stableClaim,
+        updated_at = <datetime>$now
+      WHERE ${sourcePredicates.join(" AND ")}
+      RETURN VALUE [id]
+    );
+    IF array::len($sourceRows) != 1 {
+      THROW "semiote promotion marker compare-and-set failed";
+    };
+  `);
+
+  try {
+    await db.queryTransaction(statements.join("\n"), variables);
+  } catch (error) {
+    let outcome: NoemaPromotionReadbackOutcome = "inconsistent_or_unresolved";
+    try {
+      const [targetAfter, sourceAfter, supportAfter] = await Promise.all([
+        readNoemaPromotionTargetMetadata(db, noemaId),
+        readNoemaPromotionSourceReadback(db, normalizedId),
+        Promise.all(supportSnapshots.map((snapshot) =>
+          readNoemaPromotionMetadata(db, normalizePromotionSourceId(snapshot.id) ?? ""))),
+      ]);
+      const supportReadbackStable = supportAfter.length === supportSnapshots.length
+        && supportAfter.every((snapshot, index) => snapshot !== undefined
+          && promotionMetadataFieldsMatch(
+            supportSnapshots[index],
+            snapshot,
+            normalizePromotionSourceId(snapshot.id) !== normalizedId,
+            normalizePromotionSourceId(snapshot.id) === normalizedId,
+          ));
+      const targetCommitted = Boolean(
+        targetAfter
+        && normalizePromotionSourceId(targetAfter.id) === normalizePromotionSourceId(noemaRecordId)
+        && targetAfter.processing_lineage === undefined
+        && samePromotionMetadataValue(targetAfter.user_id, userId)
+        && samePromotionMetadataValue(targetAfter.claim_key, claimContract.claimKey)
+        && samePromotionMetadataValue(targetAfter.revision_hash, claimContract.revisionHash)
+        && sameSupportIdSet(targetAfter.support_semiote_ids, supportSemioteIds)
+        && samePromotionMetadataValue(targetAfter.active, existingTarget ? existingTarget.active : true)
+        && samePromotionMetadataValue(targetAfter.status, noemaStatus),
+      );
+      const targetUpdatedAtCommitted = Boolean(
+        targetAfter
+        && promotionUpdatedAtMatchesExpected(
+          existingTarget?.updated_at,
+          targetAfter.updated_at,
+          now,
+          Boolean(existingTarget),
+        ),
+      );
+      const sourceCommitted = Boolean(
+        sourceAfter
+        && normalizePromotionSourceId(sourceAfter.id) === normalizedId
+        && samePromotionMetadataValue(sourceAfter.user_id, userId)
+        && sourceAfter.processing_lineage === undefined
+        && sourceMarkersMatch(
+          sourceAfter.markers,
+          noemaRecordId,
+          supportSemioteIds,
+          claimContract.claimKey,
+          claimContract.revisionHash,
+          noemaStatus,
+          claimContract.stableClaim,
+        ),
+      );
+      const sourceUpdatedAtCommitted = Boolean(
+        sourceAfter
+        && promotionUpdatedAtMatchesExpected(metadata.updated_at, sourceAfter.updated_at, now, true),
+      );
+      const targetRolledBack = existingTarget
+        ? Boolean(
+          targetAfter
+          && normalizePromotionSourceId(targetAfter.id) === normalizePromotionSourceId(noemaRecordId)
+          && samePromotionMetadataValue(targetAfter.user_id, existingTarget.user_id)
+          && samePromotionMetadataValue(targetAfter.processing_lineage, existingTarget.processing_lineage)
+          && samePromotionMetadataValue(targetAfter.status, existingTarget.status)
+          && samePromotionMetadataValue(targetAfter.claim_key, existingTarget.claim_key)
+          && samePromotionMetadataValue(targetAfter.revision_hash, existingTarget.revision_hash)
+          && samePromotionMetadataValue(targetAfter.support_semiote_ids, existingTarget.support_semiote_ids)
+          && samePromotionMetadataValue(targetAfter.active, existingTarget.active)
+          && samePromotionMetadataValue(targetAfter.updated_at, existingTarget.updated_at),
+        )
+        : targetAfter === undefined;
+      const sourceRolledBack = Boolean(
+        sourceAfter
+        && normalizePromotionSourceId(sourceAfter.id) === normalizedId
+        && samePromotionMetadataValue(sourceAfter.user_id, userId)
+        && sourceAfter.processing_lineage === undefined
+        && samePromotionMetadataValue(sourceAfter.updated_at, metadata.updated_at)
+        && sourceMarkersEqual(sourceAfter.markers, sourceMarkers),
+      );
+      if (targetCommitted && targetUpdatedAtCommitted && sourceCommitted && sourceUpdatedAtCommitted && supportReadbackStable) outcome = "committed";
+      else if (targetRolledBack && sourceRolledBack && supportReadbackStable) outcome = "rolled_back";
+    } catch {
+      outcome = "inconsistent_or_unresolved";
+    }
+    if (error instanceof Error) {
+      Object.assign(error, {
+        noemaPromotionOutcome: outcome,
+        noemaPromotionReadback: { targetId: noemaId, sourceId: normalizedId },
+      });
+    }
+    throw error;
+  }
+
+  return { promoted: true, id: noemaRecordId, embeddingWritten };
 }
