@@ -1,3 +1,4 @@
+import { types as nodeTypes } from "node:util";
 import type {
   Bm25CorpusStats,
   MemoryLifecycleState,
@@ -298,6 +299,7 @@ function composeGenericCreateMemory(
   tableName: MemoryRecordTable,
   supersedeProvenance: SupersedeProvenance,
   paramPrefix = "",
+  nowOverride?: string,
 ): { statement: string; vars: Record<string, unknown> } {
   return composeMemoryRecord(
     "CREATE ONLY",
@@ -313,6 +315,7 @@ function composeGenericCreateMemory(
     paramPrefix,
     undefined,
     supersedeProvenance,
+    nowOverride,
   );
 }
 
@@ -1468,6 +1471,928 @@ export async function updateMemoryText(
   }
 }
 
+type GenericSupersedeReplacement = Readonly<{
+  id: string;
+  text: string;
+  userId: string;
+  embedding: readonly number[];
+  metadata?: Readonly<Record<string, unknown>>;
+  scope: MemoryScope;
+  sessionId?: string;
+  writeSource: WriteSource;
+}>;
+
+/**
+ * Non-content eligibility facts read before any complete-row witness.  The
+ * optional values are deliberately reduced to plain strings/booleans by the
+ * server projection; stored RecordId/Uuid/DateTime values never cross this
+ * boundary as SDK objects.
+ */
+type GenericSupersedeMetadata = Readonly<{
+  id: string;
+  user_id: string;
+  payload_user_id: string;
+  lineage_absent: boolean;
+  active?: boolean;
+  supersedes?: string;
+  superseded_by?: string;
+  lineage_root_id?: string;
+  inactive_at?: string;
+  inactive_reason?: string;
+  supersede_provenance?: string;
+  scope?: string;
+  session_id?: string;
+  valid_at?: string;
+  invalid_at?: string;
+  created_at?: string;
+  updated_at: string;
+  payload_active?: boolean;
+  payload_inactive_at?: string;
+  payload_inactive_reason?: string;
+  payload_superseded_by_id?: string;
+  payload_supersedes_id?: string;
+  payload_lineage_root_id?: string;
+  payload_supersede_provenance?: string;
+  payload_updated_at?: string;
+  payload_write_source?: string;
+  payload_arbitration_outcome?: string;
+  payload_is_stale?: boolean;
+  payload_stale_since?: string;
+  payload_contradicted_by?: string;
+  payload_scope?: string;
+  payload_session_id?: string;
+  payload_valid_at?: string;
+  payload_invalid_at?: string;
+  payload_created_at?: string;
+}>;
+
+/** Plain server-owned H1 witness; rich stored SDK values never cross this boundary. */
+type GenericSupersedeRowWitness = GenericSupersedeMetadata & Readonly<{
+  row_digest: string;
+}>;
+
+type GenericSupersedePreparedState = Readonly<{
+  db: unknown;
+  tableName: MemoryRecordTable;
+  userId: string;
+  previousId: string;
+  replacement: GenericSupersedeReplacement;
+  replacementExists: boolean;
+  previousMetadata?: GenericSupersedeRowWitness;
+  replacementMetadata?: GenericSupersedeRowWitness;
+  supersedeProvenance: SupersedeProvenance;
+  inactiveReason: string;
+  previousStaleFlags?: Readonly<{ staleSince: string; contradictedBy: string }>;
+  lineageRootId: string;
+  /** Compatibility-only clock for non-production controlled mocks. */
+  now?: string;
+}>;
+
+/** Opaque H1 preparation token. Runtime ownership is checked through the private WeakMap. */
+export type PreparedGenericSupersede = Readonly<{
+  readonly kind: "prepared-generic-supersede";
+}>;
+
+const preparedGenericSupersedes = new WeakMap<object, GenericSupersedePreparedState>();
+
+function rejectProxyValue(value: object, path: string): void {
+  if (nodeTypes.isProxy(value)) {
+    throw new Error(`supersedeMemory: Proxy values are unsupported at ${path}`);
+  }
+}
+
+function cloneAndFreezePreparedValue<T>(
+  value: T,
+  seen = new WeakMap<object, unknown>(),
+  visiting = new WeakSet<object>(),
+  path = "$",
+): T {
+  if (value === null || value === undefined) return value;
+  const valueType = typeof value;
+  if (valueType === "function" || valueType === "symbol") {
+    throw new Error(`supersedeMemory: executable or symbol value at ${path}`);
+  }
+  if (valueType !== "object") {
+    if (valueType === "number" && !Number.isFinite(value as number)) {
+      throw new Error(`supersedeMemory: non-finite number at ${path}`);
+    }
+    return value;
+  }
+  rejectProxyValue(value, path);
+  if (visiting.has(value)) throw new Error(`supersedeMemory: circular prepared value at ${path}`);
+  const existing = seen.get(value);
+  if (existing) return existing as T;
+
+  let prototype: object | null;
+  try {
+    prototype = Object.getPrototypeOf(value);
+  } catch (error) {
+    throw new Error(`supersedeMemory: unsupported prepared value at ${path}`, { cause: error });
+  }
+  if (prototype !== null) rejectProxyValue(prototype, `${path} prototype`);
+
+  // Native Date is the sole non-plain input object admitted by this source
+  // boundary. Check the immediate intrinsic prototype only: `instanceof Date`
+  // walks caller-controlled prototypes and can invoke a Proxy trap. Calling
+  // the intrinsic reads the internal slot without invoking caller methods or
+  // serializers.
+  if (prototype === Date.prototype) {
+    let timestamp: number;
+    try {
+      timestamp = Date.prototype.getTime.call(value);
+    } catch (error) {
+      throw new Error(`supersedeMemory: unsupported Date value at ${path}`, { cause: error });
+    }
+    const dateKeys = Reflect.ownKeys(value);
+    if (dateKeys.length > 0) {
+      throw new Error(`supersedeMemory: decorated Date is unsupported at ${path}`);
+    }
+    const copied = Object.freeze(new Date(timestamp));
+    seen.set(value, copied);
+    return copied as T;
+  }
+
+  if (Array.isArray(value)) {
+    if (prototype !== Array.prototype) {
+      throw new Error(`supersedeMemory: unsupported prepared array prototype at ${path}`);
+    }
+    const keys = Reflect.ownKeys(value);
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+    if (!lengthDescriptor || !("value" in lengthDescriptor)
+      || typeof lengthDescriptor.value !== "number"
+      || !Number.isSafeInteger(lengthDescriptor.value)
+      || lengthDescriptor.value < 0) {
+      throw new Error(`supersedeMemory: array length is not a data property at ${path}`);
+    }
+    const copy: unknown[] = new Array(lengthDescriptor.value);
+    seen.set(value, copy);
+    visiting.add(value);
+    try {
+      for (const key of keys) {
+        if (key === "length") continue;
+        if (typeof key !== "string" || !/^0$|^[1-9][0-9]*$/.test(key)) {
+          const unsupportedDescriptor = Object.getOwnPropertyDescriptor(value, key);
+          if (unsupportedDescriptor && !("value" in unsupportedDescriptor)) {
+            throw new Error(`supersedeMemory: accessor properties are unsupported at ${path}[${String(key)}]`);
+          }
+          throw new Error(`supersedeMemory: unsupported array property at ${path}[${String(key)}]`);
+        }
+        const index = Number(key);
+        if (!Number.isSafeInteger(index) || index < 0 || index >= lengthDescriptor.value) {
+          throw new Error(`supersedeMemory: unsupported array index at ${path}[${key}]`);
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (!descriptor || !("value" in descriptor)) {
+          throw new Error(`supersedeMemory: accessor properties are unsupported at ${path}[${String(key)}]`);
+        }
+        Object.defineProperty(copy, key, {
+          ...descriptor,
+          value: cloneAndFreezePreparedValue(descriptor.value, seen, visiting, `${path}[${String(key)}]`),
+        });
+      }
+      Object.defineProperty(copy, "length", { ...lengthDescriptor, value: lengthDescriptor.value });
+      return Object.freeze(copy) as T;
+    } finally {
+      visiting.delete(value);
+    }
+  }
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new Error(`supersedeMemory: unsupported prepared object prototype at ${path}`);
+  }
+  const keys = Reflect.ownKeys(value);
+  const copy = Object.create(prototype) as Record<PropertyKey, unknown>;
+  seen.set(value, copy);
+  visiting.add(value);
+  try {
+    for (const key of keys) {
+      if (typeof key === "symbol") {
+        throw new Error(`supersedeMemory: symbol property is unsupported at ${path}`);
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !("value" in descriptor)) {
+        throw new Error(`supersedeMemory: accessor properties are unsupported at ${path}.${String(key)}`);
+      }
+      Object.defineProperty(copy, key, {
+        ...descriptor,
+        value: cloneAndFreezePreparedValue(descriptor.value, seen, visiting, `${path}.${String(key)}`),
+      });
+    }
+    return Object.freeze(copy) as T;
+  } finally {
+    visiting.delete(value);
+  }
+}
+
+function genericSupersedeMetadataSelect(tableName: MemoryRecordTable): string {
+  // This first query is deliberately non-content. It must reject lineage,
+  // user, lifecycle, scope, provenance, and bookkeeping mismatches before the
+  // complete-row witness examines the stored body, payload, embedding, or any
+  // other rich value. String casts keep stored SDK values server-owned while
+  // boolean branch facts remain primitive.
+  return `SELECT <string>id AS id,
+                  <string>user_id AS user_id,
+                  <string>payload.userId AS payload_user_id,
+                  processing_lineage = NONE AS lineage_absent,
+                  ${GENERIC_SUPERSEDE_FACTS.map((fact) => fact.kind === "boolean"
+                    ? `${fact.field} AS ${fact.key}`
+                    : `<string>${fact.field} AS ${fact.key}`).join(",\n                  ")}
+           FROM type::record('${tableName}', $recordId);`;
+}
+
+type GenericSupersedeFact = Readonly<{
+  field: string;
+  key: string;
+  suffix: string;
+  kind: "boolean" | "string";
+}>;
+
+// These are the existing generic branch facts that the sourceb protected
+// writer already treats as CAS metadata. H1 repeats them in its own plain
+// projection; it does not broaden the protected writer's semantics.
+const GENERIC_SUPERSEDE_FACTS: readonly GenericSupersedeFact[] = Object.freeze([
+  { field: "active", key: "active", suffix: "Active", kind: "boolean" },
+  { field: "supersedes", key: "supersedes", suffix: "Supersedes", kind: "string" },
+  { field: "superseded_by", key: "superseded_by", suffix: "SupersededBy", kind: "string" },
+  { field: "lineage_root_id", key: "lineage_root_id", suffix: "LineageRootId", kind: "string" },
+  { field: "inactive_at", key: "inactive_at", suffix: "InactiveAt", kind: "string" },
+  { field: "inactive_reason", key: "inactive_reason", suffix: "InactiveReason", kind: "string" },
+  { field: "supersede_provenance", key: "supersede_provenance", suffix: "SupersedeProvenance", kind: "string" },
+  { field: "scope", key: "scope", suffix: "Scope", kind: "string" },
+  { field: "session_id", key: "session_id", suffix: "SessionId", kind: "string" },
+  { field: "valid_at", key: "valid_at", suffix: "ValidAt", kind: "string" },
+  { field: "invalid_at", key: "invalid_at", suffix: "InvalidAt", kind: "string" },
+  { field: "created_at", key: "created_at", suffix: "CreatedAt", kind: "string" },
+  { field: "updated_at", key: "updated_at", suffix: "UpdatedAt", kind: "string" },
+  { field: "payload.active", key: "payload_active", suffix: "PayloadActive", kind: "boolean" },
+  { field: "payload.inactiveAt", key: "payload_inactive_at", suffix: "PayloadInactiveAt", kind: "string" },
+  { field: "payload.inactiveReason", key: "payload_inactive_reason", suffix: "PayloadInactiveReason", kind: "string" },
+  { field: "payload.supersededById", key: "payload_superseded_by_id", suffix: "PayloadSupersededById", kind: "string" },
+  { field: "payload.supersedesId", key: "payload_supersedes_id", suffix: "PayloadSupersedesId", kind: "string" },
+  { field: "payload.lineageRootId", key: "payload_lineage_root_id", suffix: "PayloadLineageRootId", kind: "string" },
+  { field: "payload.supersede_provenance", key: "payload_supersede_provenance", suffix: "PayloadSupersedeProvenance", kind: "string" },
+  { field: "payload.updatedAt", key: "payload_updated_at", suffix: "PayloadUpdatedAt", kind: "string" },
+  { field: "payload.writeSource", key: "payload_write_source", suffix: "PayloadWriteSource", kind: "string" },
+  { field: "payload.arbitrationOutcome", key: "payload_arbitration_outcome", suffix: "PayloadArbitrationOutcome", kind: "string" },
+  { field: "payload.isStale", key: "payload_is_stale", suffix: "PayloadIsStale", kind: "boolean" },
+  { field: "payload.staleSince", key: "payload_stale_since", suffix: "PayloadStaleSince", kind: "string" },
+  { field: "payload.contradictedBy", key: "payload_contradicted_by", suffix: "PayloadContradictedBy", kind: "string" },
+  { field: "payload.scope", key: "payload_scope", suffix: "PayloadScope", kind: "string" },
+  { field: "payload.sessionId", key: "payload_session_id", suffix: "PayloadSessionId", kind: "string" },
+  { field: "payload.validAt", key: "payload_valid_at", suffix: "PayloadValidAt", kind: "string" },
+  { field: "payload.invalidAt", key: "payload_invalid_at", suffix: "PayloadInvalidAt", kind: "string" },
+  { field: "payload.createdAt", key: "payload_created_at", suffix: "PayloadCreatedAt", kind: "string" },
+]);
+
+function genericSupersedeBranchWhere(
+  prefix: string,
+  tableName: MemoryRecordTable,
+  recordIdVariable: string,
+  row: GenericSupersedeMetadata,
+): string {
+  const predicates = [
+    `id = type::record('${tableName}', $${recordIdVariable})`,
+    `user_id = $${prefix}UserId`,
+    `<string>payload.userId = $${prefix}PayloadUserId`,
+    "processing_lineage = NONE",
+  ];
+  for (const fact of GENERIC_SUPERSEDE_FACTS) {
+    const value = (row as Record<string, unknown>)[fact.key];
+    predicates.push(value === undefined
+      ? `${fact.field} = NONE`
+      : `${fact.kind === "string" ? `<string>${fact.field}` : fact.field} = $${prefix}${fact.suffix}`);
+  }
+  return predicates.join("\n        AND ");
+}
+
+function genericSupersedeDigestSelect(
+  tableName: MemoryRecordTable,
+  row: GenericSupersedeMetadata,
+): string {
+  // The digest subquery and its outer selector carry the exact same branch
+  // predicates. This prevents a body witness from being computed for a row
+  // that changed user, lineage, lifecycle, scope, provenance, or version
+  // between the metadata and witness reads.
+  const branch = (prefix: string): string => genericSupersedeBranchWhere(
+    prefix,
+    tableName,
+    "recordId",
+    row,
+  );
+  return `SELECT crypto::sha256(<string>(SELECT * FROM type::record('${tableName}', $recordId)
+                 WHERE ${branch("witness")})[0]) AS row_digest
+           FROM type::record('${tableName}', $recordId)
+           WHERE ${branch("witness")};`;
+}
+
+function validateGenericSupersedeMetadata(
+  row: Record<string, unknown>,
+): GenericSupersedeMetadata {
+  const id = row.id;
+  const userId = row.user_id;
+  const payloadUserId = row.payload_user_id;
+  const lineageAbsent = row.lineage_absent;
+  const updatedAt = row.updated_at;
+  if (typeof id !== "string"
+    || typeof userId !== "string"
+    || typeof payloadUserId !== "string"
+    || typeof lineageAbsent !== "boolean"
+    || typeof updatedAt !== "string") {
+    throw new Error("supersedeMemory: server metadata is not a complete plain projection");
+  }
+  const values: Record<string, unknown> = { id, user_id: userId, payload_user_id: payloadUserId, lineage_absent: lineageAbsent };
+  for (const fact of GENERIC_SUPERSEDE_FACTS) {
+    const value = row[fact.key];
+    if (value === undefined || value === null) continue;
+    if ((fact.kind === "boolean" && typeof value !== "boolean")
+      || (fact.kind === "string" && typeof value !== "string")) {
+      throw new Error(`supersedeMemory: server metadata field ${fact.key} is not a plain value`);
+    }
+    values[fact.key] = value;
+  }
+  if (values.updated_at !== updatedAt) {
+    throw new Error("supersedeMemory: server metadata updated_at projection is inconsistent");
+  }
+  return Object.freeze({ ...values, updated_at: updatedAt } as GenericSupersedeMetadata);
+}
+
+async function readGenericSupersedeMetadata(
+  db: SurrealClient,
+  tableName: MemoryRecordTable,
+  recordId: string,
+): Promise<GenericSupersedeMetadata | undefined> {
+  const result = await db.query<Record<string, unknown>>(
+    genericSupersedeMetadataSelect(tableName),
+    { recordId },
+  );
+  const row = result[0]?.[0];
+  return row ? validateGenericSupersedeMetadata(row) : undefined;
+}
+
+async function readGenericSupersedeWitness(
+  db: SurrealClient,
+  tableName: MemoryRecordTable,
+  recordId: string,
+  metadata: GenericSupersedeMetadata,
+): Promise<GenericSupersedeRowWitness> {
+  const result = await db.query<Record<string, unknown>>(
+    genericSupersedeDigestSelect(tableName, metadata),
+    {
+      recordId,
+      ...genericSupersedeWitnessVars("witness", { ...metadata, row_digest: "" }),
+    },
+  );
+  const row = result[0]?.[0];
+  const digest = row?.row_digest;
+  if (!row || typeof digest !== "string" || !/^[0-9a-f]{64}$/.test(digest)) {
+    throw new Error("supersedeMemory: metadata changed before complete-row witness");
+  }
+  return Object.freeze({ ...metadata, row_digest: digest });
+}
+
+function sameGenericSupersedeBranchWhere(
+  prefix: string,
+  tableName: MemoryRecordTable,
+  recordIdVariable: string,
+  row: GenericSupersedeRowWitness,
+): string {
+  return `${genericSupersedeBranchWhere(prefix, tableName, recordIdVariable, row)}
+        AND crypto::sha256(<string>(SELECT * FROM type::record('${tableName}', $${recordIdVariable})
+          WHERE ${genericSupersedeBranchWhere(prefix, tableName, recordIdVariable, row)})[0]) = $${prefix}RowDigest`;
+}
+
+function genericSupersedeWitnessVars(
+  prefix: string,
+  row: GenericSupersedeRowWitness,
+): Record<string, unknown> {
+  const vars: Record<string, unknown> = {
+    [`${prefix}UserId`]: row.user_id,
+    [`${prefix}PayloadUserId`]: row.payload_user_id,
+    [`${prefix}UpdatedAt`]: row.updated_at,
+    [`${prefix}RowDigest`]: row.row_digest,
+  };
+  for (const fact of GENERIC_SUPERSEDE_FACTS) {
+    const value = (row as Record<string, unknown>)[fact.key];
+    if (value !== undefined) vars[`${prefix}${fact.suffix}`] = value;
+  }
+  return vars;
+}
+
+function mintPreparedGenericSupersede(
+  state: GenericSupersedePreparedState,
+): PreparedGenericSupersede {
+  const token = Object.freeze({ kind: "prepared-generic-supersede" as const });
+  preparedGenericSupersedes.set(token, state);
+  return token;
+}
+
+function getPreparedGenericSupersede(
+  plan: PreparedGenericSupersede,
+): GenericSupersedePreparedState {
+  if (!plan || typeof plan !== "object") {
+    throw new Error("supersedeMemory: prepared plan is not owned");
+  }
+  const state = preparedGenericSupersedes.get(plan);
+  if (!state) throw new Error("supersedeMemory: prepared plan is not owned");
+  return state;
+}
+
+function validateGenericTableName(value: unknown): MemoryRecordTable {
+  if (value !== "semiote" && value !== "memories") {
+    throw new Error("supersedeMemory: unsupported table name");
+  }
+  return value;
+}
+
+function validateGenericString(value: unknown, label: string, allowUndefined = false): string | undefined {
+  if (value === undefined && allowUndefined) return undefined;
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`supersedeMemory: ${label} must be a non-empty string`);
+  }
+  return value;
+}
+
+function validateGenericPreparedInputs(
+  previous: SimilarCandidate,
+  replacement: GenericSupersedeReplacement,
+  previousStaleFlags: Readonly<{ staleSince: string; contradictedBy: string }> | undefined,
+  supersedeProvenance: unknown,
+  isInternalCaller: unknown,
+  inactiveReason: unknown,
+): void {
+  validateGenericString(previous.id, "previous id");
+  validateGenericString(replacement.id, "replacement id");
+  validateGenericString(replacement.userId, "replacement user id");
+  validateGenericString(previous.lineageRootId, "previous lineage root id", true);
+  validateGenericString(replacement.text, "replacement text");
+  validateDenseFiniteEmbedding(replacement.embedding);
+  if (replacement.scope !== "session" && replacement.scope !== "user"
+    && replacement.scope !== "team" && replacement.scope !== "global") {
+    throw new Error("supersedeMemory: unsupported replacement scope");
+  }
+  validateGenericString(replacement.sessionId, "replacement session id", true);
+  if (replacement.writeSource !== "memory_store"
+    && replacement.writeSource !== "agent_end"
+    && replacement.writeSource !== "session_summary") {
+    throw new Error("supersedeMemory: unsupported replacement write source");
+  }
+  if (supersedeProvenance !== "deterministic" && supersedeProvenance !== "llm-generated") {
+    throw new Error("supersedeMemory: unsupported supersede provenance");
+  }
+  if (isInternalCaller !== undefined && typeof isInternalCaller !== "boolean") {
+    throw new Error("supersedeMemory: internal caller flag must be boolean");
+  }
+  validateGenericString(inactiveReason, "inactive reason");
+  if (previousStaleFlags) {
+    validateGenericString(previousStaleFlags.staleSince, "staleSince");
+    validateGenericString(previousStaleFlags.contradictedBy, "contradictedBy");
+  }
+}
+
+function validateDenseFiniteEmbedding(value: unknown): void {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("supersedeMemory: replacement embedding must be a dense array");
+  }
+  rejectProxyValue(value, "replacement embedding");
+  if (!Array.isArray(value)) {
+    throw new Error("supersedeMemory: replacement embedding must be a dense array");
+  }
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  if (!lengthDescriptor || !("value" in lengthDescriptor)
+    || typeof lengthDescriptor.value !== "number"
+    || !Number.isSafeInteger(lengthDescriptor.value)
+    || lengthDescriptor.value < 0) {
+    throw new Error("supersedeMemory: replacement embedding length is not a data property");
+  }
+  for (let index = 0; index < lengthDescriptor.value; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !("value" in descriptor)) {
+      throw new Error(`supersedeMemory: replacement embedding has a hole or accessor at [${index}]`);
+    }
+    if (typeof descriptor.value !== "number" || !Number.isFinite(descriptor.value)) {
+      throw new Error(`supersedeMemory: replacement embedding must contain only finite numbers at [${index}]`);
+    }
+  }
+}
+
+/** Copy a caller collection without consulting its length, iterator, or methods. */
+function copyOwnedPreparedPlanCollection(value: unknown): PreparedGenericSupersede[] {
+  if (typeof value !== "object" || value === null) {
+    throw new Error("supersedeMemory: prepared plans must be an array");
+  }
+  rejectProxyValue(value, "prepared plans");
+  if (!Array.isArray(value)) throw new Error("supersedeMemory: prepared plans must be an array");
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Array.prototype) throw new Error("supersedeMemory: prepared plans array prototype is not owned");
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  if (!lengthDescriptor || !("value" in lengthDescriptor)
+    || typeof lengthDescriptor.value !== "number"
+    || !Number.isSafeInteger(lengthDescriptor.value)
+    || lengthDescriptor.value <= 0) {
+    throw new Error("supersedeMemory: prepared plans length is invalid");
+  }
+  const keys = Reflect.ownKeys(value);
+  const keySet = new Set<string>(["length"]);
+  for (const key of keys) {
+    if (key === "length") continue;
+    if (typeof key !== "string" || !/^0$|^[1-9][0-9]*$/.test(key)) {
+      throw new Error("supersedeMemory: prepared plans has unsupported own property");
+    }
+    const index = Number(key);
+    if (!Number.isSafeInteger(index) || index < 0 || index >= lengthDescriptor.value) {
+      throw new Error("supersedeMemory: prepared plans has an invalid index");
+    }
+    keySet.add(key);
+  }
+  if (keySet.size !== lengthDescriptor.value + 1) {
+    throw new Error("supersedeMemory: prepared plans contains a hole");
+  }
+  const copy: PreparedGenericSupersede[] = new Array(lengthDescriptor.value);
+  for (let index = 0; index < lengthDescriptor.value; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !("value" in descriptor)) {
+      throw new Error("supersedeMemory: prepared plan element is an accessor");
+    }
+    copy[index] = descriptor.value as PreparedGenericSupersede;
+  }
+  return copy;
+}
+
+function buildPreparedGenericSupersedeMutation(
+  state: GenericSupersedePreparedState,
+  prefix: string,
+): { statement: string; vars: Record<string, unknown> } {
+  const serverClock = state.db instanceof SurrealClient;
+  const nowValue = serverClock ? "$h1_batch_now" : `$${prefix}now`;
+  const nowStringValue = serverClock ? "$h1_batch_now_string" : `$${prefix}now`;
+  const vars: Record<string, unknown> = {
+    [`${prefix}id`]: state.replacement.id,
+    [`${prefix}prevRecordId`]: state.previousId,
+    [`${prefix}userId`]: state.userId,
+    [`${prefix}lineageRootId`]: state.lineageRootId,
+    [`${prefix}provenance`]: state.supersedeProvenance,
+    [`${prefix}supersede_provenance`]: state.supersedeProvenance,
+    [`${prefix}inactiveReason`]: state.inactiveReason,
+    [`${prefix}supersededById`]: state.replacement.id,
+  };
+  if (!serverClock) vars[`${prefix}now`] = state.now;
+  const genericPreviousWhere = state.previousMetadata
+    ? sameGenericSupersedeBranchWhere(`${prefix}previous`, state.tableName, `${prefix}prevRecordId`, state.previousMetadata)
+    : `id = type::record('${state.tableName}', $${prefix}prevRecordId)
+       AND user_id = $${prefix}userId
+       AND payload.userId = $${prefix}userId
+       AND processing_lineage = NONE`;
+  const genericReplacementWhere = state.replacementMetadata
+    ? sameGenericSupersedeBranchWhere(`${prefix}replacement`, state.tableName, `${prefix}id`, state.replacementMetadata)
+    : `id = type::record('${state.tableName}', $${prefix}id)
+       AND user_id = $${prefix}userId
+       AND payload.userId = $${prefix}userId
+       AND processing_lineage = NONE`;
+  if (state.previousMetadata) Object.assign(
+    vars,
+    genericSupersedeWitnessVars(`${prefix}previous`, state.previousMetadata),
+  );
+  if (state.replacementMetadata) Object.assign(
+    vars,
+    genericSupersedeWitnessVars(`${prefix}replacement`, state.replacementMetadata),
+  );
+
+  const statements: string[] = [];
+  if (state.replacementExists) {
+    statements.push(
+      `LET $${prefix}replacementRows = (
+         UPDATE type::record('${state.tableName}', $${prefix}id) SET
+           supersedes = $${prefix}prevId,
+           lineage_root_id = $${prefix}lineageRootId,
+           updated_at = <datetime>${nowValue},
+           payload.supersedesId = $${prefix}prevId,
+           payload.lineageRootId = $${prefix}lineageRootId,
+           payload.updatedAt = ${nowStringValue},
+           payload.writeSource = $${prefix}writeSource,
+           payload.arbitrationOutcome = 'supersede',
+           payload.supersede_provenance = $${prefix}provenance,
+           supersede_provenance = $${prefix}provenance
+         WHERE ${genericReplacementWhere}
+         RETURN VALUE id
+       );
+       IF array::len($${prefix}replacementRows) != 1 {
+         THROW "generic supersede replacement compare-and-set failed";
+       };`,
+    );
+    vars[`${prefix}prevId`] = state.previousId;
+    vars[`${prefix}writeSource`] = state.replacement.writeSource;
+  } else {
+    const createPrefix = `${prefix}sup_`;
+    const { statement, vars: createVars } = composeGenericCreateMemory(
+      state.replacement.id,
+      state.replacement.text,
+      state.replacement.userId,
+      [...state.replacement.embedding],
+      {
+        ...state.replacement.metadata,
+        writeSource: state.replacement.writeSource,
+        arbitrationOutcome: "supersede",
+        supersede_provenance: state.supersedeProvenance,
+      },
+      state.replacement.scope,
+      state.replacement.sessionId,
+      {
+        active: true,
+        supersedesId: state.previousId,
+        lineageRootId: state.lineageRootId,
+      },
+      state.tableName,
+      state.supersedeProvenance,
+      createPrefix,
+      "__h1_server_timestamp__",
+    );
+    const createStatement = serverClock
+      ? statement
+        .replaceAll(`created_at: <datetime>$${createPrefix}now`, "created_at: <datetime>$h1_batch_now")
+        .replaceAll(`updated_at: <datetime>$${createPrefix}now`, "updated_at: <datetime>$h1_batch_now")
+        .replaceAll(`$${createPrefix}now`, "$h1_batch_now_string")
+      : statement;
+    if (serverClock) delete createVars[`${createPrefix}now`];
+    const createWithReturn = `${createStatement.replace(/;\s*$/, "")} RETURN VALUE id`;
+    statements.push(`
+      LET $${prefix}replacementRows = (${createWithReturn});
+      IF $${prefix}replacementRows = NONE {
+        THROW "generic supersede replacement create affected unexpected rows";
+      };
+    `);
+    Object.assign(vars, createVars);
+  }
+
+  const staleFlagsClause = state.previousStaleFlags
+    ? `,\n       payload.isStale = true,\n       payload.staleSince = $${prefix}staleSince,\n       payload.contradictedBy = $${prefix}contradictedBy`
+    : "";
+  if (state.previousStaleFlags) {
+    vars[`${prefix}staleSince`] = state.previousStaleFlags.staleSince;
+    vars[`${prefix}contradictedBy`] = state.previousStaleFlags.contradictedBy;
+  }
+  statements.push(
+    `LET $${prefix}previousRows = (
+      UPDATE type::record('${state.tableName}', $${prefix}prevRecordId) SET
+       active = false,
+       inactive_at = <datetime>${nowValue},
+       inactive_reason = $${prefix}inactiveReason,
+       superseded_by = $${prefix}supersededById,
+       lineage_root_id = $${prefix}lineageRootId,
+       supersede_provenance = $${prefix}supersede_provenance,
+       payload.active = false,
+       payload.inactiveAt = ${nowStringValue},
+       payload.inactiveReason = $${prefix}inactiveReason,
+       payload.supersededById = $${prefix}supersededById,
+       payload.lineageRootId = $${prefix}lineageRootId,
+       payload.supersede_provenance = $${prefix}supersede_provenance,
+       payload.updatedAt = ${nowStringValue},
+       updated_at = <datetime>${nowValue}${staleFlagsClause}
+     WHERE ${genericPreviousWhere}
+     RETURN VALUE id
+    );
+    IF array::len($${prefix}previousRows) != 1 {
+      THROW "generic supersede previous compare-and-set failed";
+    };`,
+  );
+  return { statement: statements.join("\n"), vars };
+}
+
+/**
+ * Reads and freezes one generic supersede mutation without opening a transaction
+ * or invoking a provider. The returned token is usable only by the module-owned
+ * composer that minted it for the exact db/table/user context.
+ */
+export async function prepareSupersedeMemory(
+  db: SurrealClient,
+  previous: SimilarCandidate,
+  replacement: {
+    id: string;
+    l2?: string;
+    text?: string;
+    userId: string;
+    embedding: number[];
+    metadata?: Record<string, unknown>;
+    scope: MemoryScope;
+    sessionId?: string;
+    writeSource: WriteSource;
+  },
+  supersede_provenance: SupersedeProvenance,
+  isInternalCaller?: boolean,
+  inactiveReason: string = "superseded",
+  tableName: MemoryRecordTable = PRIMARY_MEMORY_TABLE,
+  previousStaleFlags?: { staleSince: string; contradictedBy: string },
+): Promise<PreparedGenericSupersede> {
+  const validatedTableName = validateGenericTableName(tableName);
+  const previousCopy = cloneAndFreezePreparedValue(previous) as SimilarCandidate;
+  const replacementInput = cloneAndFreezePreparedValue(replacement);
+  const staleFlagsCopy = previousStaleFlags === undefined
+    ? undefined
+    : cloneAndFreezePreparedValue(previousStaleFlags);
+  if (replacementInput.l2 !== undefined && typeof replacementInput.l2 !== "string") {
+    throw new Error("supersedeMemory: replacement l2 must be a string");
+  }
+  if (replacementInput.text !== undefined && typeof replacementInput.text !== "string") {
+    throw new Error("supersedeMemory: replacement text must be a string");
+  }
+  if (replacementInput.scope === "global" && isInternalCaller !== true) {
+    throw new Error("supersedeMemory: global scope requires isInternalCaller flag");
+  }
+  const replacementCopy: GenericSupersedeReplacement = Object.freeze({
+    id: replacementInput.id,
+    text: replacementInput.l2 ?? replacementInput.text ?? "",
+    userId: replacementInput.userId,
+    embedding: replacementInput.embedding,
+    metadata: replacementInput.metadata,
+    scope: replacementInput.scope,
+    sessionId: replacementInput.sessionId,
+    writeSource: replacementInput.writeSource,
+  });
+  validateGenericPreparedInputs(
+    previousCopy,
+    replacementCopy,
+    staleFlagsCopy,
+    supersede_provenance,
+    isInternalCaller,
+    inactiveReason,
+  );
+
+  let previousMetadata: GenericSupersedeRowWitness | undefined;
+  let replacementMetadata: GenericSupersedeRowWitness | undefined;
+  let replacementExists: boolean;
+  if (db instanceof SurrealClient) {
+    // Metadata eligibility is the quarantine boundary. Do both reads before
+    // issuing either complete-row/body witness query.
+    const [previousEligibility, replacementEligibility] = await Promise.all([
+      readGenericSupersedeMetadata(db, validatedTableName, previousCopy.id),
+      readGenericSupersedeMetadata(db, validatedTableName, replacementCopy.id),
+    ]);
+    if (!previousEligibility
+      || previousEligibility.user_id !== replacementCopy.userId
+      || previousEligibility.payload_user_id !== replacementCopy.userId) {
+      throw new Error("supersedeMemory: previous generic snapshot mismatch");
+    }
+    if (!previousEligibility.lineage_absent
+      || (replacementEligibility && !replacementEligibility.lineage_absent)) {
+      throw new ProducerPolicyRefusalError("lineage_present");
+    }
+    if (replacementEligibility
+      && (replacementEligibility.user_id !== replacementCopy.userId
+        || replacementEligibility.payload_user_id !== replacementCopy.userId)) {
+      throw new Error("supersedeMemory: replacement generic snapshot user mismatch");
+    }
+    // Only eligible rows reach the body/full-row witness query. Each witness
+    // query repeats the exact metadata predicates to close the read race.
+    [previousMetadata, replacementMetadata] = await Promise.all([
+      readGenericSupersedeWitness(db, validatedTableName, previousCopy.id, previousEligibility),
+      replacementEligibility
+        ? readGenericSupersedeWitness(db, validatedTableName, replacementCopy.id, replacementEligibility)
+        : Promise.resolve(undefined),
+    ]);
+    replacementExists = replacementEligibility !== undefined;
+  } else {
+    const existsResults = await (db as any).query(
+      `SELECT id FROM type::record('${validatedTableName}', $id);`,
+      { id: replacementCopy.id },
+    );
+    replacementExists = (existsResults[0] ?? []).length > 0;
+  }
+
+  const { wouldCreateCycle } = await import("../../lifecycle/semion/dag-guard.js");
+  const hasCycle = await wouldCreateCycle(db as any, replacementCopy.id, previousCopy.id, replacementCopy.userId, validatedTableName);
+  if (hasCycle) {
+    throw new Error(`supersedeMemory: cycle detected — ${replacementCopy.id} -> ${previousCopy.id} would form a loop`);
+  }
+
+  const state: GenericSupersedePreparedState = Object.freeze({
+    db,
+    tableName: validatedTableName,
+    userId: replacementCopy.userId,
+    previousId: previousCopy.id,
+    replacement: replacementCopy,
+    replacementExists,
+    previousMetadata,
+    replacementMetadata,
+    supersedeProvenance: supersede_provenance,
+    inactiveReason,
+    previousStaleFlags: staleFlagsCopy,
+    lineageRootId: previousCopy.lineageRootId ?? previousCopy.id,
+    now: db instanceof SurrealClient ? undefined : new Date().toISOString(),
+  });
+  return mintPreparedGenericSupersede(state);
+}
+
+function buildPreparedGenericSupersedeInitialGuard(
+  state: GenericSupersedePreparedState,
+  prefix: string,
+): { statement: string; vars: Record<string, unknown> } {
+  const vars: Record<string, unknown> = {};
+  const statements: string[] = [];
+  if (state.previousMetadata) {
+    Object.assign(vars, genericSupersedeWitnessVars(`${prefix}previous`, state.previousMetadata));
+    statements.push(`
+      LET $${prefix}initialPreviousRows = (
+        SELECT VALUE id FROM type::record('${state.tableName}', $${prefix}prevRecordId)
+        WHERE ${sameGenericSupersedeBranchWhere(`${prefix}previous`, state.tableName, `${prefix}prevRecordId`, state.previousMetadata)}
+      );
+      IF array::len($${prefix}initialPreviousRows) != 1 {
+        THROW "generic supersede initial previous guard failed";
+      };`);
+  } else {
+    statements.push(`
+      LET $${prefix}initialPreviousRows = (
+        SELECT VALUE id FROM type::record('${state.tableName}', $${prefix}prevRecordId)
+        WHERE id = type::record('${state.tableName}', $${prefix}prevRecordId)
+          AND user_id = $${prefix}userId
+          AND <string>payload.userId = $${prefix}userId
+          AND processing_lineage = NONE
+      );
+      IF array::len($${prefix}initialPreviousRows) != 1 {
+        THROW "generic supersede initial previous guard failed";
+      };`);
+  }
+  if (state.replacementMetadata) {
+    Object.assign(vars, genericSupersedeWitnessVars(`${prefix}replacement`, state.replacementMetadata));
+    statements.push(`
+      LET $${prefix}initialReplacementRows = (
+        SELECT VALUE id FROM type::record('${state.tableName}', $${prefix}id)
+        WHERE ${sameGenericSupersedeBranchWhere(`${prefix}replacement`, state.tableName, `${prefix}id`, state.replacementMetadata)}
+      );
+      IF array::len($${prefix}initialReplacementRows) != 1 {
+        THROW "generic supersede initial replacement guard failed";
+      };`);
+  } else {
+    statements.push(`
+      LET $${prefix}initialReplacementRows = (
+        SELECT VALUE id FROM type::record('${state.tableName}', $${prefix}id)
+        WHERE id = type::record('${state.tableName}', $${prefix}id)
+      );
+      IF array::len($${prefix}initialReplacementRows) != 0 {
+        THROW "generic supersede initial replacement create-only guard failed";
+      };`);
+  }
+  return { statement: statements.join("\n"), vars };
+}
+
+/** Composes only row-disjoint H1 plans into one namespaced transaction body. */
+export function composePreparedSupersedeBatch(
+  db: SurrealClient,
+  tableName: MemoryRecordTable,
+  userId: string,
+  plans: readonly PreparedGenericSupersede[],
+): { statement: string; vars: Record<string, unknown> } {
+  const validatedTableName = validateGenericTableName(tableName);
+  const validatedUserId = validateGenericString(userId, "user id");
+  const copiedPlans = copyOwnedPreparedPlanCollection(plans);
+  const states: GenericSupersedePreparedState[] = [];
+  for (let index = 0; index < copiedPlans.length; index += 1) {
+    states.push(getPreparedGenericSupersede(copiedPlans[index]));
+  }
+  const occupied = new Set<string>();
+  for (const state of states) {
+    if (state.db !== db) throw new Error("supersedeMemory: prepared plan database mismatch");
+    if (state.tableName !== validatedTableName) throw new Error("supersedeMemory: prepared plan table mismatch");
+    if (state.userId !== validatedUserId) throw new Error("supersedeMemory: prepared plan user mismatch");
+    for (const id of [state.previousId, state.replacement.id]) {
+      if (occupied.has(id)) throw new Error("supersedeMemory: prepared plan rows overlap");
+      occupied.add(id);
+    }
+  }
+  const statementParts: string[] = [];
+  const vars: Record<string, unknown> = {};
+  if (states.some((state) => state.db instanceof SurrealClient)) {
+    // One server-generated precise timestamp is shared by every row in the
+    // caller-owned transaction. No JavaScript clock or millisecond string is
+    // used for the production mutation timestamp.
+    statementParts.push("LET $h1_batch_now = time::now(); LET $h1_batch_now_string = <string>$h1_batch_now;");
+  }
+  // Every plan's complete initial snapshot/absence guard is emitted before
+  // the first CREATE or UPDATE effect. A late plan cannot allow an earlier
+  // plan to mutate before its own branch/body/version checks pass.
+  for (let index = 0; index < states.length; index += 1) {
+    const initial = buildPreparedGenericSupersedeInitialGuard(states[index], `h1_${index}_`);
+    statementParts.push(initial.statement);
+    Object.assign(vars, initial.vars);
+  }
+  for (let index = 0; index < states.length; index += 1) {
+    const state = states[index];
+    const mutation = buildPreparedGenericSupersedeMutation(state, `h1_${index}_`);
+    statementParts.push(mutation.statement);
+    Object.assign(vars, mutation.vars);
+  }
+  return { statement: statementParts.join("\n"), vars };
+}
+
+function legacySingleSupersedeComposition(
+  composed: { statement: string; vars: Record<string, unknown> },
+): { statement: string; vars: Record<string, unknown> } {
+  // Keep the historical single-call parameter names byte-compatible while
+  // retaining the namespaced H1 composer for direct batch consumers.
+  const rename = (value: string): string => value.replaceAll("h1_0_", "");
+  return {
+    statement: rename(composed.statement),
+    vars: Object.fromEntries(Object.entries(composed.vars).map(([key, value]) => [rename(key), value])),
+  };
+}
+
 export async function supersedeMemory(
   db: SurrealClient,
   previous: SimilarCandidate,
@@ -1489,185 +2414,20 @@ export async function supersedeMemory(
   tableName: MemoryRecordTable = PRIMARY_MEMORY_TABLE,
   previousStaleFlags?: { staleSince: string; contradictedBy: string },
 ): Promise<void> {
-  if (replacement.scope === "global" && !isInternalCaller) {
-    throw new Error("supersedeMemory: global scope requires isInternalCaller flag");
-  }
-
-  // Generic lifecycle callers are intentionally legacy-only. The maintenance
-  // searches filter present lineage before mapping text, while this low-level
-  // guard closes direct-call paths before cycle checks or any write mutation.
-  // Keep the metadata read behind the real client check so existing pure unit
-  // mocks retain their compatibility contract.
-  let previousMetadata: SupersedeMetadataSnapshot | undefined;
-  let replacementMetadata: SupersedeMetadataSnapshot | undefined;
-  let replacementExists: boolean;
-  if (db instanceof SurrealClient) {
-    [previousMetadata, replacementMetadata] = await Promise.all([
-      readSupersedeMetadata(db, tableName, previous.id),
-      readSupersedeMetadata(db, tableName, replacement.id),
-    ]);
-    if (!previousMetadata
-      || previousMetadata.user_id !== replacement.userId
-      || previousMetadata.payload_user_id !== replacement.userId) {
-      throw new Error("supersedeMemory: previous generic snapshot mismatch");
-    }
-    if (previousMetadata.processing_lineage !== undefined
-      || replacementMetadata?.processing_lineage !== undefined) {
-      throw new ProducerPolicyRefusalError("lineage_present");
-    }
-    if (replacementMetadata
-      && (replacementMetadata.user_id !== replacement.userId
-        || replacementMetadata.payload_user_id !== replacement.userId)) {
-      throw new Error("supersedeMemory: replacement generic snapshot user mismatch");
-    }
-    replacementExists = replacementMetadata !== undefined;
-  } else {
-    const existsResults = await (db as any).query(
-      `SELECT id FROM type::record('${tableName}', $id);`,
-      { id: replacement.id },
-    );
-    replacementExists = (existsResults[0] ?? []).length > 0;
-  }
-
-  // DAG guard: prevent cycles in the supersession chain. Read-only precondition —
-  // runs BEFORE BEGIN against the committed snapshot.
-  const { wouldCreateCycle } = await import("../../lifecycle/semion/dag-guard.js");
-  const hasCycle = await wouldCreateCycle(db as any, replacement.id, previous.id, replacement.userId, tableName);
-  if (hasCycle) {
-    throw new Error(`supersedeMemory: cycle detected — ${replacement.id} -> ${previous.id} would form a loop`);
-  }
-
-  const lineageRootId = previous.lineageRootId ?? previous.id;
-
-  // Existence check (read BEFORE BEGIN): when the replacement row ALREADY EXISTS
-  // (consolidation dedup and the staleness pass both supersede onto an existing
-  // survivor), stamp ONLY the supersession bookkeeping — the full upsertMemory
-  // CONTENT replacement gutted the survivor's payload
-  // (confidence/factKey/tier/usefulness/l0/l1…) and falsified its createdAt
-  // (Rúnir-xxa9, live-observed on the first real dedup pass 2026-06-11). The
-  // arbitration path passes a fresh id and takes the upsert branch.
-  // The branch write + both tail UPDATEs run as ONE atomic transaction so a
-  // mid-sequence failure can never leave the previous row inactivated without
-  // the replacement bookkept, or vice versa. One consistent timestamp for the
-  // whole supersede (was two near-identical new Date()s across separate queries).
-  const now = new Date().toISOString();
-  const statements: string[] = [];
-  const vars: Record<string, unknown> = {
-    id: replacement.id,
-    prevRecordId: previous.id,
-    now,
-    lineageRootId,
-    userId: replacement.userId,
-    provenance: supersede_provenance,
+  const replacementSnapshot = cloneAndFreezePreparedValue(replacement);
+  const prepared = await prepareSupersedeMemory(
+    db,
+    previous,
+    replacementSnapshot,
     supersede_provenance,
+    isInternalCaller,
     inactiveReason,
-    supersededById: replacement.id,
-    ...(previousMetadata ? snapshotVars("genericPrevious", previousMetadata) : {}),
-    ...(replacementMetadata ? snapshotVars("genericReplacement", replacementMetadata) : {}),
-  };
-  const genericPreviousWhere = previousMetadata
-    ? sameSupersedeBranchWhere("genericPrevious", previousMetadata)
-    : "payload.userId = $userId AND processing_lineage = NONE";
-  const genericReplacementWhere = replacementMetadata
-    ? sameSupersedeBranchWhere("genericReplacement", replacementMetadata)
-    : "payload.userId = $userId AND processing_lineage = NONE";
-
-  if (replacementExists) {
-    statements.push(
-      `LET $replacementRows = (
-         UPDATE type::record('${tableName}', $id) SET
-           supersedes = $prevId,
-           lineage_root_id = $lineageRootId,
-           updated_at = <datetime>$now,
-           payload.supersedesId = $prevId,
-           payload.lineageRootId = $lineageRootId,
-           payload.updatedAt = $now,
-           payload.writeSource = $writeSource,
-           payload.arbitrationOutcome = 'supersede',
-           payload.supersede_provenance = $provenance,
-           supersede_provenance = $provenance
-         WHERE ${genericReplacementWhere}
-         RETURN VALUE id
-       );
-       IF array::len($replacementRows) != 1 {
-         THROW "generic supersede replacement compare-and-set failed";
-       };`,
-    );
-    vars.prevId = previous.id;
-    vars.writeSource = replacement.writeSource;
-  } else {
-    // Fresh ids use CREATE ONLY. The pre-read is advisory; a concurrent row at
-    // this id must make the transaction fail rather than let generic UPSERT
-    // replace another user's or lineage-bearing record.
-    const { statement, vars: createVars } = composeGenericCreateMemory(
-      replacement.id,
-      replacement.l2 ?? replacement.text ?? "",
-      replacement.userId,
-      replacement.embedding,
-      {
-        ...replacement.metadata,
-        writeSource: replacement.writeSource,
-        arbitrationOutcome: "supersede",
-        supersede_provenance,
-      },
-      replacement.scope,
-      replacement.sessionId,
-      {
-        active: true,
-        supersedesId: previous.id,
-        lineageRootId,
-      },
-      tableName,
-      supersede_provenance,
-      "sup_",
-    );
-    const createWithReturn = `${statement.replace(/;\s*$/, "")} RETURN VALUE id`;
-    statements.push(`
-      LET $replacementRows = (${createWithReturn});
-      IF $replacementRows = NONE {
-        THROW "generic supersede replacement create affected unexpected rows";
-      };
-    `);
-    Object.assign(vars, createVars);
-  }
-
-  // Tail 2: inactivate the PREVIOUS row. When previousStaleFlags is provided
-  // (staleness-pass caller), also land the queryable staleness fields atomically
-  // in the same transaction so they can never be orphaned by a crash between the
-  // supersede commit and a separate UPDATE.
-  const staleFlagsClause = previousStaleFlags
-    ? `,\n       payload.isStale = true,\n       payload.staleSince = $staleSince,\n       payload.contradictedBy = $contradictedBy`
-    : "";
-  if (previousStaleFlags) {
-    vars.staleSince = previousStaleFlags.staleSince;
-    vars.contradictedBy = previousStaleFlags.contradictedBy;
-  }
-  statements.push(
-    `LET $previousRows = (
-      UPDATE type::record('${tableName}', $prevRecordId) SET
-       active = false,
-       inactive_at = <datetime>$now,
-       inactive_reason = $inactiveReason,
-       superseded_by = $supersededById,
-       lineage_root_id = $lineageRootId,
-       supersede_provenance = $supersede_provenance,
-       payload.active = false,
-       payload.inactiveAt = $now,
-       payload.inactiveReason = $inactiveReason,
-       payload.supersededById = $supersededById,
-       payload.lineageRootId = $lineageRootId,
-       payload.supersede_provenance = $supersede_provenance,
-       payload.updatedAt = $now,
-       updated_at = <datetime>$now${staleFlagsClause}
-     WHERE ${genericPreviousWhere}
-     RETURN VALUE id
-    );
-    IF array::len($previousRows) != 1 {
-      THROW "generic supersede previous compare-and-set failed";
-    };`,
+    tableName,
+    previousStaleFlags,
   );
-
-  await db.queryTransaction(statements.join("\n"), vars);
+  const composed = composePreparedSupersedeBatch(db, tableName, replacementSnapshot.userId, [prepared]);
+  const legacy = legacySingleSupersedeComposition(composed);
+  await db.queryTransaction(legacy.statement, legacy.vars);
 }
 
 
