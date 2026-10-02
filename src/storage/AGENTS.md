@@ -63,6 +63,7 @@ Persistence, indexing, write lifecycle, embeddings, reranking providers, and rea
 - SurrealDB planner quirks are load-bearing: verify query shape before “simplifying” graph edge or `id IN` patterns.
 - Embedding dimension/model fingerprints are correctness guards, not cosmetic metadata.
 - Owned read projections select the top-level `processing_lineage` field and call the named `attachSelectedSearchHitLineage` helper for memory list/get/recent/similar, capture-context, latest-state, and continuity hits. The shared one-argument mapper remains selection-agnostic and returns `unavailable`, preserving vector/BM25 and other foreign callers until their own projections select the field. The module-private non-wire carrier preserves `minni_verified`, `legacy_unknown`, and `invalid` evidence without adding a public string field; generic similarity search keeps its existing `processing_lineage = NONE` containment predicate.
+- The read-your-writes overlay keeps the lineage carrier neutral: its get/touch and snapshot clones use enumerable object spread, while `mergeOverlayLeg` validates requested-ID membership, both non-empty root/payload user identities, and `active === true` before reading selected top-level lineage in its single residual batch. That batch binds typed `RecordId(currentTable, stableId)` values and one requested-user predicate; missing/null/malformed/foreign/mismatched/inactive/unrequested rows fail closed. Overlay text/score precedence does not authorize or replace current durable lineage state.
 
 ## Work Guidance
 
