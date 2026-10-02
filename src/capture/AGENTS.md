@@ -16,6 +16,7 @@ Capture-side memory ingestion: prompt/context assembly, LLM extraction and segme
 - Capture creates independently true facts; avoid compounded multi-fact units when extraction granularity matters.
 - All durable memory writes must pass through write arbitration; do not bypass `src/storage/writes/write-arbitrator.ts`.
 - Preserve raw evidence/spans where existing contracts expect them; do not prettify raw system/model outputs in test artifacts.
+- Capture context packets may retain the private processing-lineage carrier on internal `SearchHit` arrays for later governed processors; capture responses and debug summaries serialize only the established counts, timing, IDs, units, and rejection fields.
 - Capture can skip quietly for no messages, no API key, or no extractable facts; extractable errors should not crash the agent turn.
 - Service intelligence stays here/in service modules, never in client plugins.
 
