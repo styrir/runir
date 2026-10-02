@@ -33,6 +33,7 @@ function storedRow(overrides: StoredRow = {}): StoredRow {
 }
 
 function promotionMetadata(row: StoredRow, overrides: StoredRow = {}): StoredRow {
+  const payload = row.payload as StoredRow;
   return {
     id: row.id,
     user_id: row.user_id,
@@ -48,6 +49,19 @@ function promotionMetadata(row: StoredRow, overrides: StoredRow = {}): StoredRow
     inactive_reason: row.inactive_reason,
     supersede_provenance: row.supersede_provenance,
     updated_at: row.updated_at,
+    payload_user_id: payload.userId,
+    payload_active: payload.active,
+    payload_inactive_at: payload.inactiveAt,
+    payload_inactive_reason: payload.inactiveReason,
+    payload_superseded_by_id: payload.supersededById,
+    payload_supersedes_id: payload.supersedesId,
+    payload_lineage_root_id: payload.lineageRootId,
+    payload_updated_at: payload.updatedAt,
+    payload_write_source: payload.writeSource,
+    payload_arbitration_outcome: payload.arbitrationOutcome,
+    payload_is_stale: payload.isStale,
+    payload_stale_since: payload.staleSince,
+    payload_contradicted_by: payload.contradictedBy,
     payload_supersede_provenance: (row.payload as StoredRow).supersede_provenance,
     ...overrides,
   };
@@ -58,12 +72,13 @@ function promotionDb(
   content: StoredRow = storedRow(),
 ) {
   const query = vi.fn().mockImplementation((sql: string) => {
+    if (sql.includes("FROM type::record('noema'")) return Promise.resolve([[]]);
     if (sql.includes("SELECT id, user_id") && sql.includes("processing_lineage")) return Promise.resolve([[metadata]]);
     if (sql.includes("SELECT * FROM type::record('semiote'")) return Promise.resolve([[content]]);
-    if (sql.includes("SELECT status FROM type::record('noema'")) return Promise.resolve([[]]);
     return Promise.resolve([[]]);
   });
-  return { query } as any;
+  const queryTransaction = vi.fn().mockResolvedValue(undefined);
+  return { query, queryTransaction } as any;
 }
 
 describe("Sourcec-N1 stable-id Noema admission", () => {
@@ -94,7 +109,8 @@ describe("Sourcec-N1 stable-id Noema admission", () => {
     expect(db.query.mock.calls[0][0]).not.toContain("payload.l2");
     expect(db.query.mock.calls[0][0]).not.toContain("embedding");
     expect(db.query.mock.calls[1][0]).toContain("processing_lineage = NONE");
-    expect(db.query.mock.calls[3][1]).toMatchObject({ canonicalText: "stored source content" });
+    expect(db.queryTransaction).toHaveBeenCalledTimes(1);
+    expect(db.queryTransaction.mock.calls[0][1]).toMatchObject({ canonicalText: "stored source content" });
   });
 
   it("refuses valid and invalid present lineage before guarded content or writes", async () => {
@@ -129,15 +145,16 @@ describe("Sourcec-N1 stable-id Noema admission", () => {
     const result = await promoteSemioteToNoema(db, caller);
 
     expect(result.promoted).toBe(true);
-    expect(db.query.mock.calls[3][1]).toMatchObject({ canonicalText: "stored source content" });
-    expect(db.query.mock.calls[3][1]).not.toMatchObject({ canonicalText: "caller content must not win" });
+    expect(db.queryTransaction).toHaveBeenCalledTimes(1);
+    expect(db.queryTransaction.mock.calls[0][1]).toMatchObject({ canonicalText: "stored source content" });
+    expect(db.queryTransaction.mock.calls[0][1]).not.toMatchObject({ canonicalText: "caller content must not win" });
 
     const raced = storedRow({ updated_at: "version-2" });
     const racedDb = promotionDb(promotionMetadata(row), raced);
     const racedResult = await promoteSemioteToNoema(racedDb, "source-1");
     expect(racedResult).toEqual({ promoted: false, id: null, embeddingWritten: false });
     expect(racedDb.query).toHaveBeenCalledTimes(2);
-    expect(racedDb.query.mock.calls.some(([sql]: [string]) => sql.includes("UPSERT type::record('noema'"))).toBe(false);
+    expect(racedDb.queryTransaction).not.toHaveBeenCalled();
   });
 
   it("accepts equal SDK timestamps and structured provenance but refuses a one-nanosecond change", async () => {
@@ -176,7 +193,7 @@ describe("Sourcec-N1 stable-id Noema admission", () => {
     const changed = await promoteSemioteToNoema(changedDb, "source-1");
     expect(changed).toEqual({ promoted: false, id: null, embeddingWritten: false });
     expect(changedDb.query).toHaveBeenCalledTimes(2);
-    expect(changedDb.query.mock.calls.some(([sql]: [string]) => sql.includes("UPSERT type::record('noema'"))).toBe(false);
+    expect(changedDb.queryTransaction).not.toHaveBeenCalled();
   });
 
   it("refuses circular or unsupported metadata instead of stringifying it into equality", async () => {
@@ -191,14 +208,14 @@ describe("Sourcec-N1 stable-id Noema admission", () => {
     const circularDb = promotionDb(metadata, row);
     const circularResult = await promoteSemioteToNoema(circularDb, "source-1");
     expect(circularResult).toEqual({ promoted: false, id: null, embeddingWritten: false });
-    expect(circularDb.query).toHaveBeenCalledTimes(2);
+    expect(circularDb.query).toHaveBeenCalledTimes(1);
 
     const unsupportedRow = storedRow({ supersede_provenance: new UnsupportedMetadata() });
     const unsupportedMetadata = promotionMetadata(unsupportedRow, { supersede_provenance: new UnsupportedMetadata() });
     const unsupportedDb = promotionDb(unsupportedMetadata, unsupportedRow);
     const unsupportedResult = await promoteSemioteToNoema(unsupportedDb, "source-1");
     expect(unsupportedResult).toEqual({ promoted: false, id: null, embeddingWritten: false });
-    expect(unsupportedDb.query).toHaveBeenCalledTimes(2);
+    expect(unsupportedDb.query).toHaveBeenCalledTimes(1);
 
     const sharedCircular: Record<string, unknown> = { kind: "shared-circular" };
     sharedCircular.self = sharedCircular;
@@ -209,7 +226,7 @@ describe("Sourcec-N1 stable-id Noema admission", () => {
     );
     const sharedCircularResult = await promoteSemioteToNoema(sharedCircularDb, "source-1");
     expect(sharedCircularResult).toEqual({ promoted: false, id: null, embeddingWritten: false });
-    expect(sharedCircularDb.query).toHaveBeenCalledTimes(2);
+    expect(sharedCircularDb.query).toHaveBeenCalledTimes(1);
 
     const sharedUnsupported = new UnsupportedMetadata();
     const sharedUnsupportedRow = storedRow({ supersede_provenance: sharedUnsupported });
@@ -219,7 +236,7 @@ describe("Sourcec-N1 stable-id Noema admission", () => {
     );
     const sharedUnsupportedResult = await promoteSemioteToNoema(sharedUnsupportedDb, "source-1");
     expect(sharedUnsupportedResult).toEqual({ promoted: false, id: null, embeddingWritten: false });
-    expect(sharedUnsupportedDb.query).toHaveBeenCalledTimes(2);
+    expect(sharedUnsupportedDb.query).toHaveBeenCalledTimes(1);
   });
 
   it("refuses invalid or throwing stable ids before any database access", async () => {
