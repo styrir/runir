@@ -1,6 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
 import { DateTime } from "surrealdb";
-import { promoteSemioteToNoema } from "../storage/surreal/phase2-store.js";
+import {
+  promoteSemioteToNoema,
+  promoteSyntheticForcedMaintenanceToNoema,
+  promoteSyntheticScheduledMaintenanceToNoema,
+} from "../storage/surreal/phase2-store.js";
+import {
+  createProducerAuthority,
+  createServerAuthenticatedProducerPrincipal,
+  createServerResolvedTargetUser,
+  createServerSelectedProducerOperation,
+  createTrustedProducerRegistration,
+  mintProcessingLineage,
+  revokeProducerRegistration,
+  syntheticProducerDeliveryResolver,
+} from "../app/processing-policy/authority.js";
+import type {
+  ProcessingLineageRestriction,
+  ProcessingLineageV1,
+} from "../domain/memory/processing-lineage.js";
 
 type Row = Record<string, unknown>;
 
@@ -151,6 +169,121 @@ function noEffectReadbackDb(
       noema_stable_claim: variables.stableClaim,
     };
     throw new Error("synthetic no-effect transaction error");
+  });
+  return { query, queryTransaction } as any;
+}
+
+type ProtectedMaintenanceOperation = "scheduled_maintenance" | "forced_maintenance";
+
+function protectedCaptureLineage(
+  userId: string,
+  restrictions: readonly ProcessingLineageRestriction[] = [],
+): ProcessingLineageV1 {
+  return {
+    state: "minni_verified",
+    origin: "minni",
+    producer_principal_ref: "capture-principal",
+    producer_registration_ref: "capture-registration",
+    processing_policy_version: "runir.minni.local/v1",
+    admitted_operation: "capture_ingest",
+    target_user_id: userId,
+    delivery: {
+      version: "runir.minni.delivery/v1",
+      disposition: restrictions.length > 0 ? "local_only" : "ordinary",
+      restrictions,
+    },
+  };
+}
+
+function protectedAuthority(operation: ProtectedMaintenanceOperation, userId = "atomic-user") {
+  const principalRef = `principal-${operation}`;
+  const registrationRef = `registration-${operation}`;
+  const principal = createServerAuthenticatedProducerPrincipal(principalRef);
+  const registration = createTrustedProducerRegistration({
+    registrationRef,
+    principalRef,
+    authorizedOperations: [operation],
+    authorizedTargetUsers: [userId],
+  });
+  const authority = createProducerAuthority([registration]);
+  const targetUser = createServerResolvedTargetUser(userId);
+  const selectedOperation = createServerSelectedProducerOperation(operation);
+  const admission = authority.resolve({
+    principal,
+    operation: selectedOperation,
+    targetUser,
+  });
+  if (!admission.ok) throw new Error(`fixture admission failed: ${admission.reason}`);
+  const minted = mintProcessingLineage(authority, admission.context, syntheticProducerDeliveryResolver);
+  if (!minted.ok) throw new Error(`fixture mint failed: ${minted.reason}`);
+  return { authority, minted, registrationRef };
+}
+
+function protectedMetadata(
+  id: string,
+  userId: string,
+  lineage: ProcessingLineageV1,
+  supportIds: readonly string[] = [],
+  updatedAt = `${id}-version-1`,
+): Row {
+  return {
+    id: `semiote:${id}`,
+    user_id: userId,
+    payload_user_id: userId,
+    processing_lineage: lineage,
+    active: true,
+    supersedes: undefined,
+    superseded_by: undefined,
+    lineage_root_id: undefined,
+    inactive_at: undefined,
+    inactive_reason: undefined,
+    supersede_provenance: undefined,
+    updated_at: updatedAt,
+    payload_active: true,
+    payload_inactive_at: undefined,
+    payload_inactive_reason: undefined,
+    payload_superseded_by_id: undefined,
+    payload_supersedes_id: undefined,
+    payload_lineage_root_id: undefined,
+    payload_supersede_provenance: undefined,
+    payload_updated_at: undefined,
+    payload_write_source: undefined,
+    payload_arbitration_outcome: undefined,
+    payload_is_stale: undefined,
+    payload_stale_since: undefined,
+    payload_contradicted_by: undefined,
+    payload_promoted_to_noema_id: undefined,
+    payload_noema_support_semiote_ids: [...supportIds],
+    payload_noema_claim_key: undefined,
+    payload_noema_revision_hash: undefined,
+    payload_noema_status: undefined,
+    payload_noema_stable_claim: undefined,
+  };
+}
+
+function protectedMaintenanceDb(
+  rows: readonly Row[],
+  target?: Row,
+  options: {
+    afterTargetRead?: () => void;
+    transaction?: (sql: string, variables: Row) => Promise<void>;
+  } = {},
+) {
+  const byId = new Map(rows.map((row) => [String(row.id).replace(/^semiote:/, ""), row]));
+  const query = vi.fn().mockImplementation(async (sql: string, variables: Row = {}) => {
+    if (sql.includes("FROM type::record('noema'")) {
+      options.afterTargetRead?.();
+      return target ? [[target]] : [[]];
+    }
+    if (sql.includes("FROM type::record('semiote'")) {
+      const id = typeof variables.id === "string" ? variables.id.replace(/^semiote:/, "") : "";
+      const row = byId.get(id);
+      return row ? [[row]] : [[]];
+    }
+    return [[]];
+  });
+  const queryTransaction = vi.fn().mockImplementation(async (sql: string, variables: Row) => {
+    await options.transaction?.(sql, variables);
   });
   return { query, queryTransaction } as any;
 }
@@ -381,4 +514,271 @@ describe("Sourcec-N2 atomic Noema promotion", () => {
       expect(db.queryTransaction).toHaveBeenCalledTimes(1);
     },
   );
+
+  it.each([
+    "scheduled_maintenance",
+    "forced_maintenance",
+  ] as const)("uses the fixed %s plan with every stored support", async (operation) => {
+    const { authority, minted } = protectedAuthority(operation);
+    const sourceId = `protected-${operation}-source`;
+    const supportAId = `protected-${operation}-support-a`;
+    const supportBId = `protected-${operation}-support-b`;
+    const source = protectedMetadata(
+      sourceId,
+      "atomic-user",
+      protectedCaptureLineage("atomic-user"),
+      [supportAId, supportBId],
+    );
+    const supportA = protectedMetadata(
+      supportAId,
+      "atomic-user",
+      protectedCaptureLineage("atomic-user", ["audio_derived"]),
+    );
+    const supportB = protectedMetadata(
+      supportBId,
+      "atomic-user",
+      protectedCaptureLineage("atomic-user", ["excluded_source", "producer_local_only"]),
+    );
+    const db = protectedMaintenanceDb([source, supportA, supportB]);
+
+    const result = operation === "scheduled_maintenance"
+      ? await promoteSyntheticScheduledMaintenanceToNoema(db, authority, minted, "atomic-user", sourceId)
+      : await promoteSyntheticForcedMaintenanceToNoema(db, authority, minted, "atomic-user", sourceId);
+
+    expect(result).toEqual(expect.objectContaining({ promoted: true, operation, embeddingWritten: false }));
+    expect(db.queryTransaction).toHaveBeenCalledTimes(1);
+    const [sql, variables] = db.queryTransaction.mock.calls[0] as [string, Row];
+    expect(sql).toContain("CREATE ONLY type::record('noema', $noemaId)");
+    expect(sql).toContain("UPDATE type::record('semiote', $sourceId)");
+    expect(sql).toContain("protected maintenance support compare-and-set failed");
+    expect(sql).toContain("expectedSupport0ProcessingLineage");
+    expect(sql).toContain("expectedSupport1ProcessingLineage");
+    expect(variables.supportSemioteIds).toEqual([sourceId, supportAId, supportBId]);
+    expect(variables.canonicalText).toBe(
+      operation === "scheduled_maintenance"
+        ? "Synthetic scheduled maintenance proof content."
+        : "Synthetic forced maintenance proof content.",
+    );
+    expect(variables.canonicalText).not.toContain("atomic-user");
+    expect((variables.joinedProcessingLineage as ProcessingLineageV1).delivery.restrictions).toEqual([
+      "audio_derived",
+      "excluded_source",
+      "producer_local_only",
+    ]);
+  });
+
+  it("requires the independent target user at both authority gates", async () => {
+    const { authority, minted } = protectedAuthority("scheduled_maintenance");
+    const source = protectedMetadata(
+      "protected-wrong-user-source",
+      "atomic-user",
+      protectedCaptureLineage("atomic-user"),
+    );
+    const db = protectedMaintenanceDb([source]);
+
+    await expect(promoteSyntheticScheduledMaintenanceToNoema(
+      db,
+      authority,
+      minted,
+      "other-user",
+      "protected-wrong-user-source",
+    )).rejects.toMatchObject({
+      name: "ProducerPolicyRefusalError",
+      reason: "target_user_mismatch",
+    });
+    expect(db.query).not.toHaveBeenCalled();
+    expect(db.queryTransaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing root", { user_id: undefined }],
+    ["missing payload", { payload_user_id: undefined }],
+    ["null root", { user_id: null }],
+    ["null payload", { payload_user_id: null }],
+    ["wrong root type", { user_id: 42 }],
+    ["wrong payload type", { payload_user_id: 42 }],
+    ["disagreeing bindings", { payload_user_id: "other-user" }],
+    ["foreign bindings", { user_id: "other-user", payload_user_id: "other-user" }],
+  ] as const)("requires both protected source identity bindings: %s", async (_label, overrides) => {
+    const fixture = protectedAuthority("scheduled_maintenance");
+    const source = protectedMetadata("protected-identity-source", "atomic-user", protectedCaptureLineage("atomic-user"));
+    Object.assign(source, overrides);
+    const db = protectedMaintenanceDb([source]);
+
+    await expect(promoteSyntheticScheduledMaintenanceToNoema(
+      db,
+      fixture.authority,
+      fixture.minted,
+      "atomic-user",
+      "protected-identity-source",
+    )).rejects.toMatchObject({ name: "ProducerPolicyRefusalError", reason: "target_user_mismatch" });
+    expect(db.queryTransaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing root", { user_id: undefined }],
+    ["missing payload", { payload_user_id: undefined }],
+    ["null root", { user_id: null }],
+    ["null payload", { payload_user_id: null }],
+    ["wrong root type", { user_id: 42 }],
+    ["wrong payload type", { payload_user_id: 42 }],
+    ["disagreeing bindings", { payload_user_id: "other-user" }],
+    ["foreign bindings", { user_id: "other-user", payload_user_id: "other-user" }],
+  ] as const)("requires both protected support identity bindings: %s", async (_label, overrides) => {
+    const fixture = protectedAuthority("forced_maintenance");
+    const support = protectedMetadata("protected-identity-support", "atomic-user", protectedCaptureLineage("atomic-user"));
+    Object.assign(support, overrides);
+    const source = protectedMetadata("protected-identity-support-source", "atomic-user", protectedCaptureLineage("atomic-user"), ["protected-identity-support"]);
+    const db = protectedMaintenanceDb([source, support]);
+
+    await expect(promoteSyntheticForcedMaintenanceToNoema(
+      db,
+      fixture.authority,
+      fixture.minted,
+      "atomic-user",
+      "protected-identity-support-source",
+    )).rejects.toMatchObject({ name: "ProducerPolicyRefusalError", reason: "target_user_mismatch" });
+    expect(db.queryTransaction).not.toHaveBeenCalled();
+  });
+
+  it.each(["json-copy", "prototype-copy"] as const)(
+    "refuses a %s of the minted authority before reading protected rows",
+    async (copyKind) => {
+      const fixture = protectedAuthority("forced_maintenance");
+      const source = protectedMetadata(
+        `protected-${copyKind}-source`,
+        "atomic-user",
+        protectedCaptureLineage("atomic-user"),
+      );
+      const db = protectedMaintenanceDb([source]);
+      const copied = copyKind === "json-copy"
+        ? JSON.parse(JSON.stringify(fixture.minted))
+        : Object.assign(Object.create(Object.getPrototypeOf(fixture.minted)), fixture.minted);
+
+      await expect(promoteSyntheticForcedMaintenanceToNoema(
+        db,
+        fixture.authority,
+        copied,
+        "atomic-user",
+        `protected-${copyKind}-source`,
+      )).rejects.toMatchObject({
+        name: "ProducerPolicyRefusalError",
+        reason: "lineage_invalid",
+      });
+      expect(db.query).not.toHaveBeenCalled();
+      expect(db.queryTransaction).not.toHaveBeenCalled();
+    },
+  );
+
+  it("revalidates a revoked registration after protected metadata awaits", async () => {
+    const fixture = protectedAuthority("scheduled_maintenance");
+    const source = protectedMetadata(
+      "protected-revoked-source",
+      "atomic-user",
+      protectedCaptureLineage("atomic-user"),
+    );
+    const db = protectedMaintenanceDb([source], undefined, {
+      afterTargetRead: () => revokeProducerRegistration(fixture.authority, fixture.registrationRef),
+    });
+
+    await expect(promoteSyntheticScheduledMaintenanceToNoema(
+      db,
+      fixture.authority,
+      fixture.minted,
+      "atomic-user",
+      "protected-revoked-source",
+    )).rejects.toMatchObject({
+      name: "ProducerPolicyRefusalError",
+      reason: "registration_revoked",
+    });
+    expect(db.queryTransaction).not.toHaveBeenCalled();
+  });
+
+  it("keeps an existing target's terminal status and uses target CAS", async () => {
+    const fixture = protectedAuthority("forced_maintenance");
+    const sourceId = "protected-existing-source";
+    const source = protectedMetadata(
+      sourceId,
+      "atomic-user",
+      protectedCaptureLineage("atomic-user"),
+    );
+    const firstDb = protectedMaintenanceDb([source]);
+    const first = await promoteSyntheticForcedMaintenanceToNoema(
+      firstDb,
+      fixture.authority,
+      fixture.minted,
+      "atomic-user",
+      sourceId,
+    );
+    const [, firstVariables] = firstDb.queryTransaction.mock.calls[0] as [string, Row];
+    const target = {
+      id: first.id,
+      user_id: "atomic-user",
+      processing_lineage: firstVariables.joinedProcessingLineage,
+      status: "superseded",
+      claim_key: firstVariables.claimKey,
+      revision_hash: firstVariables.revisionHash,
+      support_semiote_ids: [sourceId],
+      active: false,
+      updated_at: "existing-target-version-1",
+    };
+    const secondDb = protectedMaintenanceDb([source], target);
+    const second = await promoteSyntheticForcedMaintenanceToNoema(
+      secondDb,
+      fixture.authority,
+      fixture.minted,
+      "atomic-user",
+      sourceId,
+    );
+    const [sql, variables] = secondDb.queryTransaction.mock.calls[0] as [string, Row];
+    expect(second.id).toBe(first.id);
+    expect(sql).toContain("UPDATE type::record('noema', $noemaId)");
+    expect(sql).not.toContain("CREATE ONLY type::record('noema'");
+    expect(variables.status).toBe("superseded");
+    expect(variables.active).toBe(false);
+    expect(variables.supportSemioteIds).toEqual([sourceId]);
+  });
+
+  it("refuses an existing unlineaged target instead of retroactively claiming it", async () => {
+    const fixture = protectedAuthority("scheduled_maintenance");
+    const sourceId = "protected-unlineaged-target-source";
+    const source = protectedMetadata(
+      sourceId,
+      "atomic-user",
+      protectedCaptureLineage("atomic-user"),
+    );
+    const firstDb = protectedMaintenanceDb([source]);
+    const first = await promoteSyntheticScheduledMaintenanceToNoema(
+      firstDb,
+      fixture.authority,
+      fixture.minted,
+      "atomic-user",
+      sourceId,
+    );
+    const [, firstVariables] = firstDb.queryTransaction.mock.calls[0] as [string, Row];
+    const legacyTarget = {
+      id: first.id,
+      user_id: "atomic-user",
+      processing_lineage: undefined,
+      status: "active",
+      claim_key: firstVariables.claimKey,
+      revision_hash: firstVariables.revisionHash,
+      support_semiote_ids: [sourceId],
+      active: true,
+      updated_at: "legacy-target-version-1",
+    };
+    const secondDb = protectedMaintenanceDb([source], legacyTarget);
+
+    await expect(promoteSyntheticScheduledMaintenanceToNoema(
+      secondDb,
+      fixture.authority,
+      fixture.minted,
+      "atomic-user",
+      sourceId,
+    )).rejects.toMatchObject({
+      name: "ProducerPolicyRefusalError",
+      reason: "lineage_invalid",
+    });
+    expect(secondDb.queryTransaction).not.toHaveBeenCalled();
+  });
 });
