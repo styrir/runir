@@ -2021,6 +2021,463 @@ function copyOwnedPreparedPlanCollection(value: unknown): PreparedGenericSuperse
   return copy;
 }
 
+type GenericSupersedeGroup = Readonly<{
+  targetId: string;
+  states: readonly GenericSupersedePreparedState[];
+  first: GenericSupersedePreparedState;
+  last: GenericSupersedePreparedState;
+  replacementExists: boolean;
+  replacementMetadata?: GenericSupersedeRowWitness;
+}>;
+
+const GROUPED_PAYLOAD_BOOLEAN_KEYS = new Set(["active", "isStale"]);
+const GROUPED_PAYLOAD_STRING_KEYS = new Set([
+  "inactiveAt",
+  "inactiveReason",
+  "supersededById",
+  "supersedesId",
+  "lineageRootId",
+  "supersede_provenance",
+  "updatedAt",
+  "writeSource",
+  "arbitrationOutcome",
+  "staleSince",
+  "contradictedBy",
+  "scope",
+  "sessionId",
+  "validAt",
+  "invalidAt",
+  "createdAt",
+]);
+
+function ownGroupedMetadataValue(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): { present: boolean; value: unknown } {
+  if (!metadata || !Object.prototype.hasOwnProperty.call(metadata, key)) {
+    return { present: false, value: undefined };
+  }
+  return { present: true, value: metadata[key] };
+}
+
+function validateGroupedCallerPayloadFact(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+  kind: "boolean" | "string",
+): void {
+  const fact = ownGroupedMetadataValue(metadata, key);
+  if (!fact.present) return;
+  if (fact.value === undefined || fact.value === null) {
+    throw new Error(`supersedeMemory: grouped caller payload ${key} has no scalar value`);
+  }
+  if (kind === "boolean" && typeof fact.value !== "boolean") {
+    throw new Error(`supersedeMemory: grouped caller payload ${key} must be a boolean`);
+  }
+  if (kind === "string" && typeof fact.value !== "string") {
+    throw new Error(`supersedeMemory: grouped caller payload ${key} must be a string`);
+  }
+}
+
+/**
+ * The ordinary composer deliberately spreads caller metadata over payload
+ * defaults. A shared fresh target is safe only when the first serial create's
+ * projected eligibility facts are already source-known scalars. This check
+ * tracks the caller-owned data before the fixed supersede stamps are applied;
+ * it never stringifies, sanitizes, invokes, or otherwise normalizes it.
+ */
+function validateGroupedFreshPayloadEligibility(
+  state: GenericSupersedePreparedState,
+  groupUserId: string,
+): void {
+  const metadata = state.replacement.metadata;
+  const userId = ownGroupedMetadataValue(metadata, "userId");
+  if (userId.present) {
+    if (userId.value === undefined || userId.value === null || typeof userId.value !== "string") {
+      throw new Error("supersedeMemory: grouped caller payload userId must be a string");
+    }
+    if (userId.value !== groupUserId) {
+      throw new Error("supersedeMemory: grouped caller payload userId mismatch");
+    }
+  } else if (state.replacement.userId !== groupUserId) {
+    throw new Error("supersedeMemory: grouped replacement user mismatch");
+  }
+
+  const l2 = ownGroupedMetadataValue(metadata, "l2");
+  if (l2.present && (l2.value === undefined || l2.value === null || typeof l2.value !== "string")) {
+    throw new Error("supersedeMemory: grouped caller payload l2 must be a string");
+  }
+  for (const key of GROUPED_PAYLOAD_BOOLEAN_KEYS) validateGroupedCallerPayloadFact(metadata, key, "boolean");
+  for (const key of GROUPED_PAYLOAD_STRING_KEYS) validateGroupedCallerPayloadFact(metadata, key, "string");
+}
+
+function sameGenericSupersedeWitness(
+  left: GenericSupersedeRowWitness | undefined,
+  right: GenericSupersedeRowWitness | undefined,
+): boolean {
+  if (!left || !right) return left === right;
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if (!sameMetadataValue((left as Record<string, unknown>)[key], (right as Record<string, unknown>)[key])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function groupPreparedGenericSupersedes(
+  states: readonly GenericSupersedePreparedState[],
+  db: SurrealClient,
+  tableName: MemoryRecordTable,
+  userId: string,
+): GenericSupersedeGroup[] {
+  const grouped = new Map<string, GenericSupersedePreparedState[]>();
+  const previousIds = new Set<string>();
+  const targetIds = new Set<string>();
+  for (const state of states) {
+    if (state.db !== db) throw new Error("supersedeMemory: prepared plan database mismatch");
+    if (state.tableName !== tableName) throw new Error("supersedeMemory: prepared plan table mismatch");
+    if (state.userId !== userId) throw new Error("supersedeMemory: prepared plan user mismatch");
+    if (previousIds.has(state.previousId)) throw new Error("supersedeMemory: prepared plan rows overlap");
+    previousIds.add(state.previousId);
+    targetIds.add(state.replacement.id);
+    const existing = grouped.get(state.replacement.id);
+    if (existing) existing.push(state);
+    else grouped.set(state.replacement.id, [state]);
+  }
+  for (const previousId of previousIds) {
+    if (targetIds.has(previousId)) throw new Error("supersedeMemory: prepared plan rows overlap");
+  }
+
+  return [...grouped.values()].map((groupStates) => {
+    const first = groupStates[0]!;
+    const last = groupStates[groupStates.length - 1]!;
+    const replacementExists = first.replacementExists;
+    if (groupStates.some((state) => state.replacementExists !== replacementExists)) {
+      throw new Error("supersedeMemory: prepared target existence mismatch");
+    }
+    const replacementMetadata = first.replacementMetadata;
+    const hasReplacementMetadata = replacementMetadata !== undefined;
+    if (groupStates.some((state) => (state.replacementMetadata !== undefined) !== hasReplacementMetadata)) {
+      throw new Error("supersedeMemory: prepared target metadata presence mismatch");
+    }
+    if (replacementMetadata !== undefined) {
+      for (const state of groupStates.slice(1)) {
+        if (!sameGenericSupersedeWitness(replacementMetadata, state.replacementMetadata)) {
+          throw new Error("supersedeMemory: prepared target metadata mismatch");
+        }
+      }
+    }
+    // The first plan is the only ordinary CREATE payload. Later plans are
+    // ordinary existing-target updates and ignore creation-only metadata;
+    // validating them here would reject a serially valid provider-order group.
+    if (!replacementExists && groupStates.length > 1) {
+      validateGroupedFreshPayloadEligibility(first, userId);
+    }
+    return {
+      targetId: first.replacement.id,
+      states: groupStates,
+      first,
+      last,
+      replacementExists,
+      replacementMetadata,
+    };
+  });
+}
+
+function buildPreparedGenericSupersedePreviousInitialGuard(
+  state: GenericSupersedePreparedState,
+  prefix: string,
+): { statement: string; vars: Record<string, unknown> } {
+  const vars: Record<string, unknown> = {};
+  if (state.previousMetadata) {
+    Object.assign(vars, genericSupersedeWitnessVars(`${prefix}previous`, state.previousMetadata));
+    return {
+      statement: `
+      LET $${prefix}initialPreviousRows = (
+        SELECT VALUE id FROM type::record('${state.tableName}', $${prefix}prevRecordId)
+        WHERE ${sameGenericSupersedeBranchWhere(`${prefix}previous`, state.tableName, `${prefix}prevRecordId`, state.previousMetadata)}
+      );
+      IF array::len($${prefix}initialPreviousRows) != 1 {
+        THROW "generic supersede initial previous guard failed";
+      };`,
+      vars,
+    };
+  }
+  return {
+    statement: `
+      LET $${prefix}initialPreviousRows = (
+        SELECT VALUE id FROM type::record('${state.tableName}', $${prefix}prevRecordId)
+        WHERE id = type::record('${state.tableName}', $${prefix}prevRecordId)
+          AND user_id = $${prefix}userId
+          AND <string>payload.userId = $${prefix}userId
+          AND processing_lineage = NONE
+      );
+      IF array::len($${prefix}initialPreviousRows) != 1 {
+        THROW "generic supersede initial previous guard failed";
+      };`,
+    vars,
+  };
+}
+
+function buildPreparedGenericSupersedeTargetInitialGuard(
+  group: GenericSupersedeGroup,
+  prefix: string,
+): { statement: string; vars: Record<string, unknown> } {
+  const vars: Record<string, unknown> = {
+    [`${prefix}targetId`]: group.targetId,
+  };
+  if (group.replacementExists && group.replacementMetadata) {
+    Object.assign(vars, genericSupersedeWitnessVars(`${prefix}target`, group.replacementMetadata));
+    return {
+      statement: `
+      LET $${prefix}initialTargetRows = (
+        SELECT VALUE id FROM type::record('${group.first.tableName}', $${prefix}targetId)
+        WHERE ${sameGenericSupersedeBranchWhere(`${prefix}target`, group.first.tableName, `${prefix}targetId`, group.replacementMetadata)}
+      );
+      IF array::len($${prefix}initialTargetRows) != 1 {
+        THROW "generic supersede initial target guard failed";
+      };`,
+      vars,
+    };
+  }
+  if (group.replacementExists) {
+    return {
+      statement: `
+      LET $${prefix}initialTargetRows = (
+        SELECT VALUE id FROM type::record('${group.first.tableName}', $${prefix}targetId)
+        WHERE id = type::record('${group.first.tableName}', $${prefix}targetId)
+          AND user_id = $${prefix}userId
+          AND payload.userId = $${prefix}userId
+          AND processing_lineage = NONE
+      );
+      IF array::len($${prefix}initialTargetRows) != 1 {
+        THROW "generic supersede initial target guard failed";
+      };`,
+      vars: {
+        ...vars,
+        [`${prefix}userId`]: group.first.userId,
+      },
+    };
+  }
+  return {
+    statement: `
+      LET $${prefix}initialTargetRows = (
+        SELECT VALUE id FROM type::record('${group.first.tableName}', $${prefix}targetId)
+        WHERE id = type::record('${group.first.tableName}', $${prefix}targetId)
+      );
+      IF array::len($${prefix}initialTargetRows) != 0 {
+        THROW "generic supersede initial target create-only guard failed";
+      };`,
+    vars,
+  };
+}
+
+function buildPreparedGenericSupersedeGroupTargetMutation(
+  group: GenericSupersedeGroup,
+  prefix: string,
+  serverClock: boolean,
+): { statement: string; vars: Record<string, unknown> } {
+  const first = group.first;
+  const last = group.last;
+  const targetPrefix = `${prefix}target_`;
+  const nowValue = serverClock ? "$h1_batch_now" : `$${targetPrefix}now`;
+  const nowStringValue = serverClock ? "$h1_batch_now_string" : `$${targetPrefix}now`;
+  const vars: Record<string, unknown> = {
+    [`${targetPrefix}id`]: group.targetId,
+    [`${targetPrefix}prevId`]: last.previousId,
+    [`${targetPrefix}userId`]: last.userId,
+    [`${targetPrefix}lineageRootId`]: last.lineageRootId,
+    [`${targetPrefix}provenance`]: last.supersedeProvenance,
+    [`${targetPrefix}supersede_provenance`]: last.supersedeProvenance,
+    [`${targetPrefix}inactiveReason`]: last.inactiveReason,
+    [`${targetPrefix}supersededById`]: group.targetId,
+  };
+  if (!serverClock) vars[`${targetPrefix}now`] = first.now;
+  if (group.replacementExists && group.replacementMetadata) {
+    Object.assign(vars, genericSupersedeWitnessVars(`${targetPrefix}target`, group.replacementMetadata));
+    return {
+      statement: `
+      LET $${targetPrefix}replacementRows = (
+        UPDATE type::record('${first.tableName}', $${targetPrefix}id) SET
+           supersedes = $${targetPrefix}prevId,
+           lineage_root_id = $${targetPrefix}lineageRootId,
+           updated_at = <datetime>${nowValue},
+           payload.supersedesId = $${targetPrefix}prevId,
+           payload.lineageRootId = $${targetPrefix}lineageRootId,
+           payload.updatedAt = ${nowStringValue},
+           payload.writeSource = $${targetPrefix}writeSource,
+           payload.arbitrationOutcome = 'supersede',
+           payload.supersede_provenance = $${targetPrefix}provenance,
+           supersede_provenance = $${targetPrefix}provenance
+         WHERE ${sameGenericSupersedeBranchWhere(`${targetPrefix}target`, first.tableName, `${targetPrefix}id`, group.replacementMetadata)}
+         RETURN VALUE id
+       );
+       IF array::len($${targetPrefix}replacementRows) != 1 {
+         THROW "generic supersede replacement compare-and-set failed";
+       };`,
+      vars: {
+        ...vars,
+        [`${targetPrefix}writeSource`]: last.replacement.writeSource,
+      },
+    };
+  }
+
+  if (group.replacementExists) {
+    return {
+      statement: `
+      LET $${targetPrefix}replacementRows = (
+        UPDATE type::record('${first.tableName}', $${targetPrefix}id) SET
+           supersedes = $${targetPrefix}prevId,
+           lineage_root_id = $${targetPrefix}lineageRootId,
+           updated_at = <datetime>${nowValue},
+           payload.supersedesId = $${targetPrefix}prevId,
+           payload.lineageRootId = $${targetPrefix}lineageRootId,
+           payload.updatedAt = ${nowStringValue},
+           payload.writeSource = $${targetPrefix}writeSource,
+           payload.arbitrationOutcome = 'supersede',
+           payload.supersede_provenance = $${targetPrefix}provenance,
+           supersede_provenance = $${targetPrefix}provenance
+         WHERE id = type::record('${first.tableName}', $${targetPrefix}id)
+           AND user_id = $${targetPrefix}userId
+           AND payload.userId = $${targetPrefix}userId
+           AND processing_lineage = NONE
+         RETURN VALUE id
+       );
+       IF array::len($${targetPrefix}replacementRows) != 1 {
+         THROW "generic supersede replacement compare-and-set failed";
+       };`,
+      vars: {
+        ...vars,
+        [`${targetPrefix}writeSource`]: last.replacement.writeSource,
+      },
+    };
+  }
+
+  const metadata = {
+    ...first.replacement.metadata,
+    writeSource: last.replacement.writeSource,
+    arbitrationOutcome: "supersede",
+    supersede_provenance: last.supersedeProvenance,
+  };
+  const { statement, vars: createVars } = composeGenericCreateMemory(
+    first.replacement.id,
+    first.replacement.text,
+    first.replacement.userId,
+    [...first.replacement.embedding],
+    metadata,
+    first.replacement.scope,
+    first.replacement.sessionId,
+    {
+      active: true,
+      supersedesId: last.previousId,
+      lineageRootId: last.lineageRootId,
+    },
+    first.tableName,
+    last.supersedeProvenance,
+    targetPrefix,
+    first.now,
+  );
+  let createStatement = serverClock
+    ? statement
+      .replaceAll(`created_at: <datetime>$${targetPrefix}now`, "created_at: <datetime>$h1_batch_now")
+      .replaceAll(`updated_at: <datetime>$${targetPrefix}now`, "updated_at: <datetime>$h1_batch_now")
+      .replaceAll(`$${targetPrefix}now`, "$h1_batch_now_string")
+    : statement;
+  if (serverClock) {
+    delete createVars[`${targetPrefix}now`];
+    const payload = createVars[`${targetPrefix}payload`];
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+      if (!first.payloadClockPresence.createdAt) delete (payload as Record<string, unknown>).createdAt;
+      // A grouped fresh survivor's effective updatedAt is the common batch
+      // clock, even when the first ordinary payload supplied a valid value.
+      if (group.states.length > 1 || !first.payloadClockPresence.updatedAt) {
+        delete (payload as Record<string, unknown>).updatedAt;
+      }
+    }
+    const generatedPayloadFields = [
+      !first.payloadClockPresence.createdAt ? "createdAt: $h1_batch_now_string" : undefined,
+      group.states.length > 1 || !first.payloadClockPresence.updatedAt
+        ? "updatedAt: $h1_batch_now_string"
+        : undefined,
+    ].filter((field): field is string => field !== undefined);
+    if (generatedPayloadFields.length > 0) {
+      const payloadBinding = `payload: $${targetPrefix}payload,`;
+      const payloadOverlay = `payload: object::extend($${targetPrefix}payload, { ${generatedPayloadFields.join(", ")} }),`;
+      createStatement = createStatement.replace(payloadBinding, payloadOverlay);
+    }
+  }
+  const createWithReturn = `${createStatement.replace(/;\s*$/, "")} RETURN VALUE id`;
+  return {
+    statement: `
+      LET $${targetPrefix}replacementRows = (${createWithReturn});
+      IF $${targetPrefix}replacementRows = NONE {
+        THROW "generic supersede replacement create affected unexpected rows";
+      };`,
+    vars: { ...vars, ...createVars },
+  };
+}
+
+function buildPreparedGenericSupersedePreviousTailMutation(
+  state: GenericSupersedePreparedState,
+  targetId: string,
+  prefix: string,
+  serverClock: boolean,
+): { statement: string; vars: Record<string, unknown> } {
+  const nowValue = serverClock ? "$h1_batch_now" : `$${prefix}now`;
+  const nowStringValue = serverClock ? "$h1_batch_now_string" : `$${prefix}now`;
+  const vars: Record<string, unknown> = {
+    [`${prefix}prevRecordId`]: state.previousId,
+    [`${prefix}userId`]: state.userId,
+    [`${prefix}lineageRootId`]: state.lineageRootId,
+    [`${prefix}supersede_provenance`]: state.supersedeProvenance,
+    [`${prefix}inactiveReason`]: state.inactiveReason,
+    [`${prefix}supersededById`]: targetId,
+  };
+  if (!serverClock) vars[`${prefix}now`] = state.now;
+  const genericPreviousWhere = state.previousMetadata
+    ? sameGenericSupersedeBranchWhere(`${prefix}previous`, state.tableName, `${prefix}prevRecordId`, state.previousMetadata)
+    : `id = type::record('${state.tableName}', $${prefix}prevRecordId)
+       AND user_id = $${prefix}userId
+       AND payload.userId = $${prefix}userId
+       AND processing_lineage = NONE`;
+  if (state.previousMetadata) {
+    Object.assign(vars, genericSupersedeWitnessVars(`${prefix}previous`, state.previousMetadata));
+  }
+  const staleFlagsClause = state.previousStaleFlags
+    ? `,\n       payload.isStale = true,\n       payload.staleSince = $${prefix}staleSince,\n       payload.contradictedBy = $${prefix}contradictedBy`
+    : "";
+  if (state.previousStaleFlags) {
+    vars[`${prefix}staleSince`] = state.previousStaleFlags.staleSince;
+    vars[`${prefix}contradictedBy`] = state.previousStaleFlags.contradictedBy;
+  }
+  return {
+    statement: `
+    LET $${prefix}previousRows = (
+      UPDATE type::record('${state.tableName}', $${prefix}prevRecordId) SET
+       active = false,
+       inactive_at = <datetime>${nowValue},
+       inactive_reason = $${prefix}inactiveReason,
+       superseded_by = $${prefix}supersededById,
+       lineage_root_id = $${prefix}lineageRootId,
+       supersede_provenance = $${prefix}supersede_provenance,
+       payload.active = false,
+       payload.inactiveAt = ${nowStringValue},
+       payload.inactiveReason = $${prefix}inactiveReason,
+       payload.supersededById = $${prefix}supersededById,
+       payload.lineageRootId = $${prefix}lineageRootId,
+       payload.supersede_provenance = $${prefix}supersede_provenance,
+       payload.updatedAt = ${nowStringValue},
+       updated_at = <datetime>${nowValue}${staleFlagsClause}
+     WHERE ${genericPreviousWhere}
+     RETURN VALUE id
+    );
+    IF array::len($${prefix}previousRows) != 1 {
+      THROW "generic supersede previous compare-and-set failed";
+    };`,
+    vars,
+  };
+}
+
 function buildPreparedGenericSupersedeMutation(
   state: GenericSupersedePreparedState,
   prefix: string,
@@ -2358,7 +2815,7 @@ function buildPreparedGenericSupersedeInitialGuard(
   return { statement: statements.join("\n"), vars };
 }
 
-/** Composes only row-disjoint H1 plans into one namespaced transaction body. */
+/** Composes H1 plans and the private H2 shared-target extension. */
 export function composePreparedSupersedeBatch(
   db: SurrealClient,
   tableName: MemoryRecordTable,
@@ -2366,43 +2823,74 @@ export function composePreparedSupersedeBatch(
   plans: readonly PreparedGenericSupersede[],
 ): { statement: string; vars: Record<string, unknown> } {
   const validatedTableName = validateGenericTableName(tableName);
-  const validatedUserId = validateGenericString(userId, "user id");
+  const validatedUserId = validateGenericString(userId, "user id")!;
   const copiedPlans = copyOwnedPreparedPlanCollection(plans);
   const states: GenericSupersedePreparedState[] = [];
   for (let index = 0; index < copiedPlans.length; index += 1) {
     states.push(getPreparedGenericSupersede(copiedPlans[index]));
   }
-  const occupied = new Set<string>();
-  for (const state of states) {
-    if (state.db !== db) throw new Error("supersedeMemory: prepared plan database mismatch");
-    if (state.tableName !== validatedTableName) throw new Error("supersedeMemory: prepared plan table mismatch");
-    if (state.userId !== validatedUserId) throw new Error("supersedeMemory: prepared plan user mismatch");
-    for (const id of [state.previousId, state.replacement.id]) {
-      if (occupied.has(id)) throw new Error("supersedeMemory: prepared plan rows overlap");
-      occupied.add(id);
+  const groups = groupPreparedGenericSupersedes(states, db, validatedTableName, validatedUserId);
+  const hasSharedTarget = groups.some((group) => group.states.length > 1);
+
+  // Keep ordinary single and row-disjoint callers byte-compatible. H2 changes
+  // only the private duplicate-target composition path.
+  if (!hasSharedTarget) {
+    const statementParts: string[] = [];
+    const vars: Record<string, unknown> = {};
+    if (states.some((state) => state.db instanceof SurrealClient)) {
+      statementParts.push("LET $h1_batch_now = time::now(); LET $h1_batch_now_string = <string>$h1_batch_now;");
     }
+    for (let index = 0; index < states.length; index += 1) {
+      const initial = buildPreparedGenericSupersedeInitialGuard(states[index], `h1_${index}_`);
+      statementParts.push(initial.statement);
+      Object.assign(vars, initial.vars);
+    }
+    for (let index = 0; index < states.length; index += 1) {
+      const mutation = buildPreparedGenericSupersedeMutation(states[index], `h1_${index}_`);
+      statementParts.push(mutation.statement);
+      Object.assign(vars, mutation.vars);
+    }
+    return { statement: statementParts.join("\n"), vars };
   }
+
   const statementParts: string[] = [];
   const vars: Record<string, unknown> = {};
-  if (states.some((state) => state.db instanceof SurrealClient)) {
-    // One server-generated precise timestamp is shared by every row in the
-    // caller-owned transaction. No JavaScript clock or millisecond string is
-    // used for the production mutation timestamp.
+  const serverClock = states.some((state) => state.db instanceof SurrealClient);
+  if (serverClock) {
     statementParts.push("LET $h1_batch_now = time::now(); LET $h1_batch_now_string = <string>$h1_batch_now;");
   }
-  // Every plan's complete initial snapshot/absence guard is emitted before
-  // the first CREATE or UPDATE effect. A late plan cannot allow an earlier
-  // plan to mutate before its own branch/body/version checks pass.
-  for (let index = 0; index < states.length; index += 1) {
-    const initial = buildPreparedGenericSupersedeInitialGuard(states[index], `h1_${index}_`);
-    statementParts.push(initial.statement);
-    Object.assign(vars, initial.vars);
+  // Every previous-row guard and one unique target guard precede every effect.
+  for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+    const group = groups[groupIndex]!;
+    const groupPrefix = `h2_${groupIndex}_`;
+    for (let tailIndex = 0; tailIndex < group.states.length; tailIndex += 1) {
+      const initial = buildPreparedGenericSupersedePreviousInitialGuard(
+        group.states[tailIndex]!,
+        `${groupPrefix}tail_${tailIndex}_`,
+      );
+      statementParts.push(initial.statement);
+      Object.assign(vars, initial.vars);
+    }
+    const targetInitial = buildPreparedGenericSupersedeTargetInitialGuard(group, `${groupPrefix}target_`);
+    statementParts.push(targetInitial.statement);
+    Object.assign(vars, targetInitial.vars);
   }
-  for (let index = 0; index < states.length; index += 1) {
-    const state = states[index];
-    const mutation = buildPreparedGenericSupersedeMutation(state, `h1_${index}_`);
-    statementParts.push(mutation.statement);
-    Object.assign(vars, mutation.vars);
+  for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+    const group = groups[groupIndex]!;
+    const groupPrefix = `h2_${groupIndex}_`;
+    const target = buildPreparedGenericSupersedeGroupTargetMutation(group, groupPrefix, serverClock);
+    statementParts.push(target.statement);
+    Object.assign(vars, target.vars);
+    for (let tailIndex = 0; tailIndex < group.states.length; tailIndex += 1) {
+      const tail = buildPreparedGenericSupersedePreviousTailMutation(
+        group.states[tailIndex]!,
+        group.targetId,
+        `${groupPrefix}tail_${tailIndex}_`,
+        serverClock,
+      );
+      statementParts.push(tail.statement);
+      Object.assign(vars, tail.vars);
+    }
   }
   return { statement: statementParts.join("\n"), vars };
 }

@@ -206,7 +206,6 @@ describe("generic supersede preparation and composition", () => {
       USER,
       [first, second],
     );
-
     expect(composed.statement).toContain("$h1_0_previousRows");
     expect(composed.statement).toContain("$h1_1_previousRows");
     expect(composed.vars.h1_0_sup_recordId).toBe("replacement-a");
@@ -221,6 +220,165 @@ describe("generic supersede preparation and composition", () => {
       [first, overlapping],
     )).toThrow(/rows overlap/);
     expect(db.queryTransaction).not.toHaveBeenCalled();
+  });
+
+  it("groups shared fresh targets with first payload fields and last bookkeeping", async () => {
+    const db = mockDb();
+    const first = await prepare(db, "h2-first-previous", "h2-shared-target", {
+      l2: "first-payload-overlay",
+      scope: "session",
+      sessionId: "first-session",
+      createdAt: "2001-02-03T04:05:06.123456789Z",
+      updatedAt: "2002-03-04T05:06:07.123456789Z",
+      richMarker: "first-rich",
+    });
+    const second = await prepare(db, "h2-second-previous", "h2-shared-target", {
+      l2: "second-payload-overlay",
+      scope: "user",
+      sessionId: "second-session",
+      richMarker: "second-rich",
+    });
+
+    const composed = composePreparedSupersedeBatch(
+      db as unknown as SurrealClient,
+      TABLE,
+      USER,
+      [first, second],
+    );
+    const payload = composed.vars.h2_0_target_payload as Record<string, unknown>;
+    expect(composed.statement.match(/CREATE ONLY/g)).toHaveLength(1);
+    expect(composed.statement.indexOf("initialPreviousRows")).toBeLessThan(composed.statement.indexOf("CREATE ONLY"));
+    expect(composed.statement).toContain("h2_0_tail_0_previousRows");
+    expect(composed.statement).toContain("h2_0_tail_1_previousRows");
+    expect(payload).toMatchObject({
+      l2: "first-payload-overlay",
+      scope: "session",
+      sessionId: "first-session",
+      richMarker: "first-rich",
+      createdAt: "2001-02-03T04:05:06.123456789Z",
+      updatedAt: "2002-03-04T05:06:07.123456789Z",
+      supersedesId: "h2-second-previous",
+      writeSource: "session_summary",
+      arbitrationOutcome: "supersede",
+      supersede_provenance: "deterministic",
+    });
+    expect(db.queryTransaction).not.toHaveBeenCalled();
+  });
+
+  it("validates only the first shared fresh payload and ignores later creation-only metadata", async () => {
+    const db = mockDb();
+    const first = await prepare(db, "h2-first-only-previous", "h2-first-only-target", {
+      l2: "first payload",
+      scope: "session",
+      sessionId: "first-session",
+      createdAt: "2001-02-03T04:05:06.123456789Z",
+      updatedAt: "2002-03-04T05:06:07.123456789Z",
+    });
+    const laterHostile = await prepare(db, "h2-later-hostile-previous", "h2-first-only-target", {
+      userId: "other-user",
+      l2: null,
+      createdAt: undefined,
+      updatedAt: null,
+      active: "true",
+    });
+
+    const composed = composePreparedSupersedeBatch(
+      db as unknown as SurrealClient,
+      TABLE,
+      USER,
+      [first, laterHostile],
+    );
+    expect(composed.vars.h2_0_target_payload).toMatchObject({
+      l2: "first payload",
+      scope: "session",
+      sessionId: "first-session",
+      createdAt: "2001-02-03T04:05:06.123456789Z",
+      updatedAt: "2002-03-04T05:06:07.123456789Z",
+    });
+    expect(db.queryTransaction).not.toHaveBeenCalled();
+
+    expect(() => composePreparedSupersedeBatch(
+      db as unknown as SurrealClient,
+      TABLE,
+      USER,
+      [laterHostile, first],
+    )).toThrow();
+    expect(db.queryTransaction).not.toHaveBeenCalled();
+  });
+
+  it("uses provider order for first content and reversed order for last bookkeeping", async () => {
+    const db = mockDb();
+    const first = await prepare(db, "h2-order-a", "h2-order-target", { l2: "A" });
+    const second = await prepare(db, "h2-order-b", "h2-order-target", { l2: "B" });
+    const reversed = composePreparedSupersedeBatch(
+      db as unknown as SurrealClient,
+      TABLE,
+      USER,
+      [second, first],
+    );
+    const payload = reversed.vars.h2_0_target_payload as Record<string, unknown>;
+    expect(payload.l2).toBe("B");
+    expect(payload.supersedesId).toBe("h2-order-a");
+    expect(reversed.statement).toContain("h2_0_tail_0_previousRows");
+    expect(reversed.statement).toContain("h2_0_tail_1_previousRows");
+  });
+
+  it.each([
+    ["mismatched user", { userId: "other-user" }],
+    ["null user", { userId: null }],
+    ["undefined updatedAt", { updatedAt: undefined }],
+    ["coercible active", { active: "true" }],
+  ] as const)("refuses hostile grouped first payload %s before SQL", async (_label, metadata) => {
+    const db = mockDb();
+    const first = await prepare(db, `h2-hostile-${_label}-a`, `h2-hostile-${_label}-target`, metadata);
+    const second = await prepare(db, `h2-hostile-${_label}-b`, `h2-hostile-${_label}-target`);
+    expect(() => composePreparedSupersedeBatch(
+      db as unknown as SurrealClient,
+      TABLE,
+      USER,
+      [first, second],
+    )).toThrow();
+    expect(db.queryTransaction).not.toHaveBeenCalled();
+  });
+
+  it("keeps a shared existing target on one guarded update with every previous tail", async () => {
+    const db = mockDb({ replacementExists: true });
+    const first = await prepare(db, "h2-existing-first", "existing");
+    const second = await prepare(db, "h2-existing-second", "existing");
+    const composed = composePreparedSupersedeBatch(
+      db as unknown as SurrealClient,
+      TABLE,
+      USER,
+      [first, second],
+    );
+    expect(composed.statement).not.toContain("CREATE ONLY");
+    expect(composed.statement.match(/UPDATE type::record\('semiote'/g)).toHaveLength(3);
+    expect(composed.statement).toContain("h2_0_target_initialTargetRows");
+    expect(composed.statement).toContain("h2_0_tail_0_previousRows");
+    expect(composed.statement).toContain("h2_0_tail_1_previousRows");
+    expect(composed.vars.h2_0_target_targetId).toBe("existing");
+    expect(composed.vars.h2_0_target_userId).toBe(USER);
+  });
+
+  it("keeps multiple shared and disjoint groups behind one all-guards-first body", async () => {
+    const db = mockDb();
+    const sharedFirst = await prepare(db, "h2-multi-shared-first", "h2-multi-shared-target", { l2: "shared-first" });
+    const sharedSecond = await prepare(db, "h2-multi-shared-second", "h2-multi-shared-target", { l2: "shared-second" });
+    const disjoint = await prepare(db, "h2-multi-disjoint-previous", "h2-multi-disjoint-target");
+    const composed = composePreparedSupersedeBatch(
+      db as unknown as SurrealClient,
+      TABLE,
+      USER,
+      [sharedFirst, sharedSecond, disjoint],
+    );
+    expect(composed.statement.match(/CREATE ONLY/g)).toHaveLength(2);
+    const firstEffect = Math.min(
+      composed.statement.indexOf("CREATE ONLY"),
+      composed.statement.indexOf("UPDATE type::record('semiote'"),
+    );
+    expect(composed.statement.indexOf("h2_0_target_initialTargetRows")).toBeLessThan(firstEffect);
+    expect(composed.statement.indexOf("h2_0_tail_1_initialPreviousRows")).toBeLessThan(firstEffect);
+    expect(composed.statement).toContain("h2_1_target_initialTargetRows");
   });
 
   it("keeps the existing-survivor branch bookkeeping-only", async () => {
