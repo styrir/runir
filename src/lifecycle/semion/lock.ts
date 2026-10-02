@@ -1,6 +1,16 @@
 import { extractId, type SurrealClient } from "../../storage/surreal/surreal-store.js";
 import { ensureProcessingLineageSchema } from "../../storage/surreal/processing-lineage-schema.js";
-import { classifyProcessingLineage } from "../../domain/memory/processing-lineage.js";
+import {
+  classifyProcessingLineage,
+  conservativeJoinProcessingLineage,
+  type ProcessingLineageV1,
+} from "../../domain/memory/processing-lineage.js";
+import {
+  runWithMintedProcessingLineage,
+  type MintedProcessingLineage,
+  type ProducerAuthority,
+  type ProducerOperation,
+} from "../../app/processing-policy/authority.js";
 
 /**
  * Attempts to acquire a TTL lease lock for a userId/scope pair.
@@ -114,7 +124,8 @@ export type CurrentSnapshotBacklogRefusalReason =
   | "support_lineage_invalid"
   | "stored_fact_missing"
   | "stored_fact_invalid"
-  | "backlog_collision";
+  | "backlog_collision"
+  | "producer_policy_refused";
 
 type BacklogSnapshot = Readonly<Record<string, unknown>>;
 type BacklogFactSnapshot = Readonly<{
@@ -204,6 +215,7 @@ function readCarrierId(carrier: unknown): string | undefined {
   if (carrier === null || typeof carrier !== "object") return undefined;
   const descriptor = Object.getOwnPropertyDescriptor(carrier, "replacementMemoryId");
   if (!descriptor || !("value" in descriptor)) return undefined;
+  if (typeof descriptor.value !== "string") return undefined;
   return normalizeBacklogRecordId(descriptor.value);
 }
 
@@ -581,12 +593,405 @@ async function readBacklogTransactionWitness(
   };
 }
 
+type ProtectedBacklogBundle = Readonly<{
+  snapshot: BacklogSnapshot;
+  supportIds: readonly string[];
+  lineage: ProcessingLineageV1;
+}>;
+
+type SyntheticStalenessBacklogOperation = Extract<ProducerOperation, "scheduled_maintenance" | "forced_maintenance">;
+
+type SyntheticStalenessBacklogPlan = Readonly<{
+  authority: ProducerAuthority;
+  db: SurrealClient;
+  table: "staleness_backlog";
+  operation: SyntheticStalenessBacklogOperation;
+  expectedTargetUserId: string;
+  scope: string;
+  sessionId: undefined;
+  replacementIds: readonly string[];
+  sources: readonly ProtectedBacklogBundle[];
+  supports: readonly ProtectedBacklogBundle[];
+  joinedLineage: ProcessingLineageV1;
+  facts: readonly { text: string; confidence: number; replacementMemoryId: string }[];
+  backlogId: string;
+  now: string;
+}>;
+
+type SyntheticStalenessBacklogWitness = Readonly<{
+  backlogExact: boolean;
+  backlogAbsent: boolean;
+  sourcesExact: boolean;
+  supportsExact: boolean;
+}>;
+
+/** Private identity for a source-owned plan.  It is never exported or serialized. */
+const syntheticStalenessBacklogPlanIdentity = new WeakMap<object, SyntheticStalenessBacklogPlan>();
+
+function protectedPolicyRefusal(): CurrentSnapshotBacklogResult {
+  return backlogRefusal("producer_policy_refused");
+}
+
+function protectedLineageRefusal(support: boolean): CurrentSnapshotBacklogResult {
+  return backlogRefusal(support ? "support_lineage_invalid" : "source_lineage_invalid");
+}
+
+function classifyProtectedCaptureLineage(
+  snapshot: BacklogSnapshot,
+  expectedTargetUserId: string,
+  support: boolean,
+): ProcessingLineageV1 | CurrentSnapshotBacklogResult {
+  let classified: ReturnType<typeof classifyProcessingLineage>;
+  try {
+    classified = classifyProcessingLineage(snapshot.processing_lineage);
+  } catch {
+    return protectedLineageRefusal(support);
+  }
+  if (classified.state !== "minni_verified") return protectedLineageRefusal(support);
+  if (classified.lineage.admitted_operation !== "capture_ingest"
+    || classified.lineage.target_user_id !== expectedTargetUserId) {
+    return protectedLineageRefusal(support);
+  }
+  return classified.lineage;
+}
+
+async function readProtectedBacklogMetadata(
+  db: SurrealClient,
+  id: string,
+  expectedTargetUserId: string,
+  scope: string,
+  sessionId: undefined,
+  support: boolean,
+): Promise<ProtectedBacklogBundle | CurrentSnapshotBacklogResult> {
+  try {
+    const snapshot = await readBacklogSnapshot(db, id, false);
+    const prefix = support ? "support" : "source";
+    if (!snapshot || normalizeBacklogRecordId(snapshot.id) !== id) {
+      return backlogRefusal(support ? "support_missing" : "source_missing");
+    }
+    if (!hasStrictDualBinding(snapshot)) {
+      const user = strictDualString(snapshot, "user_id", "payload_user_id");
+      const scopeValue = strictDualString(snapshot, "scope", "payload_scope");
+      if (user === undefined) return backlogRefusal(`${prefix}_user_mismatch` as CurrentSnapshotBacklogRefusalReason);
+      if (scopeValue === undefined) return backlogRefusal(`${prefix}_scope_mismatch` as CurrentSnapshotBacklogRefusalReason);
+      return backlogRefusal(`${prefix}_session_mismatch` as CurrentSnapshotBacklogRefusalReason);
+    }
+    if (snapshotOwnerUserId(snapshot) !== expectedTargetUserId) {
+      return backlogRefusal(`${prefix}_user_mismatch` as CurrentSnapshotBacklogRefusalReason);
+    }
+    if (snapshotScope(snapshot) !== scope) {
+      return backlogRefusal(`${prefix}_scope_mismatch` as CurrentSnapshotBacklogRefusalReason);
+    }
+    if (snapshotSessionId(snapshot) !== sessionId) {
+      return backlogRefusal(`${prefix}_session_mismatch` as CurrentSnapshotBacklogRefusalReason);
+    }
+    const branchRefusal = validateLegacyBranch(snapshot, support);
+    if (branchRefusal) return branchRefusal;
+    const lineage = classifyProtectedCaptureLineage(snapshot, expectedTargetUserId, support);
+    if ("status" in lineage) return lineage;
+    const supportIds = normalizeBacklogSupportIds(snapshot.support_semiote_ids);
+    if (!supportIds) return backlogRefusal(support ? "support_lineage_invalid" : "source_supports_malformed");
+    return { snapshot, supportIds, lineage };
+  } catch {
+    return protectedLineageRefusal(support);
+  }
+}
+
+function joinProtectedStoredLineages(
+  bundles: readonly ProtectedBacklogBundle[],
+): ProcessingLineageV1 | CurrentSnapshotBacklogResult {
+  const first = bundles[0];
+  if (!first) return protectedLineageRefusal(false);
+  let joined = first.lineage;
+  for (const bundle of bundles.slice(1)) {
+    const result = conservativeJoinProcessingLineage(
+      classifyProcessingLineage(joined),
+      classifyProcessingLineage(bundle.lineage),
+    );
+    if (!result.ok) return protectedLineageRefusal(false);
+    joined = result.lineage;
+  }
+  return joined;
+}
+
+function appendProtectedSnapshotGuard(
+  predicates: string[],
+  variables: Record<string, unknown>,
+  snapshot: BacklogSnapshot,
+  prefix: string,
+): void {
+  for (const [field, alias] of BACKLOG_SNAPSHOT_FIELDS) {
+    const value = snapshot[alias];
+    const parameter = `${prefix}${alias.replace(/(^|_)([a-z])/g, (_match, _separator, character: string) => character.toUpperCase())}`;
+    if (value === undefined) predicates.push(`${field} = NONE`);
+    else if (value === null) predicates.push(`${field} = NULL`);
+    else {
+      predicates.push(`${field} = $${parameter}`);
+      variables[parameter] = value;
+    }
+  }
+}
+
+async function readSyntheticStalenessBacklogWitness(
+  db: SurrealClient,
+  plan: SyntheticStalenessBacklogPlan,
+): Promise<SyntheticStalenessBacklogWitness> {
+  const variables: Record<string, unknown> = {
+    backlogId: plan.backlogId,
+    userId: plan.expectedTargetUserId,
+    scope: plan.scope,
+    now: plan.now,
+    facts: plan.facts,
+  };
+  const statements: string[] = [];
+  const sourceIndexes: number[] = [];
+  const supportIndexes: number[] = [];
+  const appendBundle = (bundle: ProtectedBacklogBundle, prefix: string, indexes: number[]): void => {
+    const predicates: string[] = [];
+    appendProtectedSnapshotGuard(predicates, variables, bundle.snapshot, prefix);
+    variables[`${prefix}Id`] = normalizeBacklogRecordId(bundle.snapshot.id);
+    indexes.push(statements.length);
+    statements.push(`SELECT VALUE id FROM type::record('semiote', $${prefix}Id) WHERE ${predicates.join(" AND ")} LIMIT 2;`);
+  };
+  plan.sources.forEach((bundle, index) => appendBundle(bundle, `witnessSource${index}`, sourceIndexes));
+  plan.supports.forEach((bundle, index) => appendBundle(bundle, `witnessSupport${index}`, supportIndexes));
+  const backlogPredicates = [
+    "user_id = $userId",
+    "scope = $scope",
+    "status = 'pending'",
+    "processing_lineage = NONE",
+    "triggered_at = <datetime>$now",
+    "facts = $facts",
+  ];
+  backlogPredicates.push("session_id = NONE");
+  const backlogExactIndex = statements.length;
+  statements.push(`SELECT VALUE id FROM type::record('staleness_backlog', $backlogId) WHERE ${backlogPredicates.join(" AND ")} LIMIT 2;`);
+  const backlogAnyIndex = statements.length;
+  statements.push("SELECT VALUE id FROM type::record('staleness_backlog', $backlogId) LIMIT 2;");
+  const results = await db.query<unknown>(statements.join("\n"), variables);
+  return {
+    backlogExact: resultHasExactlyOne(results[backlogExactIndex]),
+    backlogAbsent: Array.isArray(results[backlogAnyIndex]) && results[backlogAnyIndex].length === 0,
+    sourcesExact: sourceIndexes.every((index) => resultHasExactlyOne(results[index])),
+    supportsExact: supportIndexes.every((index) => resultHasExactlyOne(results[index])),
+  };
+}
+
 async function backlogRecordExists(db: SurrealClient, id: string): Promise<boolean> {
   const result = await db.query<unknown>(
     "SELECT VALUE id FROM type::record('staleness_backlog', $id) LIMIT 1;",
     { id },
   );
   return resultHasExactlyOne(result[0]);
+}
+
+function requireSyntheticTargetUser(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length === 0 || value.trim() !== value) return undefined;
+  return value;
+}
+
+function syntheticMaintenanceText(operation: SyntheticStalenessBacklogOperation): string {
+  return operation === "scheduled_maintenance"
+    ? "Synthetic scheduled maintenance proof content."
+    : "Synthetic forced maintenance proof content.";
+}
+
+async function prepareSyntheticStalenessBacklogPlan(
+  db: SurrealClient,
+  authority: ProducerAuthority,
+  operation: SyntheticStalenessBacklogOperation,
+  expectedTargetUserId: string,
+  replacementIds: readonly string[],
+): Promise<SyntheticStalenessBacklogPlan | CurrentSnapshotBacklogResult> {
+  const scope = "user";
+  const sessionId = undefined;
+  const sourceBundles: ProtectedBacklogBundle[] = [];
+  for (const id of replacementIds) {
+    const source = await readProtectedBacklogMetadata(db, id, expectedTargetUserId, scope, sessionId, false);
+    if ("status" in source) return source;
+    sourceBundles.push(source);
+  }
+
+  const supportById = new Map<string, ProtectedBacklogBundle>();
+  for (const source of sourceBundles) {
+    for (const supportId of source.supportIds) {
+      if (supportById.has(supportId)) continue;
+      const support = await readProtectedBacklogMetadata(db, supportId, expectedTargetUserId, scope, sessionId, true);
+      if ("status" in support) return support;
+      supportById.set(supportId, support);
+    }
+  }
+
+  const joined = joinProtectedStoredLineages([...sourceBundles, ...supportById.values()]);
+  if ("status" in joined) return joined;
+
+  const backlogId = crypto.randomUUID();
+  if (await backlogRecordExists(db, backlogId)) return backlogRefusal("backlog_collision");
+  const factText = syntheticMaintenanceText(operation);
+  const facts = Object.freeze(replacementIds.map((replacementMemoryId) => Object.freeze({
+    text: factText,
+    confidence: 0.5,
+    replacementMemoryId,
+  })));
+  const plan = Object.freeze({
+    authority,
+    db,
+    table: "staleness_backlog" as const,
+    operation,
+    expectedTargetUserId,
+    scope,
+    sessionId,
+    replacementIds: Object.freeze([...replacementIds]),
+    sources: Object.freeze([...sourceBundles]),
+    supports: Object.freeze([...supportById.values()]),
+    joinedLineage: joined,
+    facts,
+    backlogId,
+    now: new Date().toISOString(),
+  }) as SyntheticStalenessBacklogPlan;
+  syntheticStalenessBacklogPlanIdentity.set(plan, plan);
+  return plan;
+}
+
+function appendSyntheticStalenessBacklogStatements(
+  plan: SyntheticStalenessBacklogPlan,
+): { statements: readonly string[]; variables: Record<string, unknown> } {
+  const variables: Record<string, unknown> = {
+    backlogId: plan.backlogId,
+    userId: plan.expectedTargetUserId,
+    scope: plan.scope,
+    sessionId: plan.sessionId,
+    now: plan.now,
+    facts: plan.facts,
+  };
+  const statements: string[] = [];
+  const appendGuard = (bundle: ProtectedBacklogBundle, prefix: string, kind: "source" | "support"): void => {
+    const predicates: string[] = [];
+    appendProtectedSnapshotGuard(predicates, variables, bundle.snapshot, prefix);
+    variables[`${prefix}Id`] = normalizeBacklogRecordId(bundle.snapshot.id);
+    statements.push(`
+      LET $${kind}Rows${prefix.replace(/[^0-9]/g, "")} = (
+        SELECT VALUE id FROM type::record('semiote', $${prefix}Id)
+        WHERE ${predicates.join(" AND ")}
+      );
+      IF array::len($${kind}Rows${prefix.replace(/[^0-9]/g, "")}) != 1 {
+        THROW "synthetic staleness backlog ${kind} snapshot guard failed";
+      };
+    `);
+  };
+  plan.sources.forEach((bundle, index) => appendGuard(bundle, `source${index}`, "source"));
+  plan.supports.forEach((bundle, index) => appendGuard(bundle, `support${index}`, "support"));
+  statements.push(`
+    LET $backlogRows = (
+      CREATE ONLY type::record('staleness_backlog', $backlogId) CONTENT {
+        user_id: $userId,
+        scope: $scope,
+        session_id: $sessionId,
+        triggered_at: <datetime>$now,
+        facts: $facts,
+        status: 'pending'
+      } RETURN VALUE [id]
+    );
+    IF array::len($backlogRows) != 1 {
+      THROW "synthetic staleness backlog create affected unexpected rows";
+    };
+  `);
+  return { statements, variables };
+}
+
+async function writeSyntheticStalenessBacklog(
+  db: SurrealClient,
+  authority: ProducerAuthority,
+  minted: MintedProcessingLineage | unknown,
+  expectedTargetUserId: string,
+  operation: SyntheticStalenessBacklogOperation,
+  carriers: readonly StalenessBacklogReplacementIdCarrier[],
+): Promise<CurrentSnapshotBacklogResult> {
+  const copiedExpectedUserId = requireSyntheticTargetUser(expectedTargetUserId);
+  if (!copiedExpectedUserId || !Array.isArray(carriers) || carriers.length === 0) return backlogRefusal("invalid_input");
+  const replacementIds: string[] = [];
+  for (const carrier of carriers) {
+    const id = readCarrierId(carrier);
+    if (!id) return backlogRefusal("invalid_input");
+    if (replacementIds.includes(id)) return backlogRefusal("duplicate_replacement");
+    replacementIds.push(id);
+  }
+
+  const preflight = await runWithMintedProcessingLineage(
+    authority,
+    minted,
+    async () => prepareSyntheticStalenessBacklogPlan(
+      db,
+      authority,
+      operation,
+      copiedExpectedUserId,
+      replacementIds,
+    ),
+    { operation, targetUserId: copiedExpectedUserId },
+  );
+  if (!preflight.ok) return protectedPolicyRefusal();
+  if ("status" in preflight.value) return preflight.value;
+  const plan = preflight.value;
+  if (syntheticStalenessBacklogPlanIdentity.get(plan) !== plan
+    || plan.authority !== authority
+    || plan.db !== db
+    || plan.table !== "staleness_backlog"
+    || plan.operation !== operation
+    || plan.expectedTargetUserId !== copiedExpectedUserId) {
+    return protectedPolicyRefusal();
+  }
+  let statements: readonly string[];
+  let variables: Record<string, unknown>;
+  try {
+    ({ statements, variables } = appendSyntheticStalenessBacklogStatements(plan));
+  } catch {
+    return protectedPolicyRefusal();
+  }
+  try {
+    const transactionGate = await runWithMintedProcessingLineage(
+      authority,
+      minted,
+      async () => db.queryTransaction(statements.join("\n"), variables),
+      { operation, targetUserId: plan.expectedTargetUserId },
+    );
+    if (!transactionGate.ok) return protectedPolicyRefusal();
+    return { status: "committed", backlogId: plan.backlogId };
+  } catch {
+    try {
+      const witness = await readSyntheticStalenessBacklogWitness(db, plan);
+      if (witness.backlogExact && witness.sourcesExact && witness.supportsExact) {
+        return { status: "committed", backlogId: plan.backlogId };
+      }
+      if (witness.backlogAbsent && witness.sourcesExact && witness.supportsExact) {
+        return { status: "rolled_back", backlogId: plan.backlogId, reason: "transaction_rolled_back", contentFree: true };
+      }
+    } catch {
+      // Metadata-only reconciliation cannot turn an unknown outcome into a retry.
+    }
+    return { status: "indeterminate", backlogId: plan.backlogId, reason: "transaction_indeterminate", contentFree: true };
+  }
+}
+
+/** Fixed source-owned proof seam; it does not activate scheduled processing. */
+export async function writeSyntheticScheduledStalenessBacklog(
+  db: SurrealClient,
+  authority: ProducerAuthority,
+  minted: MintedProcessingLineage | unknown,
+  expectedTargetUserId: string,
+  carriers: readonly StalenessBacklogReplacementIdCarrier[],
+): Promise<CurrentSnapshotBacklogResult> {
+  return writeSyntheticStalenessBacklog(db, authority, minted, expectedTargetUserId, "scheduled_maintenance", carriers);
+}
+
+/** Fixed source-owned proof seam; it does not activate forced processing. */
+export async function writeSyntheticForcedStalenessBacklog(
+  db: SurrealClient,
+  authority: ProducerAuthority,
+  minted: MintedProcessingLineage | unknown,
+  expectedTargetUserId: string,
+  carriers: readonly StalenessBacklogReplacementIdCarrier[],
+): Promise<CurrentSnapshotBacklogResult> {
+  return writeSyntheticStalenessBacklog(db, authority, minted, expectedTargetUserId, "forced_maintenance", carriers);
 }
 
 async function writeCurrentSnapshotBacklog(
