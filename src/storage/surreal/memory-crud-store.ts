@@ -1544,6 +1544,10 @@ type GenericSupersedePreparedState = Readonly<{
   inactiveReason: string;
   previousStaleFlags?: Readonly<{ staleSince: string; contradictedBy: string }>;
   lineageRootId: string;
+  payloadClockPresence: Readonly<{
+    createdAt: boolean;
+    updatedAt: boolean;
+  }>;
   /** Compatibility-only clock for non-production controlled mocks. */
   now?: string;
 }>;
@@ -2103,15 +2107,31 @@ function buildPreparedGenericSupersedeMutation(
       state.tableName,
       state.supersedeProvenance,
       createPrefix,
-      "__h1_server_timestamp__",
+      state.now,
     );
-    const createStatement = serverClock
+    let createStatement = serverClock
       ? statement
         .replaceAll(`created_at: <datetime>$${createPrefix}now`, "created_at: <datetime>$h1_batch_now")
         .replaceAll(`updated_at: <datetime>$${createPrefix}now`, "updated_at: <datetime>$h1_batch_now")
         .replaceAll(`$${createPrefix}now`, "$h1_batch_now_string")
       : statement;
-    if (serverClock) delete createVars[`${createPrefix}now`];
+    if (serverClock) {
+      delete createVars[`${createPrefix}now`];
+      const payload = createVars[`${createPrefix}payload`];
+      if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+        if (!state.payloadClockPresence.createdAt) delete (payload as Record<string, unknown>).createdAt;
+        if (!state.payloadClockPresence.updatedAt) delete (payload as Record<string, unknown>).updatedAt;
+      }
+      const generatedPayloadFields = [
+        !state.payloadClockPresence.createdAt ? "createdAt: $h1_batch_now_string" : undefined,
+        !state.payloadClockPresence.updatedAt ? "updatedAt: $h1_batch_now_string" : undefined,
+      ].filter((field): field is string => field !== undefined);
+      if (generatedPayloadFields.length > 0) {
+        const payloadBinding = `payload: $${createPrefix}payload,`;
+        const payloadOverlay = `payload: object::extend($${createPrefix}payload, { ${generatedPayloadFields.join(", ")} }),`;
+        createStatement = createStatement.replace(payloadBinding, payloadOverlay);
+      }
+    }
     const createWithReturn = `${createStatement.replace(/;\s*$/, "")} RETURN VALUE id`;
     statements.push(`
       LET $${prefix}replacementRows = (${createWithReturn});
@@ -2275,6 +2295,12 @@ export async function prepareSupersedeMemory(
     inactiveReason,
     previousStaleFlags: staleFlagsCopy,
     lineageRootId: previousCopy.lineageRootId ?? previousCopy.id,
+    payloadClockPresence: Object.freeze({
+      createdAt: replacementCopy.metadata !== undefined
+        && Object.prototype.hasOwnProperty.call(replacementCopy.metadata, "createdAt"),
+      updatedAt: replacementCopy.metadata !== undefined
+        && Object.prototype.hasOwnProperty.call(replacementCopy.metadata, "updatedAt"),
+    }),
     now: db instanceof SurrealClient ? undefined : new Date().toISOString(),
   });
   return mintPreparedGenericSupersede(state);
