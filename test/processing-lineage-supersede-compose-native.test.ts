@@ -7,6 +7,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DateTime, RecordId, Uuid, type Surreal as SurrealClient } from "surrealdb";
 import {
   composePreparedSupersedeBatch,
+  composeUpsertMemory,
+  findSimilarMemories,
+  getMemoryById,
+  listMemories,
   prepareSupersedeMemory,
   supersedeMemory,
   SurrealClient as ExportedSurrealClient,
@@ -16,6 +20,7 @@ import {
 import { ensureMemoryEnrichmentSchema } from "../src/storage/surreal/memory-schema-bootstrap.js";
 import { ensurePhase2Schema } from "../src/storage/surreal/phase2-store.js";
 import type { SimilarCandidate } from "../src/domain/memory/types.js";
+import { getSearchHitLineage } from "../src/domain/memory/search-hit-lineage.js";
 
 // This fixture owns one loopback MEMORY process and uses synthetic rows only.
 // It never selects an endpoint, credential, namespace, or database from config.
@@ -347,6 +352,17 @@ async function readRow(memoryId: string): Promise<Row | undefined> {
   return result[0]?.[0];
 }
 
+async function castServerClock(value: unknown): Promise<DateTime> {
+  if (typeof value !== "string") throw new Error("native H1 expected a generated payload clock string");
+  const result = await db.query<DateTime>(
+    "RETURN <datetime>$clock;",
+    { clock: value },
+  );
+  const clock = result[0]?.[0];
+  if (!(clock instanceof DateTime)) throw new Error("native H1 server clock cast did not return DateTime");
+  return clock;
+}
+
 function canonicalValue(value: unknown): unknown {
   if (value === undefined) return { kind: "undefined" };
   if (value === null || typeof value === "boolean" || typeof value === "number" || typeof value === "string") return value;
@@ -548,6 +564,157 @@ describe("generic supersede H1 — owned native SurrealDB proof", () => {
       writeSource: "session_summary",
     });
   }, 20_000);
+
+  it("uses one precise server clock only for missing payload clocks and preserves ordinary explicit metadata", async () => {
+    const cases = [
+      {
+        label: "missing",
+        metadata: { factKey: "h1-clock-missing" },
+        missing: ["createdAt", "updatedAt"],
+      },
+      {
+        label: "created-only",
+        metadata: { createdAt: "2001-02-03T04:05:06.123456789Z", factKey: "h1-clock-created" },
+        missing: ["updatedAt"],
+      },
+      {
+        label: "updated-only",
+        metadata: { updatedAt: "2002-03-04T05:06:07.987654321Z", factKey: "h1-clock-updated" },
+        missing: ["createdAt"],
+      },
+      {
+        label: "both-explicit",
+        metadata: {
+          createdAt: "2003-04-05T06:07:08.111222333Z",
+          updatedAt: "2004-05-06T07:08:09.444555666Z",
+          factKey: "h1-clock-both",
+        },
+        missing: [],
+      },
+      {
+        label: "literal-explicit",
+        metadata: {
+          createdAt: "2005-06-07T08:09:10.777888999Z",
+          updatedAt: "2006-07-08T09:10:11.222333444Z",
+          factKey: "__h1_server_timestamp__",
+        },
+        missing: [],
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const previousId = id(`clock_${testCase.label}_previous`);
+      const replacementId = id(`clock_${testCase.label}_replacement`);
+      await seed(previousId, `clock source ${testCase.label}`);
+      const plan = await preparePlan(previousId, replacementId, testCase.metadata);
+      const composed = composePreparedSupersedeBatch(db, TABLE, USER, [plan]);
+      const preparedPayload = composed.vars.h1_0_sup_payload as Record<string, unknown>;
+      expect(composed.statement).not.toContain("__h1_server_timestamp__");
+      for (const field of ["createdAt", "updatedAt"] as const) {
+        if (testCase.missing.includes(field)) {
+          expect(Object.prototype.hasOwnProperty.call(preparedPayload, field)).toBe(false);
+        } else {
+          expect(preparedPayload[field]).toBe(testCase.metadata[field]);
+        }
+      }
+      await db.queryTransaction(composed.statement, composed.vars);
+
+      const replacementRow = await readRow(replacementId);
+      const payload = replacementRow?.payload ?? {};
+      const createdAt = replacementRow?.created_at;
+      const updatedAt = replacementRow?.updated_at;
+      expect(createdAt).toBeInstanceOf(DateTime);
+      expect(updatedAt).toBeInstanceOf(DateTime);
+      expect((createdAt as DateTime).toCompact()).toEqual((updatedAt as DateTime).toCompact());
+      for (const field of ["createdAt", "updatedAt"] as const) {
+        if (testCase.missing.includes(field)) {
+          const nativeClock = field === "createdAt" ? createdAt : updatedAt;
+          expect(nativeClock).toBeInstanceOf(DateTime);
+          expect((await castServerClock(payload[field])).toCompact()).toEqual((nativeClock as DateTime).toCompact());
+        } else {
+          expect(payload[field]).toBe(testCase.metadata[field]);
+        }
+      }
+      if (testCase.label === "literal-explicit") {
+        expect(payload.factKey).toBe("__h1_server_timestamp__");
+      }
+      if (testCase.missing.includes("createdAt") && testCase.missing.includes("updatedAt")) {
+        expect(payload.createdAt).toBe(payload.updatedAt);
+      }
+    }
+
+    const projectionReplacementId = id("clock_both-explicit_replacement");
+    const generatedProjectionReplacementId = id("clock_missing_replacement");
+    const listed = await listMemories(db, USER, undefined, TABLE);
+    const listedRow = listed.find((row) => normalizeRecordId(row?.id) === projectionReplacementId);
+    expect(listedRow?.payload?.createdAt).toBe("2003-04-05T06:07:08.111222333Z");
+    expect(getSearchHitLineage(listedRow)).toMatchObject({ state: "legacy_unknown" });
+    const listedGeneratedRow = listed.find((row) => normalizeRecordId(row?.id) === generatedProjectionReplacementId);
+    expect(listedGeneratedRow?.payload?.createdAt).toBeTypeOf("string");
+    expect((await castServerClock(listedGeneratedRow?.payload?.createdAt)).toCompact()).toEqual(
+      (listedGeneratedRow?.created_at as DateTime).toCompact(),
+    );
+    expect(getSearchHitLineage(listedGeneratedRow)).toMatchObject({ state: "legacy_unknown" });
+    const fetched = await getMemoryById(db, projectionReplacementId, USER, TABLE);
+    expect(fetched).toHaveLength(1);
+    expect(fetched[0]?.payload?.updatedAt).toBe("2004-05-06T07:08:09.444555666Z");
+    expect(getSearchHitLineage(fetched[0])).toMatchObject({ state: "legacy_unknown" });
+    const fetchedGenerated = await getMemoryById(db, generatedProjectionReplacementId, USER, TABLE);
+    expect(fetchedGenerated).toHaveLength(1);
+    expect((await castServerClock(fetchedGenerated[0]?.payload?.updatedAt)).toCompact()).toEqual(
+      (fetchedGenerated[0]?.updated_at as DateTime).toCompact(),
+    );
+    expect(getSearchHitLineage(fetchedGenerated[0])).toMatchObject({ state: "legacy_unknown" });
+    const similar = await findSimilarMemories(db, USER, VECTOR, 24 * 365 * 24, 100, "user", undefined, TABLE);
+    const searchHit = similar.find((hit) => hit.id === projectionReplacementId);
+    expect(searchHit?.createdAt).toBe("2003-04-05T06:07:08.111222333Z");
+    expect(getSearchHitLineage(searchHit)).toMatchObject({ state: "legacy_unknown" });
+    const generatedSearchHit = similar.find((hit) => hit.id === generatedProjectionReplacementId);
+    expect(generatedSearchHit?.createdAt).toBeTypeOf("string");
+    expect((await castServerClock(generatedSearchHit?.createdAt)).toCompact()).toEqual(
+      (await castServerClock(listedGeneratedRow?.payload?.createdAt)).toCompact(),
+    );
+    expect(getSearchHitLineage(generatedSearchHit)).toMatchObject({ state: "legacy_unknown" });
+
+    for (const control of [
+      { label: "undefined-null", metadata: { createdAt: undefined, updatedAt: null, factKey: "h1-clock-undefined-null" } },
+      { label: "null-undefined", metadata: { createdAt: null, updatedAt: undefined, factKey: "h1-clock-null-undefined" } },
+    ] as const) {
+      const controlId = id(`clock_${control.label}_control`);
+      await upsertMemory(db, controlId, "ordinary clock control", USER, VECTOR, control.metadata, "user", undefined, undefined, TABLE);
+      const controlRow = await readRow(controlId);
+      const controlPayload = controlRow?.payload ?? {};
+      const ordinaryComposition = composeUpsertMemory(
+        id(`clock_${control.label}_composition_control`),
+        "ordinary composition control",
+        USER,
+        VECTOR,
+        control.metadata,
+        "user",
+        undefined,
+        { active: true },
+        TABLE,
+      );
+      const ordinaryPayload = ordinaryComposition.vars.payload as Record<string, unknown>;
+      expect(Object.prototype.hasOwnProperty.call(ordinaryPayload, "createdAt")).toBe(true);
+      expect(Object.prototype.hasOwnProperty.call(ordinaryPayload, "updatedAt")).toBe(true);
+
+      const previousId = id(`clock_${control.label}_previous`);
+      const replacementId = id(`clock_${control.label}_replacement`);
+      await seed(previousId, `clock ${control.label} source`);
+      const plan = await preparePlan(previousId, replacementId, control.metadata);
+      const composed = composePreparedSupersedeBatch(db, TABLE, USER, [plan]);
+      await db.queryTransaction(composed.statement, composed.vars);
+      const replacementRow = await readRow(replacementId);
+      const replacementPayload = replacementRow?.payload ?? {};
+      for (const field of ["createdAt", "updatedAt"] as const) {
+        expect(Object.prototype.hasOwnProperty.call(replacementPayload, field)).toBe(
+          Object.prototype.hasOwnProperty.call(controlPayload, field),
+        );
+        expect(canonicalValue(replacementPayload[field])).toEqual(canonicalValue(controlPayload[field]));
+      }
+    }
+  }, 30_000);
 
   it("rejects wrong-user and present-lineage rows before any body witness query", async () => {
     const wrongUserId = id("metadata_first_wrong_user");
@@ -935,23 +1102,80 @@ describe("generic supersede H1 — owned native SurrealDB proof", () => {
     const firstReplacement = id("batch_first_replacement");
     const secondPrevious = id("batch_second_previous");
     const secondReplacement = id("batch_second_replacement");
+    const thirdPrevious = id("batch_third_previous");
+    const thirdReplacement = id("batch_third_replacement");
     await seed(firstPrevious, "batch first previous", { branch: "first" });
     await seed(secondPrevious, "batch second previous", { branch: "second" });
     await seed(secondReplacement, "batch existing survivor", { branch: "existing", tier: "durable" });
-    const first = await preparePlan(firstPrevious, firstReplacement);
+    await seed(thirdPrevious, "batch third previous", { branch: "third" });
+    const first = await preparePlan(firstPrevious, firstReplacement, {
+      createdAt: "2011-02-03T04:05:06.123456789Z",
+      branch: "first",
+    });
     const second = await preparePlan(secondPrevious, secondReplacement);
-    const composed = composePreparedSupersedeBatch(db, TABLE, USER, [first, second]);
+    const third = await preparePlan(thirdPrevious, thirdReplacement, {
+      updatedAt: "2012-03-04T05:06:07.987654321Z",
+      branch: "third",
+    });
+    const composed = composePreparedSupersedeBatch(db, TABLE, USER, [first, second, third]);
     await db.queryTransaction(composed.statement, composed.vars);
-    expect((await readRow(firstPrevious))?.active).toBe(false);
-    expect((await readRow(secondPrevious))?.active).toBe(false);
-    expect((await readRow(firstReplacement))?.active).toBe(true);
-    expect((await readRow(secondReplacement))?.active).toBe(true);
-    expect((await readRow(secondReplacement))?.payload).toMatchObject({
+    const rows = await snapshotRows([
+      firstPrevious,
+      firstReplacement,
+      secondPrevious,
+      secondReplacement,
+      thirdPrevious,
+      thirdReplacement,
+    ]);
+    expect(rows.get(firstPrevious)?.active).toBe(false);
+    expect(rows.get(secondPrevious)?.active).toBe(false);
+    expect(rows.get(thirdPrevious)?.active).toBe(false);
+    expect(rows.get(firstReplacement)?.active).toBe(true);
+    expect(rows.get(secondReplacement)?.active).toBe(true);
+    expect(rows.get(thirdReplacement)?.active).toBe(true);
+    expect(rows.get(secondReplacement)?.payload).toMatchObject({
       branch: "existing",
       tier: "durable",
       arbitrationOutcome: "supersede",
       writeSource: "session_summary",
     });
+    const topLevelClocks = [
+      firstPrevious,
+      firstReplacement,
+      secondPrevious,
+      secondReplacement,
+      thirdPrevious,
+      thirdReplacement,
+    ].map((memoryId) => (rows.get(memoryId)?.updated_at as DateTime).toCompact());
+    for (const clock of topLevelClocks) expect(clock).toEqual(topLevelClocks[0]);
+    const firstReplacementRow = rows.get(firstReplacement);
+    const thirdReplacementRow = rows.get(thirdReplacement);
+    expect(firstReplacementRow?.payload?.createdAt).toBe("2011-02-03T04:05:06.123456789Z");
+    expect((await castServerClock(firstReplacementRow?.payload?.updatedAt)).toCompact()).toEqual(
+      (firstReplacementRow?.updated_at as DateTime).toCompact(),
+    );
+    expect((await castServerClock(thirdReplacementRow?.payload?.createdAt)).toCompact()).toEqual(
+      (thirdReplacementRow?.created_at as DateTime).toCompact(),
+    );
+    expect(thirdReplacementRow?.payload?.updatedAt).toBe("2012-03-04T05:06:07.987654321Z");
+    expect((await castServerClock(rows.get(firstPrevious)?.payload?.updatedAt)).toCompact()).toEqual(
+      (rows.get(firstPrevious)?.updated_at as DateTime).toCompact(),
+    );
+    expect((await castServerClock(rows.get(thirdPrevious)?.payload?.updatedAt)).toCompact()).toEqual(
+      (rows.get(thirdPrevious)?.updated_at as DateTime).toCompact(),
+    );
+    const generatedClockString = firstReplacementRow?.payload?.updatedAt;
+    expect(generatedClockString).toEqual(thirdReplacementRow?.payload?.createdAt);
+    expect(generatedClockString).toEqual(rows.get(firstPrevious)?.payload?.updatedAt);
+    expect(generatedClockString).toEqual(rows.get(thirdPrevious)?.payload?.updatedAt);
+    for (const previousId of [firstPrevious, secondPrevious, thirdPrevious]) {
+      const previousRow = rows.get(previousId);
+      expect(previousRow?.inactive_at).toBeInstanceOf(DateTime);
+      expect((previousRow?.inactive_at as DateTime).toCompact()).toEqual((previousRow?.updated_at as DateTime).toCompact());
+      expect((await castServerClock(previousRow?.payload?.inactiveAt)).toCompact()).toEqual(
+        (previousRow?.inactive_at as DateTime).toCompact(),
+      );
+    }
   }, 30_000);
 
   it("rolls back a fresh CREATE collision and a fresh source failure with full readback", async () => {

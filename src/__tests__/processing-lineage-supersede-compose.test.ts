@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DateTime, RecordId, Uuid, type Surreal as SurrealClient } from "surrealdb";
 import {
   composePreparedSupersedeBatch,
+  composeUpsertMemory,
   prepareSupersedeMemory,
   SurrealClient as ExportedSurrealClient,
   supersedeMemory,
@@ -148,7 +149,51 @@ describe("generic supersede preparation and composition", () => {
       userId: USER,
     });
     expect(composed.vars.h1_0_now).toEqual(expect.any(String));
+    expect(composed.vars.h1_0_sup_payload).toMatchObject({
+      createdAt: composed.vars.h1_0_now,
+      updatedAt: composed.vars.h1_0_now,
+    });
+    expect(composed.statement).not.toContain("__h1_server_timestamp__");
     expect(composed.statement).toContain("<datetime>$h1_0_now");
+  });
+
+  it.each([
+    ["missing", {}, { createdAt: "generated", updatedAt: "generated" }],
+    ["created-only", { createdAt: "caller-created" }, { createdAt: "caller-created", updatedAt: "generated" }],
+    ["updated-only", { updatedAt: "caller-updated" }, { createdAt: "generated", updatedAt: "caller-updated" }],
+    ["both-explicit", { createdAt: "caller-created", updatedAt: "caller-updated" }, { createdAt: "caller-created", updatedAt: "caller-updated" }],
+    ["undefined-and-null", { createdAt: undefined, updatedAt: null }, { createdAt: undefined, updatedAt: null }],
+    ["literal-placeholder-text", { createdAt: "__h1_server_timestamp__", updatedAt: "caller-updated" }, { createdAt: "__h1_server_timestamp__", updatedAt: "caller-updated" }],
+  ] as const)("keeps own timestamp properties authoritative for %s metadata", async (_label, metadata, expected) => {
+    const db = mockDb();
+    const plan = await prepare(db, `clock-previous-${_label}`, `clock-replacement-${_label}`, metadata);
+    const composed = composePreparedSupersedeBatch(db as unknown as SurrealClient, TABLE, USER, [plan]);
+    const payload = composed.vars.h1_0_sup_payload as Record<string, unknown>;
+    const ordinary = composeUpsertMemory(
+      `clock-control-${_label}`,
+      "ordinary control",
+      USER,
+      VECTOR,
+      metadata,
+      "user",
+      undefined,
+      { active: true },
+      TABLE,
+    ).vars.payload as Record<string, unknown>;
+
+    for (const field of ["createdAt", "updatedAt"] as const) {
+      if (expected[field] === "generated") {
+        expect(Object.prototype.hasOwnProperty.call(payload, field)).toBe(true);
+        expect(payload[field]).toBe(composed.vars.h1_0_now);
+      } else {
+        expect(Object.prototype.hasOwnProperty.call(payload, field)).toBe(
+          Object.prototype.hasOwnProperty.call(ordinary, field),
+        );
+        expect(payload[field]).toEqual(expected[field]);
+        expect(payload[field]).toEqual(ordinary[field]);
+      }
+    }
+    expect(composed.statement).not.toContain("__h1_server_timestamp__");
   });
 
   it("composes row-disjoint plans into one transaction body and rejects overlap before execution", async () => {
