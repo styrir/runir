@@ -458,15 +458,48 @@ async function seed(memoryId: string, text = `seed ${memoryId}`, metadata: Recor
   await upsertMemory(db, memoryId, text, USER, VECTOR, metadata, "user", undefined, undefined, TABLE);
 }
 
-async function preparePlan(previousId: string, replacementId: string, metadata: Record<string, unknown> = {}): Promise<PreparedGenericSupersede> {
+async function preparePlan(
+  previousId: string,
+  replacementId: string,
+  metadata: Record<string, unknown> = {},
+  previousStaleFlags?: { staleSince: string; contradictedBy: string },
+): Promise<PreparedGenericSupersede> {
+  return prepareCustomPlan(previousId, replacementId, {
+    metadata,
+    previousStaleFlags,
+  });
+}
+
+async function prepareCustomPlan(
+  previousId: string,
+  replacementId: string,
+  options: {
+    l2?: string;
+    embedding?: number[];
+    metadata?: Record<string, unknown>;
+    scope?: "session" | "user" | "team" | "global";
+    sessionId?: string;
+    writeSource?: "memory_store" | "agent_end" | "session_summary";
+    supersedeProvenance?: "deterministic" | "llm-generated";
+    previousStaleFlags?: { staleSince: string; contradictedBy: string };
+  } = {},
+): Promise<PreparedGenericSupersede> {
   return prepareSupersedeMemory(
     db,
     previousCandidate(previousId),
-    replacement(replacementId, metadata),
-    "deterministic",
+    {
+      ...replacement(replacementId, options.metadata),
+      l2: options.l2 ?? `replacement ${replacementId}`,
+      embedding: options.embedding ? [...options.embedding] : [...VECTOR],
+      scope: options.scope ?? "user",
+      sessionId: options.sessionId,
+      writeSource: options.writeSource ?? "session_summary",
+    },
+    options.supersedeProvenance ?? "deterministic",
     undefined,
     "superseded",
     TABLE,
+    options.previousStaleFlags,
   );
 }
 
@@ -1177,6 +1210,486 @@ describe("generic supersede H1 — owned native SurrealDB proof", () => {
       );
     }
   }, 30_000);
+
+  it("records serial first-create and second-prepare outcomes before grouped admission", async () => {
+    const controls = [
+      { label: "default-absent", metadata: {} },
+      { label: "benign-strings", metadata: { l2: "serial benign", scope: "session", sessionId: "serial-session" } },
+      { label: "identity-mismatch", metadata: { userId: "serial-other-user" } },
+      { label: "undefined-clock", metadata: { updatedAt: undefined } },
+      { label: "null-clock", metadata: { updatedAt: null } },
+    ] as const;
+    for (const control of controls) {
+      const firstPrevious = id(`serial_${control.label}_first_previous`);
+      const targetId = id(`serial_${control.label}_target`);
+      const secondPrevious = id(`serial_${control.label}_second_previous`);
+      await seed(firstPrevious, `serial ${control.label} first previous`, { serialControl: control.label });
+      const firstPlan = await preparePlan(firstPrevious, targetId, {
+        serialControl: control.label,
+        ...control.metadata,
+      });
+      const firstComposed = composePreparedSupersedeBatch(db, TABLE, USER, [firstPlan]);
+      await db.queryTransaction(firstComposed.statement, firstComposed.vars);
+      const firstRows = await snapshotRows([firstPrevious, targetId]);
+      const firstTarget = firstRows.get(targetId);
+      expect(firstTarget).toBeDefined();
+      expect(firstTarget?.id).toBeDefined();
+      expect(firstTarget?.payload?.serialControl).toBe(control.label);
+      const clockShape = {
+        createdOwn: Object.prototype.hasOwnProperty.call(firstTarget?.payload ?? {}, "createdAt"),
+        updatedOwn: Object.prototype.hasOwnProperty.call(firstTarget?.payload ?? {}, "updatedAt"),
+        createdValue: firstTarget?.payload?.createdAt === undefined ? "<undefined>" : firstTarget?.payload?.createdAt,
+        updatedValue: firstTarget?.payload?.updatedAt === undefined ? "<undefined>" : firstTarget?.payload?.updatedAt,
+      };
+      await seed(secondPrevious, `serial ${control.label} second previous`, { serialControl: control.label });
+      const beforeSecondPrepare = await snapshotRows([firstPrevious, targetId]);
+      let secondPrepare: "prepared" | "refused" = "prepared";
+      let secondError: string | undefined;
+      try {
+        await preparePlan(secondPrevious, targetId);
+      } catch (error) {
+        secondPrepare = "refused";
+        secondError = error instanceof Error ? error.message : String(error);
+      }
+      console.log(`H2_SERIAL_CONTROL label=${control.label} firstRowFull=true clockShape=${JSON.stringify(clockShape)} secondPrepare=${secondPrepare} error=${secondError ?? "none"}`);
+      if (control.label === "default-absent" || control.label === "benign-strings") {
+        expect(secondPrepare).toBe("prepared");
+      }
+      if (control.label === "identity-mismatch") expect(secondPrepare).toBe("refused");
+      expectSnapshotEqual(await snapshotRows([firstPrevious, targetId]), beforeSecondPrepare);
+    }
+  }, 60_000);
+
+  it("matches serial existing-target behavior when later grouped metadata is creation-only hostile", async () => {
+    const hostileLaterMetadata = {
+      userId: "h2-hostile-later-user",
+      l2: null,
+      createdAt: undefined,
+      updatedAt: null,
+      active: "true",
+    };
+    const firstVector = [...VECTOR];
+    firstVector[0] = 0.51;
+    firstVector[1] = 0.52;
+    firstVector[2] = 0.53;
+    const firstOptions = {
+      l2: "H2 serial first typed content",
+      embedding: firstVector,
+      scope: "session" as const,
+      sessionId: "h2-serial-first-typed-session",
+      writeSource: "memory_store" as const,
+      metadata: {
+        l2: "H2 serial first payload",
+        scope: "payload-session",
+        sessionId: "h2-serial-first-payload-session",
+        createdAt: "2011-02-03T04:05:06.123456789Z",
+        h2FirstRich: "serial-first",
+      },
+    };
+    const secondOptions = {
+      l2: "H2 serial second typed content",
+      scope: "team" as const,
+      sessionId: "h2-serial-second-typed-session",
+      writeSource: "agent_end" as const,
+      supersedeProvenance: "llm-generated" as const,
+      metadata: hostileLaterMetadata,
+    };
+
+    const serialFirstPrevious = id("h2_serial_hostile_later_first_previous");
+    const serialSecondPrevious = id("h2_serial_hostile_later_second_previous");
+    const serialTarget = id("h2_serial_hostile_later_target");
+    await seed(serialFirstPrevious, "H2 serial hostile-later first previous");
+    await seed(serialSecondPrevious, "H2 serial hostile-later second previous");
+    const serialFirst = await prepareCustomPlan(serialFirstPrevious, serialTarget, firstOptions);
+    await commitPlan(serialFirst);
+    const serialSecond = await prepareCustomPlan(serialSecondPrevious, serialTarget, secondOptions);
+    await commitPlan(serialSecond);
+    const serialRow = await readRow(serialTarget);
+    expect(serialRow).toBeDefined();
+
+    const batchFirstPrevious = id("h2_batch_hostile_later_first_previous");
+    const batchSecondPrevious = id("h2_batch_hostile_later_second_previous");
+    const batchTarget = id("h2_batch_hostile_later_target");
+    await seed(batchFirstPrevious, "H2 batch hostile-later first previous");
+    await seed(batchSecondPrevious, "H2 batch hostile-later second previous");
+    const batchFirst = await prepareCustomPlan(batchFirstPrevious, batchTarget, firstOptions);
+    const batchSecond = await prepareCustomPlan(batchSecondPrevious, batchTarget, secondOptions);
+    const batchComposed = composePreparedSupersedeBatch(db, TABLE, USER, [batchFirst, batchSecond]);
+    await db.queryTransaction(batchComposed.statement, batchComposed.vars);
+    const batchRow = await readRow(batchTarget);
+    expect(batchRow).toBeDefined();
+
+    for (const row of [serialRow, batchRow]) {
+      expect(row?.text_norm).toBe(firstOptions.l2.toLowerCase());
+      expect(row?.embedding).toEqual(firstVector);
+      expect(row?.scope).toBe(firstOptions.scope);
+      expect(row?.session_id).toBe(firstOptions.sessionId);
+      expect(row?.payload).toMatchObject({
+        l2: firstOptions.metadata.l2,
+        userId: USER,
+        scope: firstOptions.metadata.scope,
+        sessionId: firstOptions.metadata.sessionId,
+        h2FirstRich: "serial-first",
+        createdAt: firstOptions.metadata.createdAt,
+        writeSource: secondOptions.writeSource,
+        arbitrationOutcome: "supersede",
+        supersede_provenance: secondOptions.supersedeProvenance,
+      });
+      expect(row?.payload?.active).toBe(true);
+      expect(row?.payload?.l2).not.toBe(hostileLaterMetadata.l2);
+      expect(row?.payload?.userId).not.toBe(hostileLaterMetadata.userId);
+      expect(row?.payload?.active).not.toBe(hostileLaterMetadata.active);
+    }
+    expect(normalizeRecordId(serialRow?.supersedes)).toBe(serialSecondPrevious);
+    expect(normalizeRecordId(batchRow?.supersedes)).toBe(batchSecondPrevious);
+
+    const reverseFirstPrevious = id("h2_reverse_hostile_later_first_previous");
+    const reverseSecondPrevious = id("h2_reverse_hostile_later_second_previous");
+    const reverseTarget = id("h2_reverse_hostile_later_target");
+    await seed(reverseFirstPrevious, "H2 reverse hostile first previous");
+    await seed(reverseSecondPrevious, "H2 reverse hostile second previous");
+    const reverseHostile = await prepareCustomPlan(reverseFirstPrevious, reverseTarget, secondOptions);
+    const reverseValid = await prepareCustomPlan(reverseSecondPrevious, reverseTarget, firstOptions);
+    expect(() => composePreparedSupersedeBatch(db, TABLE, USER, [reverseHostile, reverseValid])).toThrow();
+    expect(await readRow(reverseTarget)).toBeUndefined();
+    expect((await readRow(reverseFirstPrevious))?.active).toBe(true);
+    expect((await readRow(reverseSecondPrevious))?.active).toBe(true);
+  }, 60_000);
+
+  it("commits shared fresh targets with provider-order payload and last bookkeeping", async () => {
+    const cases = [
+      { label: "forward", reverse: false },
+      { label: "reversed", reverse: true },
+    ] as const;
+    for (const testCase of cases) {
+      const firstPrevious = id(`h2_${testCase.label}_first_previous`);
+      const secondPrevious = id(`h2_${testCase.label}_second_previous`);
+      const targetId = id(`h2_${testCase.label}_shared_target`);
+      const firstVector = [...VECTOR];
+      firstVector[0] = 0.31;
+      firstVector[1] = 0.32;
+      firstVector[2] = 0.33;
+      const secondVector = [...VECTOR];
+      secondVector[0] = 0.41;
+      secondVector[1] = 0.42;
+      secondVector[2] = 0.43;
+      await seed(firstPrevious, `H2 ${testCase.label} first previous`, { h2Origin: "first" });
+      await seed(secondPrevious, `H2 ${testCase.label} second previous`, { h2Origin: "second" });
+      const first = await prepareCustomPlan(
+        firstPrevious,
+        targetId,
+        {
+          l2: `H2 ${testCase.label} first typed content`,
+          embedding: firstVector,
+          scope: "session",
+          sessionId: `${testCase.label}-first-typed-session`,
+          writeSource: "memory_store",
+          metadata: {
+            l2: `H2 ${testCase.label} first payload overlay`,
+            scope: "payload-session",
+            sessionId: `${testCase.label}-first-payload-session`,
+            createdAt: "2011-02-03T04:05:06.123456789Z",
+            updatedAt: "2012-03-04T05:06:07.123456789Z",
+            h2FirstRich: "preserved-first",
+          },
+          previousStaleFlags: {
+            staleSince: "2013-04-05T06:07:08.123456789Z",
+            contradictedBy: `${testCase.label}-first-contradiction`,
+          },
+        },
+      );
+      const second = await prepareCustomPlan(
+        secondPrevious,
+        targetId,
+        {
+          l2: `H2 ${testCase.label} second typed content`,
+          embedding: secondVector,
+          scope: "team",
+          sessionId: `${testCase.label}-second-typed-session`,
+          writeSource: "agent_end",
+          supersedeProvenance: "llm-generated",
+          metadata: {
+            l2: `H2 ${testCase.label} second payload overlay`,
+            scope: "payload-user",
+            sessionId: `${testCase.label}-second-payload-session`,
+            h2SecondRich: "preserved-second",
+          },
+          previousStaleFlags: {
+            staleSince: "2014-05-06T07:08:09.123456789Z",
+            contradictedBy: `${testCase.label}-second-contradiction`,
+          },
+        },
+      );
+      const ordered = testCase.reverse ? [second, first] : [first, second];
+      const composed = composePreparedSupersedeBatch(db, TABLE, USER, ordered);
+      const before = await snapshotRows([firstPrevious, secondPrevious, targetId]);
+      await db.queryTransaction(composed.statement, composed.vars);
+      const after = await snapshotRows([firstPrevious, secondPrevious, targetId]);
+      expect(after.get(targetId)).toBeDefined();
+
+      const firstProvider = testCase.reverse ? second : first;
+      const lastProvider = testCase.reverse ? first : second;
+      const target = after.get(targetId)!;
+      const firstPayload = firstProvider === first
+        ? {
+            l2: `H2 ${testCase.label} first payload overlay`,
+            scope: "payload-session",
+            sessionId: `${testCase.label}-first-payload-session`,
+            h2FirstRich: "preserved-first",
+          }
+        : {
+            l2: `H2 ${testCase.label} second payload overlay`,
+            scope: "payload-user",
+            sessionId: `${testCase.label}-second-payload-session`,
+            h2SecondRich: "preserved-second",
+          };
+      const firstTyped = firstProvider === first
+        ? { text: `H2 ${testCase.label} first typed content`, vector: firstVector, scope: "session", sessionId: `${testCase.label}-first-typed-session` }
+        : { text: `H2 ${testCase.label} second typed content`, vector: secondVector, scope: "team", sessionId: `${testCase.label}-second-typed-session` };
+      const lastBookkeeping = lastProvider === first
+        ? { writeSource: "memory_store", supersedeProvenance: "deterministic" }
+        : { writeSource: "agent_end", supersedeProvenance: "llm-generated" };
+      expect(target.text_norm).toBe(firstTyped.text.toLowerCase());
+      expect(target.embedding).toEqual(firstTyped.vector);
+      expect(target.scope).toBe(firstTyped.scope);
+      expect(target.session_id).toBe(firstTyped.sessionId);
+      expect(normalizeRecordId(target.lineage_root_id)).toBe(lastProvider === first ? firstPrevious : secondPrevious);
+      expect(target.payload).toMatchObject({
+        ...firstPayload,
+        supersedesId: lastProvider === first ? firstPrevious : secondPrevious,
+        lineageRootId: lastProvider === first ? firstPrevious : secondPrevious,
+        writeSource: lastBookkeeping.writeSource,
+        arbitrationOutcome: "supersede",
+        supersede_provenance: lastBookkeeping.supersedeProvenance,
+      });
+      if (firstProvider === first) {
+        expect(target.payload?.createdAt).toBe("2011-02-03T04:05:06.123456789Z");
+        expect(target.payload?.h2SecondRich).toBeUndefined();
+      } else {
+        expect(target.payload?.createdAt).toBe(target.payload?.updatedAt);
+        expect((await castServerClock(target.payload?.createdAt)).toCompact()).toEqual(
+          (target.created_at as DateTime).toCompact(),
+        );
+        expect(target.payload?.h2FirstRich).toBeUndefined();
+      }
+      expect(normalizeRecordId(target.supersedes)).toBe(lastProvider === first ? firstPrevious : secondPrevious);
+      expect(target.created_at).toBeInstanceOf(DateTime);
+      expect(target.updated_at).toBeInstanceOf(DateTime);
+      const generatedClock = await castServerClock(target.payload?.updatedAt);
+      expect((target.updated_at as DateTime).toCompact()).toEqual(generatedClock.toCompact());
+
+      const firstRow = after.get(firstPrevious)!;
+      const secondRow = after.get(secondPrevious)!;
+      for (const previousRow of [firstRow, secondRow]) {
+        expect(previousRow.active).toBe(false);
+        expect(previousRow.payload?.active).toBe(false);
+        expect(previousRow.payload?.isStale).toBe(true);
+        expect(previousRow.payload?.inactiveAt).toBe(previousRow.payload?.updatedAt);
+        expect((previousRow.updated_at as DateTime).toCompact()).toEqual(generatedClock.toCompact());
+        expect((await castServerClock(previousRow.payload?.updatedAt)).toCompact()).toEqual(generatedClock.toCompact());
+      }
+      expect(firstRow.payload?.staleSince).toBe("2013-04-05T06:07:08.123456789Z");
+      expect(firstRow.payload?.contradictedBy).toBe(`${testCase.label}-first-contradiction`);
+      expect(secondRow.payload?.staleSince).toBe("2014-05-06T07:08:09.123456789Z");
+      expect(secondRow.payload?.contradictedBy).toBe(`${testCase.label}-second-contradiction`);
+      expect(firstRow.payload?.h2Origin).toBe("first");
+      expect(secondRow.payload?.h2Origin).toBe("second");
+      expect(before.get(targetId)).toBeUndefined();
+    }
+  }, 60_000);
+
+  it("commits a shared existing rich survivor with every previous tail", async () => {
+    const firstPrevious = id("h2_existing_first_previous");
+    const secondPrevious = id("h2_existing_second_previous");
+    const targetId = id("h2_existing_shared_target");
+    await seed(firstPrevious, "H2 existing first previous", { h2Origin: "first" });
+    await seed(secondPrevious, "H2 existing second previous", { h2Origin: "second" });
+    await seed(targetId, "H2 existing rich survivor", {
+      branch: "h2-existing",
+      tier: "durable",
+      h2Rich: { nested: ["kept", { value: 7 }] },
+    });
+    const uuid = new Uuid("0189dcd5-5311-7d40-8db0-9496a2eef37b");
+    await setLinkedMetadata(targetId, {
+      supersedes: new RecordId(TABLE, { h2: "existing", uuid }),
+      lineageRootId: new RecordId(TABLE, { h2: "root", uuid }),
+    });
+    const first = await preparePlan(firstPrevious, targetId);
+    const second = await preparePlan(secondPrevious, targetId);
+    const composed = composePreparedSupersedeBatch(db, TABLE, USER, [first, second]);
+    expect(composed.statement).not.toContain("CREATE ONLY");
+    const before = await snapshotRows([firstPrevious, secondPrevious, targetId]);
+    await db.queryTransaction(composed.statement, composed.vars);
+    const after = await snapshotRows([firstPrevious, secondPrevious, targetId]);
+    const target = after.get(targetId)!;
+    expect(target.active).toBe(true);
+    expect(target.payload).toMatchObject({
+      branch: "h2-existing",
+      tier: "durable",
+      h2Rich: { nested: ["kept", { value: 7 }] },
+      supersedesId: secondPrevious,
+      writeSource: "session_summary",
+      arbitrationOutcome: "supersede",
+    });
+    expect(normalizeRecordId(target.supersedes)).toBe(secondPrevious);
+    expect((target.updated_at as DateTime).toCompact()).not.toEqual((before.get(targetId)?.updated_at as DateTime).toCompact());
+    for (const previousId of [firstPrevious, secondPrevious]) {
+      expect(after.get(previousId)?.active).toBe(false);
+      expect((after.get(previousId)?.updated_at as DateTime).toCompact()).toEqual((target.updated_at as DateTime).toCompact());
+    }
+  }, 30_000);
+
+  it("commits mixed shared and disjoint groups under one native transaction clock", async () => {
+    const sharedFirstPrevious = id("h2_mixed_shared_first_previous");
+    const sharedSecondPrevious = id("h2_mixed_shared_second_previous");
+    const sharedTarget = id("h2_mixed_shared_target");
+    const disjointPrevious = id("h2_mixed_disjoint_previous");
+    const disjointTarget = id("h2_mixed_disjoint_target");
+    for (const memoryId of [sharedFirstPrevious, sharedSecondPrevious, disjointPrevious]) {
+      await seed(memoryId, `H2 mixed ${memoryId}`);
+    }
+    const sharedFirst = await preparePlan(sharedFirstPrevious, sharedTarget, { l2: "mixed shared first" });
+    const sharedSecond = await preparePlan(sharedSecondPrevious, sharedTarget, { l2: "mixed shared second" });
+    const disjoint = await preparePlan(disjointPrevious, disjointTarget, { l2: "mixed disjoint" });
+    const composed = composePreparedSupersedeBatch(db, TABLE, USER, [sharedFirst, sharedSecond, disjoint]);
+    const ids = [sharedFirstPrevious, sharedSecondPrevious, sharedTarget, disjointPrevious, disjointTarget];
+    await db.queryTransaction(composed.statement, composed.vars);
+    const rows = await snapshotRows(ids);
+    expect(rows.get(sharedTarget)?.active).toBe(true);
+    expect(rows.get(disjointTarget)?.active).toBe(true);
+    for (const memoryId of [sharedFirstPrevious, sharedSecondPrevious, disjointPrevious]) {
+      expect(rows.get(memoryId)?.active).toBe(false);
+      expect((rows.get(memoryId)?.updated_at as DateTime).toCompact()).toEqual((rows.get(sharedTarget)?.updated_at as DateTime).toCompact());
+    }
+    expect((rows.get(disjointTarget)?.updated_at as DateTime).toCompact()).toEqual((rows.get(sharedTarget)?.updated_at as DateTime).toCompact());
+  }, 30_000);
+
+  it("refuses grouped guard, body, one-nanosecond, collision, and every-tail failures atomically", async () => {
+    const failureCases = [
+      { label: "target-guard", marker: "h2_0_target_replacementRows" },
+      { label: "tail-0", marker: "h2_0_tail_0_previousRows" },
+      { label: "tail-1", marker: "h2_0_tail_1_previousRows" },
+    ] as const;
+    for (const failureCase of failureCases) {
+      const firstPrevious = id(`h2_failure_${failureCase.label}_first_previous`);
+      const secondPrevious = id(`h2_failure_${failureCase.label}_second_previous`);
+      const targetId = id(`h2_failure_${failureCase.label}_target`);
+      await seed(firstPrevious, "H2 failure first");
+      await seed(secondPrevious, "H2 failure second");
+      await seed(targetId, "H2 failure existing target", { branch: "survivor" });
+      const first = await preparePlan(firstPrevious, targetId);
+      const second = await preparePlan(secondPrevious, targetId);
+      const composed = composePreparedSupersedeBatch(db, TABLE, USER, [first, second]);
+      const ids = [firstPrevious, secondPrevious, targetId];
+      const before = await snapshotRows(ids);
+      await expect(db.queryTransaction(injectBefore(composed.statement, `LET $${failureCase.marker}`, `H2 ${failureCase.label}`), composed.vars)).rejects.toThrow();
+      expectSnapshotEqual(await snapshotRows(ids), before);
+    }
+
+    const bodyPrevious = id("h2_failure_body_previous");
+    const bodySecond = id("h2_failure_body_second");
+    const bodyTarget = id("h2_failure_body_target");
+    await seed(bodyPrevious, "H2 body race first", { bodyRace: "before" });
+    await seed(bodySecond, "H2 body race second");
+    const bodyFirst = await preparePlan(bodyPrevious, bodyTarget);
+    const bodySecondPlan = await preparePlan(bodySecond, bodyTarget);
+    const bodyComposed = composePreparedSupersedeBatch(db, TABLE, USER, [bodyFirst, bodySecondPlan]);
+    await db.query(`UPDATE type::record('${TABLE}', $id) SET payload.h2BodyRace = $value;`, { id: bodyPrevious, value: { changed: true } });
+    const bodyBefore = await snapshotRows([bodyPrevious, bodySecond, bodyTarget]);
+    await expect(db.queryTransaction(bodyComposed.statement, bodyComposed.vars)).rejects.toThrow();
+    expectSnapshotEqual(await snapshotRows([bodyPrevious, bodySecond, bodyTarget]), bodyBefore);
+
+    const nanoPrevious = id("h2_failure_nano_previous");
+    const nanoSecond = id("h2_failure_nano_second");
+    const nanoTarget = id("h2_failure_nano_target");
+    await seed(nanoPrevious, "H2 nanosecond first");
+    await seed(nanoSecond, "H2 nanosecond second");
+    const nanoFirst = await preparePlan(nanoPrevious, nanoTarget);
+    const nanoSecondPlan = await preparePlan(nanoSecond, nanoTarget);
+    const nanoComposed = composePreparedSupersedeBatch(db, TABLE, USER, [nanoFirst, nanoSecondPlan]);
+    const preparedNano = (await readRow(nanoPrevious))?.updated_at;
+    await db.query(`UPDATE type::record('${TABLE}', $id) SET updated_at = <datetime>$updatedAt;`, {
+      id: nanoPrevious,
+      updatedAt: nextNanosecond(preparedNano),
+    });
+    const nanoBefore = await snapshotRows([nanoPrevious, nanoSecond, nanoTarget]);
+    await expect(db.queryTransaction(nanoComposed.statement, nanoComposed.vars)).rejects.toThrow();
+    expectSnapshotEqual(await snapshotRows([nanoPrevious, nanoSecond, nanoTarget]), nanoBefore);
+
+    const collisionPrevious = id("h2_failure_collision_first");
+    const collisionSecond = id("h2_failure_collision_second");
+    const collisionTarget = id("h2_failure_collision_target");
+    await seed(collisionPrevious, "H2 collision first");
+    await seed(collisionSecond, "H2 collision second");
+    const collisionFirst = await preparePlan(collisionPrevious, collisionTarget);
+    const collisionSecondPlan = await preparePlan(collisionSecond, collisionTarget);
+    const collisionComposed = composePreparedSupersedeBatch(db, TABLE, USER, [collisionFirst, collisionSecondPlan]);
+    await seed(collisionTarget, "H2 collision preimage", { collision: true });
+    const collisionBefore = await snapshotRows([collisionPrevious, collisionSecond, collisionTarget]);
+    await expect(db.queryTransaction(collisionComposed.statement, collisionComposed.vars)).rejects.toThrow();
+    expectSnapshotEqual(await snapshotRows([collisionPrevious, collisionSecond, collisionTarget]), collisionBefore);
+
+    const postPrevious = id("h2_failure_postcommit_first");
+    const postSecond = id("h2_failure_postcommit_second");
+    const postTarget = id("h2_failure_postcommit_target");
+    await seed(postPrevious, "H2 postcommit first");
+    await seed(postSecond, "H2 postcommit second");
+    const postFirst = await preparePlan(postPrevious, postTarget);
+    const postSecondPlan = await preparePlan(postSecond, postTarget);
+    const postComposed = composePreparedSupersedeBatch(db, TABLE, USER, [postFirst, postSecondPlan]);
+    const realQueryTransaction = db.queryTransaction.bind(db);
+    const wrappedDb = db as unknown as {
+      queryTransaction: (...args: Parameters<typeof db.queryTransaction>) => ReturnType<typeof db.queryTransaction>;
+    };
+    wrappedDb.queryTransaction = async (...args) => {
+      await realQueryTransaction(...args);
+      throw new Error("synthetic H2 SDK wrapper rejection after COMMIT");
+    };
+    try {
+      await expect(wrappedDb.queryTransaction(postComposed.statement, postComposed.vars)).rejects.toThrow("synthetic H2 SDK wrapper rejection after COMMIT");
+    } finally {
+      wrappedDb.queryTransaction = realQueryTransaction;
+    }
+    const postRows = await snapshotRows([postPrevious, postSecond, postTarget]);
+    expect(postRows.get(postPrevious)?.active).toBe(false);
+    expect(postRows.get(postSecond)?.active).toBe(false);
+    expect(postRows.get(postTarget)?.active).toBe(true);
+  }, 60_000);
+
+  it("refuses hostile shared fresh payloads before native transaction or row effects", async () => {
+    const hostileCases = [
+      { label: "identity", metadata: { userId: "other-user" } },
+      { label: "raw-null", metadata: { active: null } },
+      { label: "raw-undefined", metadata: { updatedAt: undefined } },
+      { label: "coercible", metadata: { active: "true" } },
+    ] as const;
+    const realQueryTransaction = db.queryTransaction.bind(db);
+    let transactionCalls = 0;
+    const wrappedDb = db as unknown as {
+      queryTransaction: (...args: Parameters<typeof db.queryTransaction>) => ReturnType<typeof db.queryTransaction>;
+    };
+    wrappedDb.queryTransaction = async (...args) => {
+      transactionCalls += 1;
+      return realQueryTransaction(...args);
+    };
+    try {
+      for (const hostileCase of hostileCases) {
+        const firstPrevious = id(`h2_hostile_${hostileCase.label}_first_previous`);
+        const secondPrevious = id(`h2_hostile_${hostileCase.label}_second_previous`);
+        const targetId = id(`h2_hostile_${hostileCase.label}_target`);
+        await seed(firstPrevious, "H2 hostile first", { hostileCase: hostileCase.label });
+        await seed(secondPrevious, "H2 hostile second", { hostileCase: hostileCase.label });
+        const first = await preparePlan(firstPrevious, targetId, hostileCase.metadata);
+        const second = await preparePlan(secondPrevious, targetId);
+        const before = await snapshotRows([firstPrevious, secondPrevious, targetId]);
+        expect(() => composePreparedSupersedeBatch(db, TABLE, USER, [first, second])).toThrow();
+        expect(transactionCalls).toBe(0);
+        expectSnapshotEqual(await snapshotRows([firstPrevious, secondPrevious, targetId]), before);
+      }
+    } finally {
+      wrappedDb.queryTransaction = realQueryTransaction;
+    }
+  }, 60_000);
 
   it("rolls back a fresh CREATE collision and a fresh source failure with full readback", async () => {
     const collisionPrevious = id("fresh_create_failure_previous");
