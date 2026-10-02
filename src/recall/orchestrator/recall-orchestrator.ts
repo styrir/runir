@@ -24,6 +24,7 @@ import type {
   RerankerConfig,
   SearchHit,
 } from "../../domain/memory/types.js";
+import { attachSelectedSearchHitLineage } from "../../domain/memory/search-hit-lineage.js";
 import type { HexisHint, HexisState } from "../../hexis/runtime-hexis.js";
 import {
   hasAdditionalHexisHintSignal,
@@ -220,7 +221,7 @@ function dedupeSearchHitsById(hits: SearchHit[]): SearchHit[] {
 
 function rowToSessionOpenerHit(row: any): SearchHit {
   const payload = row?.payload ?? {};
-  return {
+  const hit: SearchHit = {
     id: extractId(row?.id),
     text: payload?.l2 ?? payload?.data ?? "",
     score: Number(row?.score ?? 0),
@@ -244,6 +245,11 @@ function rowToSessionOpenerHit(row: any): SearchHit {
     supersededById: row?.superseded_by ? extractId(row.superseded_by) : payload?.supersededById,
     lineageRootId: row?.lineage_root_id ? extractId(row.lineage_root_id) : payload?.lineageRootId,
   };
+  // getPrimaryMemoryRowsByIds owns a SELECT * projection, so this raw row has
+  // explicitly selected the top-level field. Classify its observed absence as
+  // legacy_unknown while keeping arbitrary/non-storage row reconstruction
+  // unavailable in the shared one-argument mapper.
+  return attachSelectedSearchHitLineage(hit, row?.processing_lineage);
 }
 
 function buildSessionOpenerOverlayHits(args: {
@@ -259,6 +265,9 @@ function buildSessionOpenerOverlayHits(args: {
 }
 
 function cloneHits(hits: SearchHit[]): SearchHit[] {
+  // Object spread includes the enumerable module-private carrier. Keep this
+  // clone before ranking/score mutation so every downstream stage sees the
+  // same neutral classification without adding a public SearchHit field.
   return hits.map((hit) => ({
     ...hit,
     tags: hit.tags ? [...hit.tags] : hit.tags,

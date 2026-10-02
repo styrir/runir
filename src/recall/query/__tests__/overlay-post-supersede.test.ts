@@ -18,6 +18,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { RecordId } from "surrealdb";
 import type { SearchHit } from "../../../domain/memory/types.js";
 import type { SurrealClient } from "../../../storage/surreal/surreal-store.js";
 import type { OverlayLockKey } from "../../../storage/writes/overlay-supersession.js";
@@ -72,7 +73,7 @@ describe("mergeOverlayLeg — post-supersede phantom prevention (Rúnir-yod0.3.1
     // Batched fallback returns M1 with active=false (durable supersede
     // flipped the bit). The merge MUST drop M1 from the overlay leg.
     const dbQuery = vi.fn().mockResolvedValueOnce([
-      [{ id: "M1", active: false }],
+      [{ id: new RecordId("semiote", "M1"), user_id: "user-a", payload_user_id: "user-a", active: false }],
     ]);
     const db = { query: dbQuery } as unknown as SurrealClient;
 
@@ -91,6 +92,7 @@ describe("mergeOverlayLeg — post-supersede phantom prevention (Rúnir-yod0.3.1
     // Exactly one batched read for the residual id set.
     expect(dbQuery).toHaveBeenCalledTimes(1);
     const [, params] = dbQuery.mock.calls[0];
-    expect(params).toEqual({ ids: ["M1"] });
+    expect(params.requestedUser).toBe("user-a");
+    expect(params.ids.map((id: RecordId<string>) => id.toJSON())).toEqual(["semiote:M1"]);
   });
 });
