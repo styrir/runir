@@ -131,6 +131,29 @@ function infoFields(raw: unknown): Record<string, string> {
   return fields && typeof fields === "object" && !Array.isArray(fields) ? fields as Record<string, string> : {};
 }
 
+function infoIndexText(raw: unknown, indexName: string): string {
+  const outer = Array.isArray(raw) ? raw[0] : raw;
+  const value = Array.isArray(outer) ? outer[0] : outer;
+  const indexes = value && typeof value === "object" ? (value as { indexes?: unknown }).indexes : undefined;
+  const entry = Array.isArray(indexes)
+    ? indexes.find((candidate) => candidate && typeof candidate === "object" && (candidate as { name?: unknown }).name === indexName)
+    : indexes && typeof indexes === "object" ? (indexes as Record<string, unknown>)[indexName] : undefined;
+  return typeof entry === "string" ? entry : JSON.stringify(entry ?? "");
+}
+
+function expectProductionEmbeddingIndexes(schemaInfo: { semiote: unknown; noema: unknown }): void {
+  for (const [table, info, indexName] of [
+    ["semiote", schemaInfo.semiote, "idx_semiote_embedding"],
+    ["noema", schemaInfo.noema, "idx_noema_embedding"],
+  ] as const) {
+    const definition = infoIndexText(info, indexName).replace(/\s+/g, " ").toUpperCase();
+    expect(definition, `${table} ${indexName}`).toMatch(/\bHNSW\b/);
+    expect(definition, `${table} ${indexName}`).toMatch(/\bDIMENSION\s+768\b/);
+    expect(definition, `${table} ${indexName}`).toMatch(/\bDIST\s+COSINE\b/);
+    expect(definition, `${table} ${indexName}`).toMatch(/\bTYPE\s+F32\b/);
+  }
+}
+
 function legacyCreate(id: string, text = "stored native fact", confidence = 0.9, supportIds: string[] = []): string {
   const support = supportIds.length > 0 ? `, noemaSupportSemioteIds: ${JSON.stringify(supportIds)}` : "";
   return `CREATE semiote:${id} SET user_id = 'native-user', scope = 'user', payload = { userId: 'native-user', scope: 'user', active: true, l2: '${text}', confidence: ${confidence}${support} }, active = true, created_at = time::now(), updated_at = time::now();`;
@@ -281,7 +304,11 @@ describe.skipIf(!runNative)("Sourcec CG generic current-snapshot backlog native 
     process.env.SURREAL_DB = "sentinel-db";
     process.env.SURREAL_DATABASE = "sentinel-db";
     db = new SurrealClient({ url: `http://127.0.0.1:${port}`, username: USER, password: PASSWORD, namespace: NAMESPACE, database: DATABASE });
-    await ensurePhase2Schema(db, 8);
+    await ensurePhase2Schema(db, 768);
+    expectProductionEmbeddingIndexes({
+      semiote: await db.query("INFO FOR TABLE semiote;"),
+      noema: await db.query("INFO FOR TABLE noema;"),
+    });
     await ensureStalenessBacklogTable(db);
   }, 30_000);
 

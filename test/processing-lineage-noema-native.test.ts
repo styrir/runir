@@ -36,6 +36,7 @@ const SENTINEL_ENV_KEYS = [
 ] as const;
 const CLEANUP_DEADLINE_MS = 2_000;
 const RUN_ID = `sourcec_n2_${process.pid}`;
+const VECTOR = Array.from({ length: 768 }, (_, index) => index === 0 ? 1 : 0);
 
 function resolvedPackageVersion(packageName: string): string {
   const entry = execFileSync(
@@ -430,6 +431,29 @@ function nativeRowSnapshot(value: unknown): string {
   return JSON.stringify(canonicalNativeRow(value));
 }
 
+function infoIndexText(raw: unknown, indexName: string): string {
+  const outer = Array.isArray(raw) ? raw[0] : raw;
+  const value = Array.isArray(outer) ? outer[0] : outer;
+  const indexes = value && typeof value === "object" ? (value as { indexes?: unknown }).indexes : undefined;
+  const entry = Array.isArray(indexes)
+    ? indexes.find((candidate) => candidate && typeof candidate === "object" && (candidate as { name?: unknown }).name === indexName)
+    : indexes && typeof indexes === "object" ? (indexes as Record<string, unknown>)[indexName] : undefined;
+  return typeof entry === "string" ? entry : JSON.stringify(entry ?? "");
+}
+
+function expectProductionEmbeddingIndexes(schema: { semiote: unknown; noema: unknown }): void {
+  for (const [table, info, indexName] of [
+    ["semiote", schema.semiote, "idx_semiote_embedding"],
+    ["noema", schema.noema, "idx_noema_embedding"],
+  ] as const) {
+    const definition = infoIndexText(info, indexName).replace(/\s+/g, " ").toUpperCase();
+    expect(definition, `${table} ${indexName}`).toMatch(/\bHNSW\b/);
+    expect(definition, `${table} ${indexName}`).toMatch(/\bDIMENSION\s+768\b/);
+    expect(definition, `${table} ${indexName}`).toMatch(/\bDIST\s+COSINE\b/);
+    expect(definition, `${table} ${indexName}`).toMatch(/\bTYPE\s+F32\b/);
+  }
+}
+
 function injectTransactionFailureAfter(sql: string, marker: string, message: string): string {
   const markerIndex = sql.indexOf(marker);
   if (markerIndex < 0) throw new Error(`native P injection marker missing: ${marker}`);
@@ -465,11 +489,12 @@ describe.skipIf(!runNative)("Sourcec-N2 native atomic Noema promotion", () => {
         namespace: "main",
         database: "main",
       });
-      await ensurePhase2Schema(db, 3);
+      await ensurePhase2Schema(db, 768);
       schemaInfo = {
         semiote: await db.query("INFO FOR TABLE semiote;"),
         noema: await db.query("INFO FOR TABLE noema;"),
       };
+      expectProductionEmbeddingIndexes(schemaInfo);
       expect(JSON.stringify(schemaInfo.semiote)).toContain("processing_lineage");
       expect(JSON.stringify(schemaInfo.noema)).toContain("processing_lineage");
       expect(JSON.stringify(schemaInfo.semiote)).toContain("text_norm");
@@ -951,9 +976,11 @@ describe.skipIf(!runNative)("Sourcec-N2 native atomic Noema promotion", () => {
     const result = await promoteSemioteToNoema(db, source);
 
     expect(result.promoted).toBe(true);
+    expect(result.embeddingWritten).toBe(false);
     const target = await readRow("noema", noemaId(result.id ?? ""));
     const sourceRow = await readRow("semiote", source);
     expect(target?.user_id).toBe(USER);
+    expect(target?.embedding).toBeUndefined();
     expect(new Set(target?.support_semiote_ids)).toEqual(new Set([source, supportA, supportB]));
     expect(new Set(sourceRow?.payload?.noemaSupportSemioteIds)).toEqual(new Set([source, supportA, supportB]));
     for (const supportId of [source, supportA, supportB]) {
@@ -961,6 +988,25 @@ describe.skipIf(!runNative)("Sourcec-N2 native atomic Noema promotion", () => {
       expect(row?.user_id).toBe(USER);
       expect(row?.processing_lineage).toBeUndefined();
     }
+  }, 30_000);
+
+  it("persists and reads back an exact 768-element ordinary promotion vector", async () => {
+    const support = id("support-positive-embedding");
+    const source = id("source-positive-embedding");
+    await insertSupport(support);
+    await insertSource({ id: source, supportIds: [support] });
+    let embedCalls = 0;
+    const result = await promoteSemioteToNoema(db, source, async () => {
+      embedCalls += 1;
+      return [...VECTOR];
+    });
+    expect(result).toEqual(expect.objectContaining({ promoted: true, embeddingWritten: true }));
+    expect(embedCalls).toBe(1);
+    const target = await readRow("noema", noemaId(result.id ?? ""));
+    expect(target?.embedding).toHaveLength(768);
+    expect(target?.embedding?.[0]).toBe(1);
+    expect(target?.embedding?.slice(1).every((value: unknown) => value === 0)).toBe(true);
+    expect((await readRow("semiote", source))?.payload?.promotedToNoemaId).toMatch(/^noema:/);
   }, 30_000);
 
   it("reinforces an existing legacy target without reactivating terminal state", async () => {
@@ -991,9 +1037,14 @@ describe.skipIf(!runNative)("Sourcec-N2 native atomic Noema promotion", () => {
       await item.setup?.();
       const source = id(`source-${item.label}`);
       await insertSource({ id: source, supportIds: [item.supportId] });
-      const embedText = async () => [1, 2, 3];
+      let embedCalls = 0;
+      const embedText = async () => {
+        embedCalls += 1;
+        return [...VECTOR];
+      };
       const result = await promoteSemioteToNoema(db, source, embedText);
       expect(result).toEqual({ promoted: false, id: null, embeddingWritten: false });
+      expect(embedCalls).toBe(0);
       const targets = await db.query<any>("SELECT * FROM noema;");
       expect(targets[0]).toHaveLength(0);
     }
@@ -1005,13 +1056,23 @@ describe.skipIf(!runNative)("Sourcec-N2 native atomic Noema promotion", () => {
     await insertSupport(support);
     await insertSource({ id: source, supportIds: [support] });
 
+    const sourceBefore = await readRow("semiote", source);
+    const supportBefore = await readRow("semiote", support);
+    let embedCalls = 0;
+    let supportAfterCallbackSnapshot: string | undefined;
     await expect(promoteSemioteToNoema(db, source, async () => {
       await db.query("UPDATE type::record('semiote', $id) SET active = false;", { id: support });
-      return [1, 2, 3];
+      supportAfterCallbackSnapshot = nativeRowSnapshot(await readRow("semiote", support));
+      embedCalls += 1;
+      return [...VECTOR];
     })).rejects.toMatchObject({ noemaPromotionOutcome: "inconsistent_or_unresolved" });
 
+    expect(embedCalls).toBe(1);
     expect((await db.query<any>("SELECT * FROM noema;"))[0]).toHaveLength(0);
-    expect((await readRow("semiote", source))?.payload?.promotedToNoemaId).toBeUndefined();
+    expect(nativeRowSnapshot(await readRow("semiote", source))).toBe(nativeRowSnapshot(sourceBefore));
+    expect(supportAfterCallbackSnapshot).toBeDefined();
+    expect(supportAfterCallbackSnapshot).not.toBe(nativeRowSnapshot(supportBefore));
+    expect(nativeRowSnapshot(await readRow("semiote", support))).toBe(supportAfterCallbackSnapshot);
   }, 30_000);
 
   it("rolls back every source marker failure after the production transaction starts", async () => {

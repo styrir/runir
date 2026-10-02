@@ -28,7 +28,7 @@ const USER = "user.sourcec.r3.native";
 const OTHER_USER = "user.sourcec.r3.other";
 const NAMESPACE = `${RUN_ID}_ns`;
 const DATABASE = `${RUN_ID}_db`;
-const VECTOR = [1, 0, 0];
+const VECTOR = Array.from({ length: 768 }, (_, index) => index === 0 ? 1 : 0);
 const OMIT = Symbol("omit");
 const CLEANUP_DEADLINE_MS = 2_000;
 const SENTINEL_ENV_KEYS = [
@@ -299,6 +299,29 @@ async function insertSemiote(db: SurrealClient, input: SeedInput): Promise<void>
   );
 }
 
+function infoIndexText(raw: unknown, indexName: string): string {
+  const outer = Array.isArray(raw) ? raw[0] : raw;
+  const value = Array.isArray(outer) ? outer[0] : outer;
+  const indexes = value && typeof value === "object" ? (value as { indexes?: unknown }).indexes : undefined;
+  const entry = Array.isArray(indexes)
+    ? indexes.find((candidate) => candidate && typeof candidate === "object" && (candidate as { name?: unknown }).name === indexName)
+    : indexes && typeof indexes === "object" ? (indexes as Record<string, unknown>)[indexName] : undefined;
+  return typeof entry === "string" ? entry : JSON.stringify(entry ?? "");
+}
+
+function expectProductionEmbeddingIndexes(schemaInfo: { semiote: unknown; noema: unknown }): void {
+  for (const [table, info, indexName] of [
+    ["semiote", schemaInfo.semiote, "idx_semiote_embedding"],
+    ["noema", schemaInfo.noema, "idx_noema_embedding"],
+  ] as const) {
+    const definition = infoIndexText(info, indexName).replace(/\s+/g, " ").toUpperCase();
+    expect(definition, `${table} ${indexName}`).toMatch(/\bHNSW\b/);
+    expect(definition, `${table} ${indexName}`).toMatch(/\bDIMENSION\s+768\b/);
+    expect(definition, `${table} ${indexName}`).toMatch(/\bDIST\s+COSINE\b/);
+    expect(definition, `${table} ${indexName}`).toMatch(/\bTYPE\s+F32\b/);
+  }
+}
+
 function entry(memoryId: string, userId = USER, active = true): OverlayEntry {
   const lockKey: OverlayLockKey = { factKey: `r3:${memoryId}`, continuitySubjectKey: `r3:${memoryId}` };
   return {
@@ -354,7 +377,11 @@ describe("R3 native overlay propagation — owned current-user typed fallback", 
       db = new SurrealClient({ url: `http://127.0.0.1:${port}`, username: "root", password: PASSWORD, namespace: NAMESPACE, database: DATABASE });
       const owned = ownedDb();
       await owned.query("INFO FOR DB;");
-      await ensurePhase2Schema(owned, 3);
+      await ensurePhase2Schema(owned, 768);
+      expectProductionEmbeddingIndexes({
+        semiote: await owned.query("INFO FOR TABLE semiote;"),
+        noema: await owned.query("INFO FOR TABLE noema;"),
+      });
       await insertSemiote(owned, { id: "r3-legacy", lineage: OMIT });
       await insertSemiote(owned, { id: "r3-valid", lineage: VALID_LINEAGE });
       await insertSemiote(owned, { id: "r3-restricted", lineage: RESTRICTED_LINEAGE });
@@ -363,6 +390,8 @@ describe("R3 native overlay propagation — owned current-user typed fallback", 
       await insertSemiote(owned, { id: "r3-wrong-payload", userId: USER, payloadUserId: OTHER_USER, lineage: OMIT });
       await insertSemiote(owned, { id: "r3-foreign", userId: OTHER_USER, lineage: OMIT });
       await insertSemiote(owned, { id: "r3-inactive", active: false, lineage: OMIT });
+      const seeded = await owned.query<Record<string, unknown>>("SELECT embedding FROM type::record('semiote', $id);", { id: "r3-legacy" });
+      expect(seeded[0]?.[0]?.embedding).toEqual(VECTOR);
       await owned.query("DEFINE TABLE r3_legacy_overlay SCHEMALESS;");
       await owned.query("CREATE type::record('r3_legacy_overlay', $id) CONTENT $content;", { id: "r3-missing", content: { active: true } });
       await owned.query("CREATE type::record('r3_legacy_overlay', $id) CONTENT $content;", { id: "r3-null", content: { user_id: null, payload: { userId: null }, active: true } });
