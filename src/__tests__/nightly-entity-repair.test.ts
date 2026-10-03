@@ -116,7 +116,7 @@ describe("runNightlyEntityRepair classification", () => {
     const db = baseDb([
       { match: "SELECT turn_id FROM session_turn_chunk", rows: [{ turn_id: "turn1" }] },
       { match: "FROM type::record('session_turn'", rows: [{ session_id: "s9", turn_index: 2 }] },
-      { match: "SELECT content FROM session_turn_chunk", rows: [{ content: "we shipped bramblefort yesterday" }] },
+      { match: "SELECT content, chunk_index FROM session_turn_chunk", rows: [{ content: "we shipped bramblefort yesterday" }] },
     ]);
     mockExtractEntities.mockResolvedValue([{ name: "Bramblefort", kind: "concept", confidence: 0.9, context: "", aliases: [] }]);
     mockArbitrateEntity.mockResolvedValue({ entityId: "e1", outcome: "created" });
@@ -159,7 +159,7 @@ describe("runNightlyEntityRepair classification", () => {
       { match: "FROM retrieval_trace", rows: [{ entity_misses: [miss("alpha-thing"), miss("beta-thing")] }] },
       { match: "SELECT turn_id FROM session_turn_chunk", rows: [{ turn_id: "turn1" }] },
       { match: "FROM type::record('session_turn'", rows: [{ session_id: "s1", turn_index: 0 }] },
-      { match: "SELECT content FROM session_turn_chunk", rows: [{ content: "alpha-thing and beta-thing both appear" }] },
+      { match: "SELECT content, chunk_index FROM session_turn_chunk", rows: [{ content: "alpha-thing and beta-thing both appear" }] },
     ]);
     mockExtractEntities.mockResolvedValue([]);
     const report = await runNightlyEntityRepair({ db, userId: "u1", apiKey: "k", limits: { maxReextractions: 1 } });

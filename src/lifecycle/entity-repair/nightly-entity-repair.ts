@@ -182,7 +182,7 @@ async function findMentionInTurns(
     const row = header[0]?.[0] as { session_id: string; turn_index: number } | undefined;
     if (!row) continue;
     const chunks = await db.query<any>(
-      `SELECT content FROM session_turn_chunk WHERE user_id = $userId
+      `SELECT content, chunk_index FROM session_turn_chunk WHERE user_id = $userId
         AND turn_id = $turnId ORDER BY chunk_index;`, { userId, turnId },
     );
     hits.push({ session_id: row.session_id, turn_index: row.turn_index,
