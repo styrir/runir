@@ -434,7 +434,7 @@ async function main() {
       { sessionId: "sess-contract-3", reason: "resume" },
       { sessionId: "sess-contract-4", reason: "prompt_input_exit" },
     ];
-    for (const [index, sessionEndCase] of sessionEndCases.entries()) {
+    for (const sessionEndCase of sessionEndCases) {
       const run = await runHook(sessionEndHook, {
         session_id: sessionEndCase.sessionId,
         transcript_path: transcriptPath,

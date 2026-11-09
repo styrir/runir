@@ -90,6 +90,7 @@ function readDotEnvValue(filePath, key) {
       return unquoted.trim() || void 0;
     }
   } catch {
+    return void 0;
   }
   return void 0;
 }

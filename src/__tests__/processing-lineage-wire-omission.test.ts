@@ -198,7 +198,8 @@ vi.mock("../storage/surreal/phase2-store.js", () => ({
   patchRetrievalTraceAnswer: vi.fn(),
 }));
 
-vi.mock("../capture/extraction/capture.js", () => ({
+vi.mock("../capture/extraction/capture.js", async (importOriginal) => ({
+  postProcessExtractedFacts: (await importOriginal<typeof import("../capture/extraction/capture.js")>()).postProcessExtractedFacts,
   batchDedupFacts: mocks.batchDedupFacts,
   extractMemories: mocks.extractMemories,
   isNoisyFact: mocks.isNoisyFact,

@@ -197,14 +197,14 @@ afterEach(() => {
 
 // ── Test 1: both judge flags OFF → F2 direct-retire unchanged ────────────────
 // Proves the composed persisted-row shape under flags-off, byte-for-byte at the
-// db-call boundary (real supersedeMemory → composeUpsertMemory → queryTransaction).
+// db-call boundary (real supersedeMemory → create-only/CAS composer → queryTransaction).
 // Does NOT assert a live SurrealDB round-trip — only the composed transaction vars.
 describe("test 1 — both judge flags OFF (composed persisted-row bytes at store boundary)", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("flags-off F2 supersede: composed transaction vars equal pre-change shape at db boundary", async () => {
+  it("flags-off F2 supersede: guarded transaction retains exact persisted values at db boundary", async () => {
     // Pin non-determinism so the comparison is total (arch-r3 P1 / arch-r2 P1#2).
     const FIXED_ID = "00000000-0000-4000-8000-0000000000f2";
     const FIXED_NOW = "2026-06-15T12:00:00.000Z";
@@ -252,13 +252,26 @@ describe("test 1 — both judge flags OFF (composed persisted-row bytes at store
       string,
       Record<string, unknown>,
     ];
-    // Fresh-id arbitration branch: inlined composeUpsertMemory UPSERT + both tails.
-    expect(txnBody).toContain("UPSERT type::record('semiote', $sup_recordId)");
-    expect(txnBody).toContain("UPDATE type::record('semiote', $id) SET supersede_provenance");
+    // Fresh replacement creation and previous-row retirement share one guarded transaction.
+    const createSql = "CREATE ONLY type::record('semiote', $sup_recordId)";
+    expect(txnBody).toContain(createSql);
+    expect(txnBody).not.toContain("UPSERT");
+    expect(txnBody).toContain("IF array::len($initialPreviousRows) != 1");
+    expect(txnBody).toContain("IF array::len($initialReplacementRows) != 0");
+    expect(txnBody.indexOf("IF array::len($initialPreviousRows) != 1"))
+      .toBeLessThan(txnBody.indexOf(createSql));
+    expect(txnBody.indexOf("IF array::len($initialReplacementRows) != 0"))
+      .toBeLessThan(txnBody.indexOf(createSql));
+    expect(txnBody).toContain("supersede_provenance: $sup_supersedeProvenance");
+    expect(txnBody).toContain("IF $replacementRows = NONE");
     expect(txnBody).toContain("UPDATE type::record('semiote', $prevRecordId) SET");
+    expect(txnBody).toContain("AND user_id = $userId");
+    expect(txnBody).toContain("AND payload.userId = $userId");
+    expect(txnBody).toContain("AND processing_lineage = NONE");
+    expect(txnBody).toContain("IF array::len($previousRows) != 1");
+    expect(txnBody).toContain('THROW "generic supersede previous compare-and-set failed"');
 
     // Full composed transaction variables at the db-call boundary (nothing elided).
-    // JSON.stringify drops keys whose values are undefined — matching both sides.
     const expectedTxnVars: Record<string, unknown> = {
       id: FIXED_ID,
       prevRecordId: "cand-f2",
@@ -269,7 +282,7 @@ describe("test 1 — both judge flags OFF (composed persisted-row bytes at store
       supersede_provenance: "deterministic",
       inactiveReason: "superseded",
       supersededById: FIXED_ID,
-      // composeUpsertMemory (paramPrefix "sup_") — createdAt/updatedAt/lifecycle/top-level
+      // Create-only composer (paramPrefix "sup_") — timestamps/lifecycle/provenance.
       sup_recordId: FIXED_ID,
       sup_embedding: embedding,
       sup_payload: {
@@ -308,8 +321,9 @@ describe("test 1 — both judge flags OFF (composed persisted-row bytes at store
       sup_supersededById: undefined,
       sup_supersedesId: "cand-f2",
       sup_lineageRootId: "cand-f2",
+      sup_supersedeProvenance: "deterministic",
     };
-    expect(JSON.stringify(txnVars)).toBe(JSON.stringify(expectedTxnVars));
+    expect(txnVars).toStrictEqual(expectedTxnVars);
 
     uuidSpy.mockRestore();
   });

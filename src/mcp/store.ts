@@ -130,6 +130,7 @@ function readDotEnvValue(filePath: string, key: string): string | undefined {
     }
   } catch {
     // Missing file is a normal miss when RUNIR_ENV_FILE is set incorrectly.
+    return undefined;
   }
   return undefined;
 }

@@ -134,18 +134,15 @@ describe("surreal-store integration (MIM-60)", () => {
     await bm25Search(db, "user1", "test query", 10, statsCache);
 
     expect(db.query).toHaveBeenCalled();
-    // Find the MATCHES query call
+    // Multiple significant terms use the OR matcher with an inline query.
     const matchesCalls = db.query.mock.calls.filter(([sql]: [string]) =>
-      sql.includes("@0@") || sql.includes("MATCHES")
+      sql.includes("text_norm @0,OR@")
     );
 
-    expect(matchesCalls.length).toBeGreaterThan(0);
-    const [sql] = matchesCalls[0]!;
-    // The query text should be inlined in the SQL string
-    expect(sql).toContain("test");
-    expect(sql).toContain("query");
-    // Should use @0@ syntax with inline query
-    expect(sql).toContain("@0@");
+    expect(matchesCalls).toHaveLength(1);
+    const [sql, vars] = matchesCalls[0]!;
+    expect(sql).toContain("text_norm @0,OR@ 'test query'");
+    expect(vars).toEqual({ userId: "user1", limit: 10 });
   });
 
   it("findSimilarMemories vector literal is inlined not bound", async () => {

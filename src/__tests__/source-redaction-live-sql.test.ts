@@ -74,11 +74,16 @@ describe("Slice 1 changed SurrealQL statements", () => {
     await patchRetrievalTraceCaptureReceipt(db, traceId, "synthetic", {
       sessionId: "session", memoryIds: ["semiote:synthetic"], prompt: `prompt ${canary}`, answer: `answer ${canary}`,
     });
-    const promoted = await promoteSemioteToNoema(db, {
-      id: "semiote:synthetic", user_id: "synthetic", scope: "user", memory_role: "current_status",
+    // Promotion rereads and guards the persisted source, not caller-supplied content.
+    await db.query(`CREATE type::record('semiote', 'synthetic') CONTENT object::extend($source, { created_at: time::now(), updated_at: time::now() });`, {
+      source: {
+      user_id: "synthetic", scope: "user", memory_role: "current_status",
       usefulness_score: 0.9, successful_use_count: 4, cross_session_use_count: 2,
-      payload: { l2: `The service stores safe facts ${canary}`, l0: `Safe facts ${canary}`, confidence: 0.9, factKey: "cases:safe-facts" },
-    }, async () => new Array(768).fill(0.1));
+      payload: { userId: "synthetic", l2: `The service stores safe facts ${canary}`, l0: `Safe facts ${canary}`, confidence: 0.9, factKey: "cases:safe-facts" },
+      },
+    });
+    const promoted = await promoteSemioteToNoema(db, "semiote:synthetic",
+      async () => new Array(768).fill(0.1));
     expect(promoted.promoted).toBe(true);
     const rows = await db.query("SELECT * FROM rejection_log; SELECT * FROM retrieval_trace; SELECT * FROM noema;");
     expect(rows[0]?.length).toBe(1);

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, Socket } from "node:net";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROCESSING_LINEAGE_VERSION } from "../src/domain/memory/processing-lineage.js";
 import { getSearchHitLineage } from "../src/domain/memory/search-hit-lineage.js";
 import {
@@ -149,6 +149,12 @@ describe("Sourcec-R1 native storage lineage reads", () => {
 
   beforeEach(async () => {
     await db.query("DELETE semiote;");
+    // Keep the October fixture within the default 72-hour capture window.
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-01T22:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   afterAll(async () => {
