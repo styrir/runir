@@ -11,8 +11,10 @@ The Volta shim **fork+execs** the real node, so launchd tracked the *shim* while
 
 ## The fix
 1. **Plist + wrapper** — launchd executes the machine-local
-   `~/Library/Application Support/runir/runir-launchd-wrapper.sh`, installed from
-   `scripts/runir-launchd-wrapper.sh`. The wrapper obtains credentials independently,
+   `~/Library/Application Support/runir/runir-launchd-wrapper.sh`. The reviewed
+   candidate source is `scripts/runir-launchd-wrapper.sh`; the rollout status
+   below records that the legacy installed wrapper was restored. The candidate
+   obtains credentials independently,
    exports the provider key and source HMAC, and `exec`s the real Node binary with
    `--import dotenv/config`.
    - launchd's tracked PID remains the listener PID;

@@ -592,8 +592,8 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
         scope: "global", teamId: "untrusted-team", projectKey: "untrusted-project",
         messages: [{ role: "user", content: "synthetic.person@example.com", turnIndex: 8, sessionEpoch: "epoch:2" }] }),
     });
-    expect(res.status).toBe(200);
-    expect((await res.json()).reason).toBe("no capture API key");
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ skipped: true, reason: "no capture API key", retryable: true });
     expect(sourceAppend).toHaveBeenCalledTimes(1);
     const stored = sourceAppend.mock.calls[0]?.[0] as Array<{
       content: string; turnIndex: number; identityQuality: string;
@@ -934,10 +934,32 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
     expect((await post("failed")).status).toBe(500);
     expect((await post("failed")).status).toBe(200);
     expect((extractMemories as Mock).mock.calls).toHaveLength(2);
-    (resolveCaptureApiKey as Mock).mockReturnValueOnce("");
-    expect(await (await post("no-key")).json()).toMatchObject({ reason: "no capture API key" });
-    expect((await post("no-key")).status).toBe(200);
-    expect((extractMemories as Mock).mock.calls).toHaveLength(3);
+    (resolveCaptureApiKey as Mock).mockReturnValue("");
+    const missingKey = await post("no-key");
+    expect(missingKey.status).toBe(503);
+    expect(await missingKey.json()).toEqual({ skipped: true, reason: "no capture API key", retryable: true });
+    expect(sourceCommit.mock.calls[2]?.[0]).toHaveLength(1);
+    expect(sourceCommit.mock.calls[2]?.[1]).toEqual([]);
+    expect(sourceExtracted.size).toBe(1); // Only the earlier "failed" turn completed.
+    expect(extractMemories).toHaveBeenCalledTimes(2);
+    expect(arbitrateWrite).not.toHaveBeenCalled();
+
+    (resolveCaptureApiKey as Mock).mockReturnValue("test-api-key");
+    (extractMemories as Mock).mockResolvedValueOnce([
+      { l2: "Synthetic retry fact that is long enough", confidence: 0.9, sourceTurnIndex: 0 },
+    ]);
+    const retry = await post("no-key");
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({ skipped: false, factsFound: 1, outcomes: { create: 1 } });
+    expect(sourceExtracted.size).toBe(2);
+    expect(sourceCommit.mock.calls.map((call) => call[1].length)).toEqual([0, 1, 0, 1]);
+
+    const replay = await post("no-key");
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ skipped: true, reason: "already captured" });
+    expect(extractMemories).toHaveBeenCalledTimes(3);
+    expect(arbitrateWrite).toHaveBeenCalledTimes(1);
+    expect(sourceCommit).toHaveBeenCalledTimes(4);
   });
 
   it("serializes overlapping identical capture requests through extraction", async () => {
@@ -1267,7 +1289,7 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
     expect(arbitrateWrite).not.toHaveBeenCalled();
   });
 
-  it("POST /hooks/capture without API key returns graceful response", async () => {
+  it("POST /hooks/capture without API key returns a retryable 503", async () => {
     (resolveCaptureApiKey as Mock).mockReturnValue(null);
 
     const app = getApp();
@@ -1279,11 +1301,10 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
       }),
     });
 
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    // Without API key, extraction is skipped
-    expect(json.skipped).toBe(true);
-    expect(json.reason).toBe("no capture API key");
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ skipped: true, reason: "no capture API key", retryable: true });
+    expect(extractMemories).not.toHaveBeenCalled();
+    expect(arbitrateWrite).not.toHaveBeenCalled();
   });
 
   it("POST /hooks/capture does not write facts that are too short", async () => {
@@ -1584,7 +1605,8 @@ describe("POST /hooks/capture per-request captureFixtureFacts body override", ()
     else process.env.RUNIR_TEST_CAPTURE_FACTS_JSON = SAVED_ENV_BLOB;
   });
 
-  it("in fixture mode, body.captureFixtureFacts overrides the env blob and bypasses extractMemories", async () => {
+  it("in fixture mode, body.captureFixtureFacts overrides the env blob and bypasses extractMemories without an API key", async () => {
+    (resolveCaptureApiKey as Mock).mockReturnValue("");
     process.env.RUNIR_TEST_MODE = "1";
     process.env.RUNIR_TEST_CAPTURE_FACTS_JSON = JSON.stringify([
       { l2: "ENV blob fact that should be overridden", confidence: 0.5 },

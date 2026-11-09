@@ -1430,7 +1430,7 @@ export function registerHookRoutes(app: Hono) {
             ?? readHarnessJsonArrayEnv<RawExtractedFact>("RUNIR_TEST_CAPTURE_FACTS_JSON"))
         : undefined;
       timer.mark("compress_and_gate_api_key");
-      if (!apiKey && !captureFixtureFacts) return c.json({ skipped: true, reason: "no capture API key", ...debugTimings() });
+      if (!apiKey && !captureFixtureFacts) return c.json({ skipped: true, reason: "no capture API key", retryable: true, ...debugTimings() }, 503);
 
       if (!salience.hardOverride && salience.score < 0.25 && noiseBank.initialized) {
         let isNoise = false;
