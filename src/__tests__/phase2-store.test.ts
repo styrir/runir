@@ -24,6 +24,64 @@ function mockDb() {
   return { query: vi.fn().mockResolvedValue([[]]) } as any;
 }
 
+function promotionDb(row: Record<string, unknown>, status?: string) {
+  const payload = row.payload && typeof row.payload === "object"
+    ? row.payload as Record<string, unknown>
+    : {};
+  const metadata = {
+    id: row.id,
+    user_id: row.user_id,
+    processing_lineage: undefined,
+    payload_user_id: payload.userId,
+    active: row.active,
+    scope: row.scope,
+    path: row.path,
+    memory_role: row.memory_role,
+    supersedes: row.supersedes,
+    superseded_by: row.superseded_by,
+    lineage_root_id: row.lineage_root_id,
+    inactive_at: row.inactive_at,
+    inactive_reason: row.inactive_reason,
+    updated_at: row.updated_at,
+    payload_active: payload.active,
+    payload_inactive_at: payload.inactiveAt,
+    payload_inactive_reason: payload.inactiveReason,
+    payload_superseded_by_id: payload.supersededById,
+    payload_supersedes_id: payload.supersedesId,
+    payload_lineage_root_id: payload.lineageRootId,
+    payload_supersede_provenance: payload.supersede_provenance,
+    payload_updated_at: payload.updatedAt,
+    payload_write_source: payload.writeSource,
+    payload_arbitration_outcome: payload.arbitrationOutcome,
+    payload_is_stale: payload.isStale,
+    payload_stale_since: payload.staleSince,
+    payload_contradicted_by: payload.contradictedBy,
+  };
+  const db = mockDb();
+  db.queryTransaction = vi.fn().mockResolvedValue(undefined);
+  db.query.mockImplementation((sql: string) => {
+    if (sql.includes("FROM type::record('noema'")) {
+      return Promise.resolve(status
+        ? [[{
+          id: "noema:existing",
+          user_id: row.user_id,
+          processing_lineage: undefined,
+          status,
+          claim_key: undefined,
+          revision_hash: undefined,
+          support_semiote_ids: ["semi-1"],
+          active: true,
+          updated_at: "noema-version-1",
+        }]]
+        : [[]]);
+    }
+    if (sql.includes("SELECT id, user_id") && sql.includes("processing_lineage")) return Promise.resolve([[metadata]]);
+    if (sql.includes("SELECT * FROM type::record('semiote'")) return Promise.resolve([[row]]);
+    return Promise.resolve([[]]);
+  });
+  return db;
+}
+
 describe("phase2-store semiosis + noema persistence", () => {
   it("defines retrieval_trace as schemaless so nested item objects can persist", async () => {
     const db = mockDb();
@@ -429,7 +487,6 @@ describe("phase2-store semiosis + noema persistence", () => {
   });
 
   it("promotes eligible semiote rows into deterministic noema records", async () => {
-    const db = mockDb();
     const row = {
       id: "semiote:semi-1",
       user_id: "u1",
@@ -454,22 +511,18 @@ describe("phase2-store semiosis + noema persistence", () => {
       cross_session_use_count: 2,
       contradiction_count: 0,
     };
+    const db = promotionDb(row);
 
     const result = await promoteSemioteToNoema(db, row);
 
     expect(result.promoted).toBe(true);
     expect(result.id).toMatch(/^noema:[a-f0-9]{24}$/);
-    expect(db.query).toHaveBeenNthCalledWith(
-      1,
-      "SELECT status FROM type::record('noema', $id) LIMIT 1;",
-      expect.objectContaining({
-        id: expect.stringMatching(/^[a-f0-9]{24}$/),
-      }),
-    );
-    expect(db.query).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining("UPSERT type::record('noema', $id)"),
-      expect.objectContaining({
+    expect(db.queryTransaction).toHaveBeenCalledTimes(1);
+    const [transactionSql, transactionParams] = db.queryTransaction.mock.calls[0];
+    expect(transactionSql).toContain("CREATE ONLY type::record('noema', $noemaId)");
+    expect(transactionSql).toContain("UPDATE type::record('semiote', $sourceId)");
+    expect(transactionSql).not.toContain("UPSERT type::record('noema'");
+    expect(transactionParams).toMatchObject({
         userId: "u1",
         supportSemioteIds: ["semi-1"],
         canonicalText: "The capture hook writes semiote records directly.",
@@ -481,30 +534,11 @@ describe("phase2-store semiosis + noema persistence", () => {
           predicate: "writes",
           value: "The capture hook writes semiote records directly.",
         },
-      }),
-    );
-    expect(db.query).toHaveBeenNthCalledWith(
-      3,
-      expect.stringContaining("UPDATE type::record('semiote', $id)"),
-      expect.objectContaining({
-        id: "semi-1",
-        claimKey: expect.stringMatching(/^[a-f0-9]{32}$/),
-        revisionHash: expect.stringMatching(/^[a-f0-9]{64}$/),
-        status: "active",
-        stableClaim: {
-          subject: "capture-hook",
-          predicate: "writes",
-          value: "The capture hook writes semiote records directly.",
-        },
-      }),
-    );
+    });
   });
 
   it("does not reactivate terminal noema statuses during promotion", async () => {
-    const db = mockDb();
-    db.query.mockResolvedValueOnce([[{ status: "superseded" }]]);
-
-    await promoteSemioteToNoema(db, {
+    const row = {
       id: "semiote:semi-1",
       user_id: "u1",
       scope: "user",
@@ -527,27 +561,20 @@ describe("phase2-store semiosis + noema persistence", () => {
       successful_use_count: 3,
       cross_session_use_count: 2,
       contradiction_count: 0,
-    });
+    };
+    const db = promotionDb(row, "superseded");
 
-    expect(db.query).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining("UPSERT type::record('noema', $id)"),
-      expect.objectContaining({
-        status: "superseded",
-      }),
-    );
-    expect(db.query).toHaveBeenNthCalledWith(
-      3,
-      expect.stringContaining("UPDATE type::record('semiote', $id)"),
-      expect.objectContaining({
-        status: "superseded",
-      }),
-    );
+    await promoteSemioteToNoema(db, row);
+
+    expect(db.queryTransaction).toHaveBeenCalledTimes(1);
+    const [transactionSql, transactionParams] = db.queryTransaction.mock.calls[0];
+    expect(transactionSql).toContain("UPDATE type::record('noema', $noemaId)");
+    expect(transactionSql).toContain("UPDATE type::record('semiote', $sourceId)");
+    expect(transactionParams).toMatchObject({ status: "superseded" });
   });
 
   it("does not promote semiote rows that lack enough cross-session evidence", async () => {
-    const db = mockDb();
-    const result = await promoteSemioteToNoema(db, {
+    const row = {
       id: "semiote:semi-2",
       user_id: "u1",
       payload: { l2: "A tentative working-memory note.", confidence: 0.6 },
@@ -555,10 +582,12 @@ describe("phase2-store semiosis + noema persistence", () => {
       successful_use_count: 1,
       cross_session_use_count: 0,
       contradiction_count: 0,
-    });
+    };
+    const db = promotionDb(row);
+    const result = await promoteSemioteToNoema(db, row);
 
     expect(result).toEqual({ promoted: false, id: null, embeddingWritten: false });
-    expect(db.query).not.toHaveBeenCalled();
+    expect(db.query).toHaveBeenCalledTimes(2);
   });
 });
 

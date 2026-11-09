@@ -414,7 +414,7 @@ describe("softArchiveInactiveOlderThan", () => {
     const db = {
       query: vi.fn()
         .mockResolvedValueOnce([[{ id: "m1" }, { id: "m2" }]])
-        .mockResolvedValueOnce([[]]),
+        .mockResolvedValueOnce([[{ id: "m1" }, { id: "m2" }]]),
     } as any;
     const count = await softArchiveInactiveOlderThan(db, "u1", "user", "2024-01-01", "memories");
     expect(count).toBe(2);
@@ -635,10 +635,10 @@ describe("supersedeMemory", () => {
       { id: "new-1", text: "new", userId: "u1", embedding: [1, 0], scope: "user", writeSource: "memory_store" },
       "deterministic",
     );
-    // FRESH branch: the inlined upsert (sup_ prefix) inside the transaction
+    // FRESH branch: the collision-safe create (sup_ prefix) inside the transaction
     // carries the lineage root. The xxa9 exists-check SELECT precedes BEGIN.
     const [body, vars] = db.queryTransaction.mock.calls[0];
-    expect(body).toContain("UPSERT");
+    expect(body).toContain("CREATE ONLY");
     expect((vars as Record<string, unknown>).sup_lineageRootId).toBe("prev-1");
   });
 
@@ -651,7 +651,7 @@ describe("supersedeMemory", () => {
       "deterministic",
     );
     const [body, vars] = db.queryTransaction.mock.calls[0];
-    expect(body).toContain("UPSERT");
+    expect(body).toContain("CREATE ONLY");
     expect((vars as Record<string, unknown>).sup_lineageRootId).toBe("root-0");
   });
 

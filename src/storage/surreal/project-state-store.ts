@@ -15,6 +15,7 @@ import {
   mapMemoryRowToSearchHit,
   projectStateRecordId,
 } from "./surreal-client.js";
+import { attachSelectedSearchHitLineage } from "../../domain/memory/search-hit-lineage.js";
 
 const CONTINUITY_STATE_ROLE_FILTER = [
   "current_status",
@@ -592,7 +593,7 @@ export async function listContinuityMemoryHits(
         AND (updated_at > <datetime>$cutoff OR created_at > <datetime>$cutoff))`;
   const results = await db.query<any>(
     // Rúnir-ekos B4 (scout-missed site): defaults to the current-era table.
-    `SELECT id, payload, created_at, updated_at, active, inactive_reason, superseded_by, lineage_root_id, valid_at, invalid_at
+    `SELECT id, payload, processing_lineage, created_at, updated_at, active, inactive_reason, superseded_by, lineage_root_id, valid_at, invalid_at
      FROM ${options.tableName ?? PRIMARY_MEMORY_TABLE}
      WHERE payload.userId = $userId
        ${activeClause}
@@ -606,7 +607,9 @@ export async function listContinuityMemoryHits(
       : { userId, limit, cutoff },
   );
   const rows = results[0] ?? [];
-  return rows.map((row: any) => mapMemoryRowToSearchHit({ ...row, score: 0 }));
+  return rows.map((row: any) =>
+    attachSelectedSearchHitLineage(mapMemoryRowToSearchHit({ ...row, score: 0 }), row?.processing_lineage),
+  );
 }
 
 export async function invalidateContinuityStateRecords(

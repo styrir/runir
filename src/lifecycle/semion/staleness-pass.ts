@@ -125,6 +125,7 @@ async function bm25Search(
     WHERE text_norm @0@ '${escapedQuery}'
     AND payload.userId = $userId
     AND payload.scope = $scope
+    AND processing_lineage = NONE
     AND (active = NONE OR active = true)
     ${excludeClause}
     LIMIT 10`;
@@ -155,6 +156,7 @@ async function vectorSearch(
     FROM ${tableName}
     WHERE payload.userId = $userId
     AND payload.scope = $scope
+    AND processing_lineage = NONE
     AND (active = NONE OR active = true)
     ${excludeClause}
     AND vector::similarity::cosine(embedding, $embedding) >= 0.75

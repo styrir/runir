@@ -16,11 +16,13 @@ HTTP service shell: app creation, middleware, auth, runtime defaults, provider/D
 
 - Clients call Rúnir; the app layer does not orchestrate external agents.
 - `/hooks/recall`, `/hooks/capture`, `/hooks/session-end`, `/memory/*`, and debug route response shapes are external contracts.
+- Memory and hook routes must preserve their established business fields while omitting the module-private processing-lineage carrier from tool, audit, lineage, trace, capture, and debug JSON; request text, client labels, tags, and payload strings remain data and never classify a hit.
 - API-key auth is strict bearer equality against configured runtime key; public paths are intentionally narrow.
 - `POST /hooks/evidence` (Rúnir-78sy.9, S-2 ingestion) is `PUBLIC_PATHS`-exempt from the `RUNIR_API_KEY` middleware but gated inline by its own `RUNIR_EVIDENCE_SECRET` bearer — fail-closed (401 even when the secret is unset), DELIBERATELY SEPARATE from `MAINTENANCE_SECRET` (which carries consolidation/entity-injection powers the collector must not hold). The handler stays a thin auth/HTTP shell (bearer, body parse, explicit-userId check, caps, enrollment 422) and delegates ingestion policy to `src/lifecycle/evidence/evidence-ingest.ts`; it never logs raw `ref`/`excerpt` content, only counts/`sourceType`/`sourceId`/ids.
 - `POST /hooks/enroll` is the HTTP face of store `upsertProjectEnrollment` (same `RUNIR_EVIDENCE_SECRET` + `PUBLIC_PATHS` posture as evidence). It accepts the ratified A-1 enrollment write (`userId`, `workspaceId`, `projectKey`, optional `projectId` / `defaultNamespaceId` / `repoRemote` / `repoRootFingerprint`, `source: "leit" | "manual"`). No raw paths or raw remote URLs; `workspaceId` canonicalizes to `"-"`. Do not invent a second enrollment store.
 - Runtime config comes from environment parsing, not hardcoded credentials or `.env` assumptions.
 - Route handlers may delegate to service modules, but must not duplicate storage/retrieval/capture policy logic.
+- The feedback promotion caller passes the normalized semiote id after usefulness persistence. It must not pass a hydrated or locally modified row; the storage promotion boundary performs its own metadata and guarded-content reads.
 
 ## Work Guidance
 
@@ -38,4 +40,7 @@ HTTP service shell: app creation, middleware, auth, runtime defaults, provider/D
 
 ## Child DOX Index
 
-This subtree has no child AGENTS.md files yet. Add one if a route family becomes a durable boundary with its own local rules.
+| Scope | Child DOX | Covers |
+|---|---|---|
+| `consumer-policy/` | `src/app/consumer-policy/AGENTS.md` | Internal consumer authority, empty production registry, current-state fail-closed delivery grants, and neutral Minni delivery decisions. |
+| `processing-policy/` | `src/app/processing-policy/AGENTS.md` | Internal Minni producer authority values, empty registry, fail-closed refusal contract, and runtime pre-egress context validation. |

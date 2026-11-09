@@ -48,6 +48,9 @@ command blocks to `AGENTS.md`. Put detailed topic guidance in
 - Capture fixture facts replace only the model response; they pass through the
   same extraction post-processing as production facts. Source-link and replay
   details are in [`scripts/source-layer/README.md`](scripts/source-layer/README.md).
+- Agents designing Minni summary ingestion, later processing or consumer delivery
+  must read [`docs/minni-summary-policy.md`](docs/minni-summary-policy.md); its
+  source requirements do not establish active runtime enforcement.
 - Read-only and isolated subagents should skip both unless their task directly
   needs that guidance.
 
