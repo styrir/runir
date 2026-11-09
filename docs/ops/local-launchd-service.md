@@ -11,10 +11,9 @@ The Volta shim **fork+execs** the real node, so launchd tracked the *shim* while
 
 ## The fix
 1. **Plist + wrapper** — launchd executes the machine-local
-   `~/Library/Application Support/runir/runir-launchd-wrapper.sh`. The reviewed
-   candidate source is `scripts/runir-launchd-wrapper.sh`; the rollout status
-   below records that the legacy installed wrapper was restored. The candidate
-   obtains credentials independently,
+   `~/Library/Application Support/runir/runir-launchd-wrapper.sh`. The installed
+   source is `scripts/runir-launchd-wrapper.sh`; the rollout status below records
+   its actual launchd qualification. The wrapper obtains credentials independently,
    exports the provider key and source HMAC, and `exec`s the real Node binary with
    `--import dotenv/config`.
    - launchd's tracked PID remains the listener PID;
@@ -54,10 +53,11 @@ comes from `.env`.
 
 ## Source installation and rollout gates
 
-The tracked wrapper is the candidate installation source for vk-2684. The first
-actual launchd credential check failed and the original installed wrapper was
-restored; see [the qualification record](2026-11-09-nanogpt-deployment-qualification.md).
-It is not yet the installed production wrapper. Do not install it until the
+The tracked wrapper is the installed and live-qualified source for vk-2684.
+The first attempt was restored after credential warnings; actual launchd
+requalification and the later NanoGPT rollout passed. See [the qualification
+record](2026-11-09-nanogpt-deployment-qualification.md) for current evidence and
+Verk for acceptance status. Do not install it until the
 vk-2683 receipt establishes retryable capture failure without completing source
 turns or advancing client watermarks. Run the offline fake-process check first:
 
