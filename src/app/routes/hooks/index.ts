@@ -4,6 +4,7 @@ import { redactFact, redactFactText, redactSourceTurn, redactSourceTurnWithProof
 import { resolveLlmBaseUrl, resolveLlmTimeoutMs } from "../../../shared/config.js";
 import { prepareSourceTurn, sourceKeyFingerprint, type SourceTurn } from "../../../capture/source-turn-identity.js";
 import { SourceTurnSpool } from "../../../capture/source-turn-spool.js";
+import { ExtractionFailure } from "../../../capture/extraction/extraction-failure.js";
 import { countSourceLink } from "../../../capture/source-link-metrics.js";
 import { assertSourceKeyFingerprint, SourceKeyMismatchError, upsertSourceTurn } from "../../../storage/surreal/session-turn-store.js";
 import { markFactSourceLink, reconcileSourceTurnLinks } from "../../../storage/surreal/source-turn-link-store.js";
@@ -1460,7 +1461,7 @@ export function registerHookRoutes(app: Hono) {
       }
       const extractedRawFacts = captureFixtureFacts !== undefined
         ? postProcessExtractedFacts(captureFixtureFacts, compressed,
-          clientSessionTimestamp ?? new Date().toISOString(), onReject)
+          clientSessionTimestamp ?? new Date().toISOString(), onReject, "fixture", undefined, true)
         : await extractMemories(
         compressed,
         resolveCapturePrompt(cfg.customPrompt),
@@ -1470,6 +1471,7 @@ export function registerHookRoutes(app: Hono) {
         {
           timeoutMs: cfg.extractTimeoutMs,
           model: cfg.extractModel,
+          strict: true,
           onTiming: (name, durationMs) => timer.markNested("extract_memories", name, durationMs),
         },
       );
@@ -1790,6 +1792,9 @@ export function registerHookRoutes(app: Hono) {
         } : {}),
       });
     } catch (err) {
+      if (err instanceof ExtractionFailure) {
+        return c.json({ error: err.message, retryable: true }, 503);
+      }
       if (err instanceof CaptureReceiptRequestError) {
         return c.json({ error: err.message, ...debugTimings() }, err.status);
       }

@@ -16,6 +16,7 @@ import {
   resolveCapturePrompt,
 } from "../capture/extraction/capture.js";
 import type { ExtractedFact, RawExtractedFact } from "../domain/memory/types.js";
+import { ExtractionFailure } from "../capture/extraction/extraction-failure.js";
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -24,6 +25,84 @@ beforeEach(() => {
 // ── extractMemories — error paths ────────────────────────────────────────────
 
 describe("extractMemories — error paths", () => {
+  it.each([
+    { name: "HTTP 403", gateway: async () => new Response("upstream-secret-canary", { status: 403 }) },
+    { name: "HTTP 402", gateway: async () => new Response("upstream-secret-canary", { status: 402 }) },
+    { name: "network error", gateway: async () => { throw new Error("upstream-secret-canary"); } },
+    { name: "fetch abort", gateway: async () => { throw new DOMException("upstream-secret-canary", "AbortError"); } },
+    { name: "body JSON error", gateway: async () => new Response("upstream-secret-canary") },
+    { name: "body abort", gateway: async () => ({
+      ok: true,
+      json: async () => { throw new DOMException("upstream-secret-canary", "AbortError"); },
+    }) as unknown as Response },
+    ...[
+      "not json at all { unclosed [[[",
+      "null",
+      "[]",
+      "{}",
+      '{"facts":"upstream-secret-canary"}',
+    ].map((content) => ({
+      name: `model JSON ${content}`,
+      gateway: async () => Response.json({ choices: [{ message: { content } }] }),
+    })),
+    { name: "missing model content", gateway: async () => Response.json({ choices: [] }) },
+  ])("keeps $name fail-soft by default and rejects safely in strict mode", async ({ gateway }) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(gateway);
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const messages = [{ role: "user" as const, content: "synthetic source" }];
+    await expect(extractMemories(messages, "prompt", "key")).resolves.toEqual([]);
+    const failure = await extractMemories(messages, "prompt", "key", undefined, undefined, { strict: true })
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ExtractionFailure);
+    expect(failure).toMatchObject({ message: "capture extraction failed" });
+    expect(JSON.stringify(warnings.mock.calls)).not.toContain("upstream-secret-canary");
+  });
+
+  it.each(["headers", "body"])("rejects a real %s timeout in strict mode", async (stage) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      const stalled = () => new Promise<never>((_resolve, reject) => {
+        init!.signal!.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+      if (stage === "headers") return stalled();
+      return { ok: true, json: stalled } as unknown as Response;
+    });
+    await expect(extractMemories(
+      [{ role: "user", content: "synthetic source" }], "prompt", "key",
+      undefined, undefined, { strict: true, timeoutMs: 10 },
+    )).rejects.toThrow(ExtractionFailure);
+  }, 1500);
+
+  it.each([
+    { facts: [] },
+    { facts: [{ l2: "A low-confidence synthetic fact", confidence: 0.1 }] },
+    { facts: [null, 42, { l2: null, confidence: 0.9 }] },
+  ])("keeps valid empty or ordinarily filtered facts terminal: %j", async ({ facts }) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({
+      choices: [{ message: { content: JSON.stringify({ facts }) } }],
+    }));
+    await expect(extractMemories(
+      [{ role: "user", content: "synthetic source" }], "prompt", "key",
+      undefined, undefined, { strict: true },
+    )).resolves.toEqual([]);
+  });
+
+  it.each([false, true])("handles an unexpected partial-batch failure with strict=%s", async (strict) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({
+      choices: [{ message: { content: JSON.stringify({ facts: [
+        { l2: "A valid synthetic fact survives in legacy mode", confidence: 0.99 },
+        { l2: "A low-confidence synthetic fact", confidence: 0.1 },
+      ] }) } }],
+    }));
+    const result = extractMemories(
+      [{ role: "user", content: "synthetic source" }], "prompt", "key", undefined,
+      () => { throw new Error("upstream-secret-canary"); }, { strict },
+    );
+    if (strict) await expect(result).rejects.toThrow(ExtractionFailure);
+    else await expect(result).resolves.toHaveLength(1);
+  });
+
   it("returns empty on fetch network error", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network error"));
     const facts = await extractMemories([{ role: "user", content: "hi" }], "prompt", "key");

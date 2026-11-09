@@ -5,6 +5,7 @@ import { resolveRelativeTemporalPhrases } from "../../domain/memory/temporal-res
 import { recordCounter, recordPipelineDrop } from "../../obs/counters.js";
 import { resolveLlmBaseUrl, resolveLlmTimeoutMs } from "../../shared/config.js";
 import { jsonrepair } from "jsonrepair";
+import { ExtractionFailure } from "./extraction-failure.js";
 
 // --- Platform metadata stripping ---
 
@@ -773,7 +774,7 @@ export async function extractMemories(
   apiKey: string,
   sessionTimestamp?: string,
   onReject?: (raw: RawExtractedFact, reason: string) => void,
-  opts?: { timeoutMs?: number; model?: string; onTiming?: (name: string, durationMs: number) => void },
+  opts?: { timeoutMs?: number; model?: string; onTiming?: (name: string, durationMs: number) => void; strict?: boolean },
 ): Promise<ExtractedFact[]> {
   let lastTimingMarkAt = Date.now();
   const markTiming = (name: string): void => {
@@ -856,6 +857,7 @@ export async function extractMemories(
       console.warn("memory-hybrid: extractMemories fetch error");
       recordExtractDrop("fetch_error", model);
     }
+    if (opts?.strict) throw new ExtractionFailure();
     return [];
   }
 
@@ -869,6 +871,7 @@ export async function extractMemories(
     recordExtractDrop("http_not_ok", model, {
       status: typeof response.status === "number" ? String(response.status) : "",
     });
+    if (opts?.strict) throw new ExtractionFailure();
     return [];
   }
   // Wrap response.json(): a provider that returns a non-JSON HTTP body (HTML
@@ -893,6 +896,7 @@ export async function extractMemories(
       );
       recordExtractDrop("http_json_error", model);
     }
+    if (opts?.strict) throw new ExtractionFailure();
     return [];
   }
   clearTimeout(timeout);
@@ -941,6 +945,7 @@ export async function extractMemories(
       "memory-hybrid: extractMemories JSON.parse failed, discarding batch",
     );
     recordExtractDrop("parse_error", model, finishReason ? { finish_reason: finishReason } : undefined);
+    if (opts?.strict) throw new ExtractionFailure();
     return [];
   }
   // Guard top-level null too: JSON.parse("null") yields null, and reading
@@ -954,6 +959,7 @@ export async function extractMemories(
       "memory-hybrid: extractMemories parsed JSON but root.facts is not an array, discarding batch",
     );
     recordExtractDrop("bad_root_shape", model, finishReason ? { finish_reason: finishReason } : undefined);
+    if (opts?.strict) throw new ExtractionFailure();
     return [];
   }
   if (process.env.RUNIR_EXTRACT_DEBUG === "1") {
@@ -962,7 +968,7 @@ export async function extractMemories(
     );
   }
 
-  return postProcessExtractedFacts(parsed.facts, messages, ts, onReject, model, markTiming);
+  return postProcessExtractedFacts(parsed.facts, messages, ts, onReject, model, markTiming, opts?.strict);
 }
 
 /** Apply the production extraction pipeline to raw model or fixture facts exactly once. */
@@ -973,6 +979,7 @@ export function postProcessExtractedFacts(
   onReject?: (raw: RawExtractedFact, reason: string) => void,
   model = "fixture",
   markTiming: (name: string) => void = () => undefined,
+  strict = false,
 ): ExtractedFact[] {
   // `passed` is hoisted out of the processing block so the stage guard below
   // can return any facts already normalized when a later stage throws, instead
@@ -1166,6 +1173,7 @@ export function postProcessExtractedFacts(
       recovered: passed.length > 0 ? "partial" : "none",
     });
     markTiming("normalize_facts");
+    if (strict) throw new ExtractionFailure();
     return passed;
   }
 }

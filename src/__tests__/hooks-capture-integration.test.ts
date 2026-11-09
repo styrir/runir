@@ -841,6 +841,86 @@ describe("POST /hooks/capture integration (MIM-58)", () => {
     expect((extractMemories as Mock).mock.calls.length).toBe(calls);
   });
 
+  it.each([403, 402])("retries a real HTTP %s extraction failure without completing its source", async (status) => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    const actual = await vi.importActual<typeof import("../capture/extraction/capture.js")>(
+      "../capture/extraction/capture.js",
+    );
+    (extractMemories as Mock).mockImplementation((...args: Parameters<typeof actual.extractMemories>) =>
+      actual.extractMemories(...args));
+    const fetchStub = vi.fn()
+      .mockResolvedValueOnce(new Response("upstream-secret-canary", { status }))
+      .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: JSON.stringify({ facts: [
+        { l2: "The synthetic compiler setting is RB-2683.", confidence: 0.99, source_turn_index: 0 },
+      ] }) } }] }));
+    vi.stubGlobal("fetch", fetchStub);
+    const app = getApp();
+    const post = () => app.request("/hooks/capture", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "test-user", sessionId: "gateway-retry", client: "claudecode",
+        messages: [{ role: "user", content: "The synthetic compiler setting is RB-2683.",
+          turnKey: "gateway:1", sessionEpoch: "native" }] }),
+    });
+    try {
+      const failure = await post();
+      expect(failure.status).toBe(503);
+      expect(await failure.json()).toEqual({ error: "capture extraction failed", retryable: true });
+      expect(sourceCommit.mock.calls[0]?.[0]).toHaveLength(1);
+      expect(sourceCommit.mock.calls[0]?.[1]).toEqual([]);
+      expect(sourceExtracted.size).toBe(0);
+      expect(arbitrateWrite).not.toHaveBeenCalled();
+
+      const retry = await post();
+      expect(retry.status).toBe(200);
+      expect(await retry.json()).toMatchObject({ factsFound: 1, outcomes: { create: 1 } });
+      expect(sourceExtracted.size).toBe(1);
+      expect(sourceCommit.mock.calls.map((call) => call[1].length)).toEqual([0, 1]);
+
+      const replay = await post();
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toMatchObject({ skipped: true, reason: "already captured" });
+      expect(fetchStub).toHaveBeenCalledTimes(2);
+      expect(arbitrateWrite).toHaveBeenCalledTimes(1);
+      expect(sourceCommit).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("completes a genuine empty gateway extraction and makes its replay terminal", async () => {
+    vi.stubEnv("RUNIR_SOURCE_STORE", "on");
+    vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");
+    const actual = await vi.importActual<typeof import("../capture/extraction/capture.js")>(
+      "../capture/extraction/capture.js",
+    );
+    (extractMemories as Mock).mockImplementation((...args: Parameters<typeof actual.extractMemories>) =>
+      actual.extractMemories(...args));
+    const fetchStub = vi.fn(async () => Response.json({
+      choices: [{ message: { content: '{"facts":[]}' } }],
+    }));
+    vi.stubGlobal("fetch", fetchStub);
+    const app = getApp();
+    const post = () => app.request("/hooks/capture", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "test-user", sessionId: "gateway-empty", client: "claudecode",
+        messages: [{ role: "user", content: "A synthetic turn with no durable facts.",
+          turnKey: "empty:1", sessionEpoch: "native" }] }),
+    });
+    try {
+      const result = await post();
+      expect(result.status).toBe(200);
+      expect(await result.json()).toMatchObject({ skipped: false, factsFound: 0 });
+      expect(sourceExtracted.size).toBe(1);
+      expect(sourceCommit.mock.calls[0]?.[1]).toHaveLength(1);
+      expect(await (await post()).json()).toMatchObject({ skipped: true, reason: "already captured" });
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      expect(arbitrateWrite).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("retries after extraction throws and after a missing API key", async () => {
     vi.stubEnv("RUNIR_SOURCE_STORE", "on");
     vi.stubEnv("RUNIR_SOURCE_HMAC_KEY", "synthetic-key");

@@ -55,7 +55,7 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("extractMemories — jsonrepair retry wiring", () => {
-  it("recovers facts from a response with a raw newline inside a string literal (repair counter, no drop counter)", async () => {
+  it.each([false, true])("recovers raw-newline JSON with strict=%s (repair counter, no drop counter)", async (strict) => {
     // Simulate the haiku-4-5 failure: content has a raw newline inside a JSON string.
     const rawContent =
       '{"facts":[{"l2":"the user is building Runir\nwhich stores memories in SurrealDB","confidence":0.95}]}';
@@ -67,7 +67,7 @@ describe("extractMemories — jsonrepair retry wiring", () => {
       json: async () => ({ choices: [{ message: { content: rawContent } }] }),
     } as unknown as Response);
 
-    const facts = await extractMemories(MSGS, "prompt", "key");
+    const facts = await extractMemories(MSGS, "prompt", "key", undefined, undefined, { strict });
     expect(facts).toHaveLength(1);
     expect(facts[0]!.l2).toContain("Runir");
     expect(droppedReasons()).toEqual([]);

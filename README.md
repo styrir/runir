@@ -302,6 +302,7 @@ Usefulness feedback on a prior recall. Requires `retrievalTraceId` and `answer`;
 | `POST /hooks/recall` | malformed JSON body | `200 {"skipped":true,"reason":"adaptive"}` |
 | `POST /hooks/capture` | malformed JSON body (degrades to "no messages") | `200 {"skipped":true,"reason":"no messages"}` |
 | `POST /hooks/capture` | no extraction-gateway key | `200 {"skipped":true,"reason":"no capture API key"}` |
+| `POST /hooks/capture` | extraction gateway, timeout, or batch parsing failure | `503 {"error":"capture extraction failed","retryable":true}`; source turns and client watermarks remain eligible for retry |
 | `POST /hooks/feedback` | malformed JSON body (degrades to missing fields) | `400 {"error":"retrievalTraceId and answer are required"}` |
 | `POST /memory/think` | no gateway key, but retrieval found evidence | `500 {"error":"think requires the gateway API key"}` |
 | any non-public route | `RUNIR_API_KEY` set, bad/missing bearer | `401 {"error":"unauthorized"}` |
