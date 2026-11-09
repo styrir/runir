@@ -50,6 +50,54 @@ describe("source redaction v1", () => {
     expect(source).not.toContain("#private");
   });
 
+  it.each([
+    ["http://127.0.0.1/path", "http://[IP_1]/path"],
+    ["http://127.0.0.1:7700/path", "http://[IP_1]:7700/path"],
+    ["https://[2001:db8::1]/path", "https://[[IP_1]]/path"],
+    ["https://[2001:db8::1]:7700/path", "https://[[IP_1]]:7700/path"],
+  ])("keeps IP URL redaction a fixed point: %s", (raw, expected) => {
+    const redacted = redactSourceTurn(raw);
+    expect(redacted).toBe(expected);
+    expect(redactSourceTurn(redacted)).toBe(redacted);
+  });
+
+  it.each(["[IP_1]", "[[IP_12]]"])("sanitizes marker-host URLs: %s", (host) => {
+    for (const port of ["", ":7700", ":0", ":65535"]) {
+      const clean = `https://${host}${port}/path`;
+      expect(redactSourceTurn(`${clean}?private=synthetic#private`)).toBe(clean);
+      expect(redactSourceTurn(clean)).toBe(clean);
+    }
+    for (const secret of ["sk-proj-AAAAAAAAAAAAAAAAAAAAAAAA", "password=hunter2long", "token=AAAAAAAAAAAAAAAAAAAA"]) {
+      expect(redactSourceTurn(`https://${host}/${secret}`)).toBe("[URL_1]");
+    }
+    for (const pii of ["person@example.test", "555-123-4567", "123-45-6789", "192.0.2.10", "2001:db8::1"]) {
+      const redacted = redactSourceTurn(`https://${host}/${pii}`);
+      expect(redacted).toContain(`https://${host}/`);
+      expect(redacted).not.toContain(pii);
+    }
+  });
+
+  it.each([
+    "http://user:synthetic@[IP_1]/path",
+    "http://user@[IP_1]/path",
+    "http://@[IP_1]/path",
+    "http://[IP_1].example.test/path",
+    "http://[[IP_1]].example.test/path",
+    "http://[IP_1]:65536/path",
+    "http://[IP_1]:-1/path",
+    "http://[IP_1]:1.5/path",
+    "http://[IP_1]:+80/path",
+    "http://[IP_1]:/path",
+    "http://[IP_1]:7700.evil/path",
+    "http://[[IP_1]/path",
+    "http://[IP_1]]/path",
+    "http://[IP_x]/path",
+    "http://[ip_1]/path",
+    "http://[IP_1]\\evil/path",
+  ])("fails closed for invalid marker authorities: %s", (value) => {
+    expect(redactSourceTurn(value)).toBe("[URL_1]");
+  });
+
   it("removes appended source excerpts and rejects secrets on a second pass", () => {
     expect(redactFactText("safe fact\n\nSource:\nraw excerpt")).toBe("safe fact");
     expect(() => assertNoSecrets(fixture.secrets[0])).toThrow(RedactionAssertionError);

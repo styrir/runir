@@ -228,11 +228,16 @@ export function redactSourceTurn(text: string): string {
   SOURCE_URL.lastIndex = 0;
   const sanitizedUrls = text.replace(SOURCE_URL, (value) => {
     try {
-      const url = new URL(value);
+      // SOURCE_URL restricts the scheme; accept only an exact IP-marker authority.
+      const markerHost = /^([^:]+:\/\/)(\[\[IP_\d+\]\]|\[IP_\d+\])(:\d+)?(?=[/?#]|$)/.exec(value);
+      const url = new URL(markerHost
+        ? `${markerHost[1]}redacted.invalid${markerHost[3] ?? ""}${value.slice(markerHost[0].length)}`
+        : value);
       if (url.username || url.password) return marker("URL", value);
       url.search = "";
       url.hash = "";
-      const clean = `${url.protocol}//${url.host}${url.pathname}`;
+      const host = markerHost ? url.host.replace("redacted.invalid", markerHost[2]) : url.host;
+      const clean = `${url.protocol}//${host}${url.pathname}`;
       return redactWithMarkers(clean, { kinds: SECRET_MARKER_KINDS }).text === clean ? clean : marker("URL", value);
     } catch { return marker("URL", value); }
   });

@@ -1,9 +1,13 @@
+import { createHmac } from "node:crypto";
 import { appendFile, mkdtemp, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SourceTurnSpool } from "../capture/source-turn-spool.js";
-import { prepareSourceTurn } from "../capture/source-turn-identity.js";
+import { isProvenSourceTurn, prepareSourceTurn, type SourceTurn } from "../capture/source-turn-identity.js";
+import { redactSourceTurnWithProof } from "../shared/source-redaction.js";
+import { upsertSourceTurn } from "../storage/surreal/session-turn-store.js";
+import type { SurrealClient } from "../storage/surreal/surreal-store.js";
 
 const directories: string[] = [];
 async function directory(): Promise<string> {
@@ -31,6 +35,59 @@ describe("durable source spool", () => {
     const restarted = new SourceTurnSpool(path);
     expect(await restarted.isExtracted(item)).toBe(true);
     expect(await restarted.seenCandidates([item])).toEqual([{ known: true, extracted: true, forgotten: false }]);
+  });
+
+  it.each([
+    ["http://127.0.0.1/path", "http://[IP_1]/path"],
+    ["http://127.0.0.1:7700/path", "http://[IP_1]:7700/path"],
+    ["https://[2001:db8::1]/path", "https://[[IP_1]]/path"],
+    ["https://[2001:db8::1]:7700/path", "https://[[IP_1]]:7700/path"],
+  ])("drains proof-free IP URL replay through the retained-turn guard: %s", async (raw, stored) => {
+    const path = await directory();
+    const redacted = redactSourceTurnWithProof(raw);
+    const item = prepareSourceTurn({
+      userId: "synthetic", client: "pi", sessionId: "s", turnKey: "pi:a", role: "user",
+      content: redacted.text, redactionProof: redacted.proof,
+      occurredAt: "2026-09-25T00:00:00.000Z", scope: "user",
+    }, "synthetic-key");
+    const hmac = createHmac("sha256", "synthetic-key").update(stored).digest("hex");
+    expect(item.content).toBe(stored);
+    expect(item.contentHmac).toBe(hmac);
+    expect(isProvenSourceTurn(item)).toBe(true);
+    expect(await new SourceTurnSpool(path).append(item)).toBe(true);
+
+    const query = vi.fn().mockResolvedValue([[]]);
+    const db = { query } as unknown as SurrealClient;
+    const replay = new SourceTurnSpool(path);
+    await replay.initialize();
+    expect(replay.snapshot()).toMatchObject({ pending: 1, replayed: 1 });
+    const seen: SourceTurn[] = [];
+    await replay.drain(async (replayed) => {
+      seen.push(replayed);
+      return upsertSourceTurn(db, replayed);
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).not.toHaveProperty("redactionProof");
+    expect(isProvenSourceTurn(seen[0]!)).toBe(false);
+    expect(seen[0]).toEqual(JSON.parse(JSON.stringify(item)));
+    const write = query.mock.calls.find(([sql]) => String(sql).includes("CREATE type::record('session_turn', $id)"));
+    expect(write?.[1]).toMatchObject({
+      id: item.id, hmac, keyFingerprint: item.keyFingerprint, redactionVersion: item.redactionVersion,
+      chunks: [{ id: `${item.id}_0`, index: 0, content: stored, norm: stored.toLowerCase() }],
+    });
+    expect(item.content).toBe(stored);
+    expect(item.contentHmac).toBe(hmac);
+    expect(replay.snapshot()).toMatchObject({ pending: 0, persistFailures: 0 });
+    const final = new SourceTurnSpool(path);
+    await final.initialize();
+    expect(final.snapshot().pending).toBe(0);
+
+    query.mockClear();
+    const unredacted = { ...item, content: raw };
+    await expect(upsertSourceTurn(db, unredacted)).rejects.toThrow("unredacted source turn");
+    expect(query).not.toHaveBeenCalled();
+    expect(await final.append(unredacted)).toBe(false);
+    expect(final.snapshot().pending).toBe(0);
   });
 
   it("commits failed extraction puts once and leaves retry eligible", async () => {
