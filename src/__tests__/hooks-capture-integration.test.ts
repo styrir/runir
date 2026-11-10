@@ -304,6 +304,9 @@ import { sourceLinkMetricsSnapshot } from "../capture/source-link-metrics.js";
 describe("POST /hooks/capture integration (MIM-58)", () => {
   afterEach(() => vi.unstubAllEnvs());
   beforeEach(() => {
+    // The route adds _debug to responses when RUNIR_DEBUG=1; keep the
+    // exact-shape assertions independent of the caller's shell.
+    vi.stubEnv("RUNIR_DEBUG", "");
     vi.clearAllMocks();
     sourceExtracted.clear();
     sourceForgotten.clear();
