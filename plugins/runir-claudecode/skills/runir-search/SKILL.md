@@ -59,11 +59,13 @@ Contract you can rely on:
 ```bash
 curl -s -X POST "${RUNIR_BASE:-http://127.0.0.1:7700}/memory/search" \
   -H "Authorization: Bearer $RUNIR_API_KEY" -H "Content-Type: application/json" \
-  -d '{"userId":"'"$RUNIR_USER_ID"'","query":"<terms>","topK":10}'
+  -d '{"userId":"'"$RUNIR_USER_ID"'","query":"<terms>","limit":10}'
 ```
 
 Use for: broad sweeps, gathering material, checking whether something is
 stored at all. Hybrid retrieval (vector + BM25 + recency + entity graph).
+The result count is set by `limit` (at most 50). Without it the service
+returns its default of 5; `topK` in the request body is ignored.
 
 ## 3. Lineage — how a fact evolved
 
