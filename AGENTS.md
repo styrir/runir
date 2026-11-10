@@ -23,7 +23,7 @@ for the required sequence and verification.
 
 ## Commit identity (hard rule)
 
-This repository is public. Commit only as `styrir <styrir@users.noreply.github.com>`,
+This repository is public. Commit only as `styrir <304483768+styrir@users.noreply.github.com>`,
 never add `Co-authored-by` trailers, and keep personal names and home paths out of
 files and messages. `.githooks/` and CI enforce this
 (`git config core.hooksPath .githooks`).

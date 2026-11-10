@@ -6,9 +6,9 @@ if grep -qi '^[[:space:]]*co-authored-by:' "$1"; then
   echo "commit-msg: remove the Co-authored-by trailer; this repo credits no co-authors." >&2
   exit 1
 fi
-allowed=" ${COMMIT_IDENTITY_ALLOWED_EMAILS:-styrir@users.noreply.github.com noreply@github.com} "
+allowed=" ${COMMIT_IDENTITY_ALLOWED_EMAILS:-304483768+styrir@users.noreply.github.com styrir@users.noreply.github.com noreply@github.com} "
 email="$(git var GIT_AUTHOR_IDENT | sed -E 's/.*<([^>]*)>.*/\1/')"
 case "$allowed" in
   *" $email "*) ;;
-  *) echo "commit-msg: author email $email is not allowed; use styrir <styrir@users.noreply.github.com>." >&2; exit 1 ;;
+  *) echo "commit-msg: author email $email is not allowed; use styrir <304483768+styrir@users.noreply.github.com>." >&2; exit 1 ;;
 esac

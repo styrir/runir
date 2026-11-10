@@ -13,7 +13,7 @@ if [ "$#" -eq 0 ]; then
   exit 2
 fi
 
-allowed=" ${COMMIT_IDENTITY_ALLOWED_EMAILS:-styrir@users.noreply.github.com noreply@github.com} "
+allowed=" ${COMMIT_IDENTITY_ALLOWED_EMAILS:-304483768+styrir@users.noreply.github.com styrir@users.noreply.github.com noreply@github.com} "
 terms_file="$(git rev-parse --git-common-dir)/info/private-terms"
 terms=""
 if [ -f "$terms_file" ]; then
@@ -44,6 +44,6 @@ while read -r commit; do
 done < <(git rev-list "$@")
 
 if [ "$fail" -ne 0 ]; then
-  echo "Commit identity check failed. Commit as styrir <styrir@users.noreply.github.com> with no co-author trailers." >&2
+  echo "Commit identity check failed. Commit as styrir <304483768+styrir@users.noreply.github.com> with no co-author trailers." >&2
 fi
 exit "$fail"
