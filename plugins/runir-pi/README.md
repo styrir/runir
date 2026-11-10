@@ -5,7 +5,7 @@ Rúnir thin client for Pi — lives in the product `plugins/` tree with Claude C
 ## Install
 
 ```bash
-pi install /Users/sam/Code/runir/plugins/runir-pi
+pi install ~/Code/runir/plugins/runir-pi
 ```
 
 Then reload Pi:
@@ -30,13 +30,13 @@ Local defaults:
 
 ```text
 RUNIR_BASE=http://127.0.0.1:7700
-RUNIR_USER_ID=sam
+RUNIR_USER_ID=<your-user-id>   (required; the extension is inactive without it)
 ```
 
 `RUNIR_API_KEY` is required by the local service for hook endpoints. The extension reads it from the Pi process environment first, then from:
 
 ```text
-/Users/sam/Code/runir/.env
+~/Code/runir/.env
 ```
 
 Override the file path with `RUNIR_ENV_FILE` if needed.

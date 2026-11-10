@@ -15,8 +15,8 @@ Ouroboros integration is handled by the upstream `npm:pi-ouroboros` package, not
 - This package is the Rúnir Pi client only. Other Pi tools stay outside this product repo.
 - Rúnir defaults for local daily-driver use:
   - `RUNIR_BASE=http://127.0.0.1:7700`
-  - `RUNIR_USER_ID=sam`
-  - `RUNIR_API_KEY` is read from the Pi process environment first, then from `RUNIR_ENV_FILE` (default `/Users/sam/Code/runir/.env`); never store it in this package.
+  - `RUNIR_USER_ID=<your-user-id>` (required; no default tenant)
+  - `RUNIR_API_KEY` is read from the Pi process environment first, then from `RUNIR_ENV_FILE` (default `~/Code/runir/.env`); never store it in this package.
   - Per-turn capture timeout defaults to 45 seconds (`RUNIR_CAPTURE_TIMEOUT_MS=45000`) because live `/hooks/capture` extraction can exceed 10 seconds even when the local service and SurrealDB are healthy.
   - Footer status uses the `ᚱ` rune without memory counts: `ᚱ ready`, `ᚱ /runir`, `ᚱ skip`, `ᚱ err /runir`.
   - Memory counts/content, request durations, and opt-in nested timing breakdowns are visible only from `/runir`, `/runir:last`, `/runir:session`, `/runir:captures`, `/runir:errors`, and `/om:view`; `/runir:debug on|off` toggles debug capture timing breakdowns in capture entries; automatic recall must not emit visible `[runir]` chat messages.
@@ -44,7 +44,7 @@ Ouroboros integration is handled by the upstream `npm:pi-ouroboros` package, not
 
 ## Work Guidance
 
-- Install globally with `pi install /Users/sam/Code/runir/plugins/runir-pi` rather than symlinking individual files.
+- Install globally with `pi install ~/Code/runir/plugins/runir-pi` rather than symlinking individual files.
 - Use `npm:pi-ouroboros` for Ouroboros behavior; do not restore or load the removed local legacy `/ooo` bridge from this package.
 - Use `pi-mcp-adapter` plus standard MCP config for MCP servers.
 - Keep project-specific behavior in the relevant project repo.

@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Source for the operator-local com.runir.local launchd wrapper.
 set -u
-RUNIR_ROOT="${RUNIR_ROOT:-/Users/sam/Code/runir}"
+RUNIR_ROOT="${RUNIR_ROOT:-$HOME/Code/runir}"
 cd "$RUNIR_ROOT" || {
   echo "[runir-launchd-wrapper] FATAL: cannot cd to RUNIR_ROOT=$RUNIR_ROOT" >&2
   exit 1

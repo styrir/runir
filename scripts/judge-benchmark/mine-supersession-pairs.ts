@@ -36,7 +36,8 @@ import {
 import { anchorRelation, extractReferentAnchors } from "../../src/storage/writes/referent-identity.js";
 
 const DATASET_ID = process.env.JUDGE_DATASET_ID ?? "supersession-fresh-v1";
-const TENANT = process.env.JUDGE_MINE_TENANT ?? "sam";
+const TENANT = process.env.JUDGE_MINE_TENANT?.trim() || "";
+if (!TENANT) throw new Error("JUDGE_MINE_TENANT is required (the Rúnir tenant to mine)");
 const WINDOW_START = "2026-07-15T00:00:00Z";
 const WINDOW_END = "2026-09-21T00:00:00Z";
 const LOOKBACK_HOURS = 72;

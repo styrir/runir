@@ -1,15 +1,16 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readFileSync } from "node:fs";
-import { basename } from "node:path";
+import { homedir } from "node:os";
+import { basename, join } from "node:path";
 import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 
 const RUNIR_BASE = (process.env.RUNIR_BASE ?? "http://127.0.0.1:7700").replace(
   /\/$/,
   "",
 );
-const RUNIR_USER_ID = process.env.RUNIR_USER_ID ?? "sam";
+const RUNIR_USER_ID = process.env.RUNIR_USER_ID?.trim() ?? "";
 const RUNIR_ENV_FILE =
-  process.env.RUNIR_ENV_FILE ?? "/Users/sam/Code/runir/.env";
+  process.env.RUNIR_ENV_FILE ?? join(homedir(), "Code", "runir", ".env");
 const RUNIR_CLIENT = process.env.RUNIR_PI_CLIENT ?? "pi-coding-agent";
 const RUNIR_USER_AGENT =
   process.env.RUNIR_PI_USER_AGENT ?? "runir-pi-extension/0.1";
@@ -716,7 +717,7 @@ function formatRecallResult(
 // ── Explicit remember (Rúnir-sh1 Slice 1): runir_store + /runir remember ─────
 // Thin HTTP client for POST /memory/store. No extraction, no tags/metadata
 // synthesis. Explicit path refuses missing RUNIR_USER_ID / RUNIR_API_KEY (no
-// ambient "sam" tenant fallback). Session scope requires a real session-file
+// default tenant). Session scope requires a real session-file
 // id — never pi-default.
 
 const STORE_OUTCOMES = new Set([
@@ -1407,6 +1408,8 @@ function parseView(
 }
 
 export default function runirMemory(pi: ExtensionAPI) {
+  // No default tenant: without RUNIR_USER_ID the extension stays inactive.
+  if (!RUNIR_USER_ID) return;
   const state: RunirState = {
     traces: [],
     nextId: 1,

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Blocks pushes of commits that fail scripts/check-commit-identity.sh.
+# Enable once per clone: git config core.hooksPath .githooks
+# (or copy this file and scripts/check-commit-identity.sh into .git/hooks/).
+set -euo pipefail
+remote="$1"
+zero="0000000000000000000000000000000000000000"
+check="$(dirname "$0")/check-commit-identity.sh"
+[ -x "$check" ] || check="$(git rev-parse --show-toplevel)/scripts/check-commit-identity.sh"
+fail=0
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue # branch deletion
+  if [ "$remote_sha" = "$zero" ] || ! git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+    # New branch or force-push over a commit we don't have: check everything not already on the remote.
+    "$check" "$local_sha" --not --remotes="$remote" || fail=1
+  else
+    "$check" "$remote_sha..$local_sha" || fail=1
+  fi
+done
+exit "$fail"

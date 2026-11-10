@@ -16,7 +16,8 @@ import { dirname, join } from "node:path";
 import { gitleaksGate, sha256, surrealQuery } from "./shared.js";
 
 const DATASET_ID = "supersession-shadow-v1";
-const TENANT = "sam";
+const TENANT = process.env.JUDGE_MINE_TENANT?.trim() || "";
+if (!TENANT) throw new Error("JUDGE_MINE_TENANT is required (the Rúnir tenant to mine)");
 const FROM = "2026-07-10T00:00:00Z";
 const OUT_ROOT = ".styrir/analysis/judge-benchmark";
 const SURREAL_URL = process.env.JUDGE_SURREAL_URL ?? "http://127.0.0.1:8000/sql";

@@ -92,6 +92,9 @@ For the content and evidence required when another agent must resume work, use
 
 ## Close, commit, and synchronize
 
+The Dolt remote must never be the public `styrir/runir` repository: tracker data
+holds internal notes and personal details. Push only to a private remote.
+
 Close only work that is actually complete:
 
 When a user asks an agent to execute or continue Bead-backed repository work,

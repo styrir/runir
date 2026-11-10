@@ -5,7 +5,7 @@ The local Runir instance on **:7700** that we "eat our own dogfood" against is m
 ## The orphan-leak bug (fixed 2026-06-01, `Rúnir-x41m.8`)
 The old `ProgramArguments` ran the **Volta node shim** (`~/.volta/bin/node`):
 ```
-/bin/zsh -lc 'cd <repo> && set -a; source .env; set +a; exec /Users/sam/.volta/bin/node --import tsx/esm index.ts'
+/bin/zsh -lc 'cd <repo> && set -a; source .env; set +a; exec <home>/.volta/bin/node --import tsx/esm index.ts'
 ```
 The Volta shim **fork+execs** the real node, so launchd tracked the *shim* while the real server ran as its child. On `kickstart -k`, launchd killed the shim but the child got reparented to init (ppid=1) and kept squatting :7700 → an orphan accumulated on **every restart** (cleaned 20+ across sessions). A second cause: the SIGTERM handler closed the DB but never the HTTP server, so the port lingered until SIGKILL.
 
@@ -42,7 +42,7 @@ Once the fixed plist is installed, ordinary restarts are just `launchctl kicksta
 ```xml
 <key>ProgramArguments</key>
 <array>
-  <string>/Users/sam/Library/Application Support/runir/runir-launchd-wrapper.sh</string>
+  <string><home>/Library/Application Support/runir/runir-launchd-wrapper.sh</string>
 </array>
 ```
 
@@ -55,9 +55,8 @@ comes from `.env`.
 
 The tracked wrapper is the installed and live-qualified source for vk-2684.
 The first attempt was restored after credential warnings; actual launchd
-requalification and the later NanoGPT rollout passed. See [the qualification
-record](2026-11-09-nanogpt-deployment-qualification.md) for current evidence and
-Verk for acceptance status. Do not install it until the
+requalification and the later NanoGPT rollout passed. See Verk for current
+evidence and acceptance status. Do not install it until the
 vk-2683 receipt establishes retryable capture failure without completing source
 turns or advancing client watermarks. Run the offline fake-process check first:
 

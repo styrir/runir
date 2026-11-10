@@ -3,9 +3,9 @@
   "version": "0.2.5",
   "description": "Rúnir memory integration for Claude Code with opener, recall, capture, session-finalization hooks, and MCP runir_store.",
   "author": {
-    "name": "AlphaComposite"
+    "name": "styrir"
   },
-  "homepage": "https://github.com/AlphaComposite/runir",
-  "repository": "https://github.com/AlphaComposite/runir",
+  "homepage": "https://github.com/styrir/runir",
+  "repository": "https://github.com/styrir/runir",
   "license": "UNLICENSED"
 }

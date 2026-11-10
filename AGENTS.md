@@ -21,6 +21,13 @@ or unrelated work. Follow
 [`docs/agent-guidance/beads-and-dolt.md`](docs/agent-guidance/beads-and-dolt.md)
 for the required sequence and verification.
 
+## Commit identity (hard rule)
+
+This repository is public. Commit only as `styrir <styrir@users.noreply.github.com>`,
+never add `Co-authored-by` trailers, and keep personal names and home paths out of
+files and messages. `.githooks/` and CI enforce this
+(`git config core.hooksPath .githooks`).
+
 ## Generated workspace (`/.styrir/`)
 
 Agents and local automation that create generated reports, benchmark bundles,

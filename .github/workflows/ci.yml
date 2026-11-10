@@ -7,6 +7,19 @@ on:
     branches: [master, main]
 
 jobs:
+  identity:
+    name: Commit identity (no co-authors, styrir only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # On pull requests, check the PR head, not GitHub's synthetic merge commit.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Check every commit on this ref
+        run: scripts/check-commit-identity.sh HEAD
+
   fast:
     name: Fast (lint + typecheck + test:ci:fast)
     runs-on: ubuntu-latest

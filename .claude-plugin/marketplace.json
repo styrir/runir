@@ -1,7 +1,7 @@
 {
   "name": "runir-local-claude",
   "owner": {
-    "name": "AlphaComposite"
+    "name": "styrir"
   },
   "metadata": {
     "description": "Local Claude marketplace for the Rúnir packaged plugin."

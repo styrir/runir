@@ -508,8 +508,10 @@ describe("generic supersede preparation and composition", () => {
     // The historical direct-server-loader failure remains a preserved diagnostic.
     // H1 does not widen fresh caller inputs to foreign SDK brands; only the
     // native server projection may observe stored RecordId/Uuid/DateTime data.
-    // @ts-expect-error The installed server entrypoint is the preserved historical probe input.
-    const direct = await import("/Users/sam/Code/runir/node_modules/surrealdb/dist/surrealdb.server.mjs");
+    // The installed server entrypoint is the preserved historical probe input.
+    const direct = await import(
+      new URL("../../node_modules/surrealdb/dist/surrealdb.server.mjs", import.meta.url).href
+    );
     await expect(prepare(mockDb(), "direct-previous", "direct-replacement", {
       foreignRecordId: new direct.RecordId(TABLE, "foreign-id"),
     })).rejects.toThrow(/unsupported prepared object prototype/);
