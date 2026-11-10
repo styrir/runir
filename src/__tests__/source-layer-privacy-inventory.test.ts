@@ -181,6 +181,7 @@ describe("Slice 3 count-only policy", () => {
     const repoFile = join(process.cwd(), ".styrir", `backup-refusal-${dir.split("/").at(-1)}.surql`);
     const repoRootFile = join(process.cwd(), `backup-refusal-${dir.split("/").at(-1)}.surql`);
     try {
+      await mkdir(join(process.cwd(), ".styrir"), { recursive: true });
       await writeFile(privateFile, "synthetic", { mode: 0o600 });
       await writeFile(publicFile, "synthetic", { mode: 0o644 });
       await writeFile(repoFile, "synthetic", { mode: 0o600 });
