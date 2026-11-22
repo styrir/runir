@@ -1,21 +1,26 @@
 import { randomUUID } from "node:crypto";
 import { createServer, connect, type AddressInfo, type Server, type Socket } from "node:net";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
-import { SurrealClient } from "../storage/surreal/surreal-client.js";
+import { QueryOutcomeUnknownError, SurrealClient } from "../storage/surreal/surreal-client.js";
 import { AbandonedQueryError, runAbandonable } from "../storage/surreal/query-abandonment.js";
 import { withTimeoutFlagged } from "../recall/query/memory-query.js";
 
-// vk-2993: a dropped WebSocket must not turn into an endless replay loop. The
-// client talks to the live SurrealDB through a TCP proxy the test can cut.
-// The probe query creates one row and then sleeps, so the row count is the
-// number of times the server executed it.
+// vk-2993 / vk-2995: a dropped WebSocket must not turn into an endless replay
+// loop, and a lost query is re-sent at most once and only when that cannot run
+// it twice. The client talks to the live SurrealDB through a TCP proxy the
+// test can cut.
+// - WRITE_PROBE creates one row and then sleeps, so the row count is the
+//   number of times the server executed it.
+// - READ_PROBE writes nothing, so the test counts how many times the client
+//   sent it over the socket.
 
 const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
 const namespace = `runir2993reconnect${suffix}`;
 const database = `reconnect${suffix}`;
 if (namespace === "main" || database === "main") throw new Error("unsafe live SQL target");
 
-const PROBE = "CREATE replay_probe SET tag = $tag; SLEEP 1500ms; RETURN 'done';";
+const WRITE_PROBE = "CREATE replay_probe SET tag = $tag; SLEEP 1500ms; RETURN 'done';";
+const READ_PROBE = "RETURN $tag; SLEEP 1500ms; RETURN 'done';";
 
 type ProxyMode = "forward" | "refuse" | "hold";
 type Proxy = {
@@ -60,6 +65,21 @@ async function startProxy(targetHost: string, targetPort: number): Promise<Proxy
   };
 }
 
+/** Every payload the proxied client sends; a probe's tag appears in each send of it. */
+const sentPayloads: Buffer[] = [];
+class CountingWebSocket extends WebSocket {
+  override send(data: Parameters<WebSocket["send"]>[0]): void {
+    if (ArrayBuffer.isView(data)) sentPayloads.push(Buffer.from(data.buffer, data.byteOffset, data.byteLength));
+    else if (typeof data === "string") sentPayloads.push(Buffer.from(data));
+    super.send(data);
+  }
+}
+
+function sendsOf(tag: string): number {
+  const needle = Buffer.from(tag);
+  return sentPayloads.filter((payload) => payload.includes(needle)).length;
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 let direct: SurrealClient;
@@ -81,6 +101,16 @@ async function waitForProbeCount(tag: string, atLeast: number): Promise<void> {
   }
 }
 
+/** Waits until the read probe was sent `atLeast` times, then lets the server start running it. */
+async function waitForReadInFlight(tag: string, atLeast: number): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (sendsOf(tag) < atLeast) {
+    if (Date.now() > deadline) throw new Error(`probe ${tag} never reached ${atLeast} sends`);
+    await sleep(10);
+  }
+  await sleep(150);
+}
+
 beforeAll(async () => {
   const slow = process.env.RUNIR_TEST_SLOW_LANE === "1";
   const url = slow
@@ -98,7 +128,8 @@ beforeAll(async () => {
   await direct.query("DEFINE TABLE replay_probe SCHEMALESS;");
   const target = new URL(url);
   proxy = await startProxy(target.hostname, Number(target.port || 80));
-  viaProxy = new SurrealClient({ url: proxy.url, ...credentials }, { connectTimeoutMs: 1_000 });
+  viaProxy = new SurrealClient({ url: proxy.url, ...credentials },
+    { connectTimeoutMs: 1_000, driverOptions: { websocketImpl: CountingWebSocket } });
   await viaProxy.query("RETURN 1;");
 });
 
@@ -111,16 +142,16 @@ afterAll(async () => {
   await direct?.close().catch(() => undefined);
 });
 
-it("re-sends a query pending during a dropped socket once, then recovers and logs the drop", async (ctx) => {
+it("re-sends a read pending during a dropped socket once, then recovers and logs the drop", async (ctx) => {
   if (!connected) return ctx.skip();
   const warn = vi.spyOn(console, "warn");
-  const tag = `once-${randomUUID()}`;
-  const pending = viaProxy.query(PROBE, { tag });
-  await waitForProbeCount(tag, 1);
+  const tag = `read-once-${randomUUID()}`;
+  const pending = viaProxy.query(READ_PROBE, { tag });
+  await waitForReadInFlight(tag, 1);
   proxy.dropAll();
   const result = await pending;
   expect(result.at(-1)).toEqual(["done"]);
-  expect(await probeCount(tag)).toBe(2);
+  expect(sendsOf(tag)).toBe(2);
   expect(await viaProxy.query("RETURN 1;")).toEqual([[1]]);
   // The SDK's disconnected event has no reason; the client reports the socket's close code.
   expect(warn).toHaveBeenCalledWith(expect.stringMatching(/\[runir\] surreal connection #\d+ disconnected: .*close code=\d+/));
@@ -128,61 +159,88 @@ it("re-sends a query pending during a dropped socket once, then recovers and log
   expect(warn).toHaveBeenCalledWith(expect.stringMatching(/\[runir\] surreal connection #\d+ connected: surrealdb-/));
 });
 
-it("fails instead of looping when the socket drops again during the re-send", async (ctx) => {
+it("does not re-send a write lost with its socket and reports its outcome as unknown", async (ctx) => {
   if (!connected) return ctx.skip();
-  const tag = `loop-${randomUUID()}`;
-  const pending = viaProxy.query(PROBE, { tag });
-  const settled = pending.then(() => "resolved", (err: unknown) => err);
+  const warn = vi.spyOn(console, "warn");
+  const tag = `write-lost-${randomUUID()}`;
+  const pending = viaProxy.query(WRITE_PROBE, { tag });
   await waitForProbeCount(tag, 1);
   proxy.dropAll();
-  await waitForProbeCount(tag, 2);
+  const outcome = await pending.then(() => undefined, (err: unknown) => err);
+  expect(outcome).toBeInstanceOf(QueryOutcomeUnknownError);
+  expect(((outcome as Error).cause as Error).name).toBe("CallTerminatedError");
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining("[runir] surreal query not re-sent: it may write"));
+  // Recover first, then count: a re-send would ride on the new connection.
+  expect(await viaProxy.query("RETURN 1;")).toEqual([[1]]);
+  await sleep(2_000);
+  expect(await probeCount(tag)).toBe(1);
+  expect(sendsOf(tag)).toBe(1);
+});
+
+it("sends a write issued after the socket dropped exactly once, on a new connection", async (ctx) => {
+  if (!connected) return ctx.skip();
+  const tag = `write-after-drop-${randomUUID()}`;
+  proxy.dropAll();
+  await sleep(100);
+  await viaProxy.query("CREATE replay_probe SET tag = $tag;", { tag });
+  expect(await probeCount(tag)).toBe(1);
+  expect(sendsOf(tag)).toBe(1);
+});
+
+it("fails instead of looping when the socket drops again during a read's re-send", async (ctx) => {
+  if (!connected) return ctx.skip();
+  const tag = `read-loop-${randomUUID()}`;
+  const settled = viaProxy.query(READ_PROBE, { tag }).then(() => "resolved", (err: unknown) => err);
+  await waitForReadInFlight(tag, 1);
+  proxy.dropAll();
+  await waitForReadInFlight(tag, 2);
   proxy.dropAll();
   const outcome = await settled;
   expect(outcome).toBeInstanceOf(Error);
   expect((outcome as Error).name).toBe("CallTerminatedError");
   const connectionsAfterFailure = proxy.connections();
-  // The SDK's replay re-ran the query on every reconnect; nothing may run now.
+  // The SDK's replay re-sent the query on every reconnect; nothing may be sent now.
   await sleep(2_500);
-  expect(await probeCount(tag)).toBe(2);
+  expect(sendsOf(tag)).toBe(2);
   expect(proxy.connections()).toBe(connectionsAfterFailure);
   expect(await viaProxy.query("RETURN 1;")).toEqual([[1]]);
 });
 
-it("does not re-send a query whose caller timed out before the socket dropped", async (ctx) => {
+it("does not re-send a read whose caller timed out before the socket dropped", async (ctx) => {
   if (!connected) return ctx.skip();
   const tag = `abandoned-${randomUUID()}`;
   const race = await withTimeoutFlagged(
-    () => viaProxy.query(PROBE, { tag }), 300, [] as unknown[][], "replay probe");
+    () => viaProxy.query(READ_PROBE, { tag }), 300, [] as unknown[][], "replay probe");
   expect(race.timedOut).toBe(true);
-  await waitForProbeCount(tag, 1);
+  expect(sendsOf(tag)).toBe(1);
   proxy.dropAll();
   // Recover first, then count: a re-send would ride on the new connection.
   expect(await viaProxy.query("RETURN 1;")).toEqual([[1]]);
   await sleep(2_000);
-  expect(await probeCount(tag)).toBe(1);
+  expect(sendsOf(tag)).toBe(1);
 });
 
-it("does not re-send a query whose caller timed out while the reconnect was under way", async (ctx) => {
+it("does not re-send a read whose caller timed out while the reconnect was under way", async (ctx) => {
   if (!connected) return ctx.skip();
   const tag = `mid-reconnect-${randomUUID()}`;
   const race = withTimeoutFlagged(
-    () => viaProxy.query(PROBE, { tag }), 600, [] as unknown[][], "replay probe");
-  await waitForProbeCount(tag, 1);
+    () => viaProxy.query(READ_PROBE, { tag }), 600, [] as unknown[][], "replay probe");
+  await waitForReadInFlight(tag, 1);
   proxy.setMode("hold");
   proxy.dropAll();
   expect((await race).timedOut).toBe(true);
   proxy.setMode("forward");
   expect(await viaProxy.query("RETURN 1;")).toEqual([[1]]);
   await sleep(2_000);
-  expect(await probeCount(tag)).toBe(1);
+  expect(sendsOf(tag)).toBe(1);
 });
 
 it("fails fast while reconnects are refused and recovers once the database is reachable", async (ctx) => {
   if (!connected) return ctx.skip();
   const warn = vi.spyOn(console, "warn");
   const tag = `refused-${randomUUID()}`;
-  const pending = viaProxy.query(PROBE, { tag });
-  await waitForProbeCount(tag, 1);
+  const pending = viaProxy.query(READ_PROBE, { tag });
+  await waitForReadInFlight(tag, 1);
   proxy.setMode("refuse");
   proxy.dropAll();
   await expect(pending).rejects.toMatchObject({ name: "SurrealConnectError" });
@@ -192,7 +250,7 @@ it("fails fast while reconnects are refused and recovers once the database is re
   expect(warn).toHaveBeenCalledWith(expect.stringMatching(/surreal connection #\d+ reconnect failed \(runir\): SurrealConnectError/));
   proxy.setMode("forward");
   expect(await viaProxy.query("RETURN 1;")).toEqual([[1]]);
-  expect(await probeCount(tag)).toBe(1);
+  expect(sendsOf(tag)).toBe(1);
 });
 
 it("gives up on a reconnect whose handshake never completes, then recovers", async (ctx) => {
@@ -211,9 +269,10 @@ it("does not send queries from work that was abandoned before they started", asy
   const tag = `unsent-${randomUUID()}`;
   const { promise, abandon } = runAbandonable(async () => {
     await sleep(100);
-    return viaProxy.query(PROBE, { tag });
+    return viaProxy.query(WRITE_PROBE, { tag });
   });
   abandon();
   await expect(promise).rejects.toBeInstanceOf(AbandonedQueryError);
   expect(await probeCount(tag)).toBe(0);
+  expect(sendsOf(tag)).toBe(0);
 });
