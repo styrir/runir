@@ -78,6 +78,19 @@ type SurrealConnectionConfig = {
 
 const SDK_CONNECTION_EVENTS = ["connected", "reconnecting", "disconnected", "error"] as const;
 
+/** How long connect + signin + use may take before the attempt is abandoned. */
+export const DEFAULT_SURREAL_CONNECT_TIMEOUT_MS = 5_000;
+
+export type SurrealClientOptions = {
+  /** For tests and diagnostics, e.g. an instrumented `websocketImpl`. */
+  driverOptions?: DriverOptions;
+  connectTimeoutMs?: number;
+};
+
+export class SurrealConnectError extends Error {
+  override name = "SurrealConnectError";
+}
+
 const CONNECTION_LOSS_ERRORS = new Set([
   "CallTerminatedError",
   "ConnectionUnavailableError",
@@ -97,7 +110,7 @@ function isStaleSession(err: unknown): boolean {
   return msg.includes("Anonymous access") || msg.includes("Not enough permissions");
 }
 
-function describeConnectionEvent(detail: unknown): string {
+function describeError(detail: unknown): string {
   if (detail instanceof Error) {
     const cause = detail.cause instanceof Error ? ` (cause: ${detail.cause.message})` : "";
     return `${detail.name}: ${detail.message}${cause}`;
@@ -105,17 +118,28 @@ function describeConnectionEvent(detail: unknown): string {
   return detail === undefined ? "" : String(detail);
 }
 
+/** Best available text from a WebSocket error event (undici ErrorEvent, ws, or the SDK's CustomEvent). */
+function describeSocketError(event: Event): string {
+  const e = event as Event & { message?: unknown; error?: unknown; detail?: unknown };
+  if (typeof e.message === "string" && e.message) return e.message;
+  if (e.error !== undefined) return describeError(e.error);
+  if (e.detail !== undefined) return describeError(e.detail);
+  return "socket error";
+}
+
 export class SurrealClient {
   private surreal: Surreal;
   private ready: Promise<void>;
   private config: SurrealConnectionConfig;
   private readonly driverOptions?: DriverOptions;
+  private readonly connectTimeoutMs: number;
   private reconnecting: Promise<void> | null = null;
+  private connectionSeq = 0;
 
-  /** `driverOptions` is for tests and diagnostics, e.g. an instrumented `websocketImpl`. */
-  constructor(config: SurrealConnectionConfig, driverOptions?: DriverOptions) {
+  constructor(config: SurrealConnectionConfig, options: SurrealClientOptions = {}) {
     this.config = config;
-    this.driverOptions = driverOptions;
+    this.driverOptions = options.driverOptions;
+    this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_SURREAL_CONNECT_TIMEOUT_MS;
     this.surreal = this.createSurreal();
     this.ready = this.init(this.surreal);
     // A failed first connect is retried by the next query; never an unhandled rejection.
@@ -131,21 +155,70 @@ export class SurrealClient {
    * demand, with at most one re-send per query.
    */
   private createSurreal(): Surreal {
-    const surreal = new Surreal(this.driverOptions);
+    const seq = ++this.connectionSeq;
+    const log = (event: string, reason: string) => this.logConnection(seq, event, reason);
+    // SDK 2.0.3 does not pass socket errors or close codes to its subscribers, so
+    // they are read from the socket itself and reported with the SDK's events.
+    let lastSocketEnd = "";
+    const base = this.driverOptions?.websocketImpl ?? globalThis.WebSocket;
+    const websocketImpl = base && class TracedWebSocket extends base {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        this.addEventListener("error", (event) => {
+          lastSocketEnd = describeSocketError(event);
+          log("error", lastSocketEnd);
+        });
+        this.addEventListener("close", (event) => {
+          const closed = `close code=${event.code}${event.reason ? ` reason=${event.reason}` : ""} clean=${event.wasClean}`;
+          lastSocketEnd = lastSocketEnd ? `${lastSocketEnd}; ${closed}` : closed;
+        });
+        this.addEventListener("open", () => { lastSocketEnd = ""; });
+      }
+    };
+    const surreal = new Surreal({ ...this.driverOptions, websocketImpl });
     for (const event of SDK_CONNECTION_EVENTS) {
       // Optional call: module mocks of "surrealdb" in older tests omit subscribe().
       surreal.subscribe?.(event, (detail?: unknown) => {
-        // Events from a replaced instance are stale; only the live connection matters.
-        if (surreal !== this.surreal) return;
-        const reason = describeConnectionEvent(detail);
-        // stderr only: CLI tools built on this client print JSON on stdout.
-        console.warn(`[runir] surreal connection ${event}${reason ? `: ${reason}` : ""}`);
+        const reason = event === "disconnected" ? lastSocketEnd || "closed by runir" : describeError(detail);
+        log(event, reason);
       });
     }
     return surreal;
   }
 
+  /** Connection #N numbers each SDK instance, so lines from a replaced instance stay attributable. */
+  private logConnection(seq: number, event: string, reason: string): void {
+    // stderr only: CLI tools built on this client print JSON on stdout.
+    console.warn(`[runir] surreal connection #${seq} ${event}${reason ? `: ${reason}` : ""}`);
+  }
+
+  /**
+   * Opens and authenticates `surreal`, failing within connectTimeoutMs. SDK
+   * 2.0.3's connect() never settles when the socket is refused before it opens:
+   * it waits for "connected" or "error" but only "disconnected" is published.
+   * Without this bound a refused reconnect stranded every later query.
+   */
   private async init(surreal: Surreal): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let unsubscribe: (() => void) | undefined;
+    const failed = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new SurrealConnectError(
+        `SurrealDB session not ready after ${this.connectTimeoutMs}ms`)), this.connectTimeoutMs);
+      unsubscribe = surreal.subscribe?.("disconnected", () => reject(new SurrealConnectError(
+        "SurrealDB connection closed before the session was ready")));
+    });
+    try {
+      await Promise.race([this.openSession(surreal), failed]);
+    } catch (err) {
+      surreal.close().catch(() => undefined);
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      unsubscribe?.();
+    }
+  }
+
+  private async openSession(surreal: Surreal): Promise<void> {
     const config = this.config;
     // Convert http(s) → ws(s) for WebSocket transport
     const wsUrl = config.url
@@ -171,8 +244,9 @@ export class SurrealClient {
    * Restores a usable session: re-authenticates a live connection, or replaces
    * a dead one. Coalesces concurrent attempts into a single promise.
    */
-  private async reconnect(): Promise<void> {
+  private async reconnect(why: string): Promise<void> {
     if (this.reconnecting) return this.reconnecting;
+    this.logConnection(this.connectionSeq, "reconnecting (runir)", why);
     this.reconnecting = (async () => {
       if (this.surreal.status === "connected") {
         try {
@@ -193,19 +267,25 @@ export class SurrealClient {
       try { await previous.close(); } catch { /* ignore */ }
       await this.init(this.surreal);
       this.ready = Promise.resolve();
-    })().finally(() => { this.reconnecting = null; });
+    })().catch((err: unknown) => {
+      this.logConnection(this.connectionSeq, "reconnect failed (runir)", describeError(err));
+      throw err;
+    }).finally(() => { this.reconnecting = null; });
     return this.reconnecting;
   }
 
-  /** Waits for a usable connection before a FIRST send; never re-sends anything. */
+  /**
+   * Waits for a usable connection before a FIRST send; never re-sends anything.
+   * A failed connection attempt fails this call; the next call tries again.
+   */
   private async ensureConnected(): Promise<void> {
     if (this.reconnecting) await this.reconnecting;
     try {
       await this.ready;
-    } catch {
-      await this.reconnect();
+    } catch (err) {
+      await this.reconnect(`earlier connect failed: ${describeError(err)}`);
     }
-    if (this.surreal.status === "disconnected") await this.reconnect();
+    if (this.surreal.status === "disconnected") await this.reconnect("connection is closed");
   }
 
   /**
@@ -215,6 +295,10 @@ export class SurrealClient {
    * When the connection drops or the session goes stale, reconnects and
    * re-sends the query at most once; a second failure propagates. Work whose
    * caller already gave up (see runAbandonable) is never sent or re-sent.
+   *
+   * A query lost with its socket may already have run, so the one re-send can
+   * run a write twice. Writes that must not repeat need idempotent SQL (fixed
+   * record ids, UPSERT) or their own transaction via queryTransaction.
    */
   async query<T = unknown>(
     sql: string,
@@ -230,7 +314,7 @@ export class SurrealClient {
       if (!isConnectionLoss(err) && !isStaleSession(err)) throw err;
       // Nobody is waiting for this result: re-sending only loads the server.
       if (isCurrentWorkAbandoned()) throw err;
-      await this.reconnect();
+      await this.reconnect(describeError(err));
       if (isCurrentWorkAbandoned()) throw err;
       const raw: unknown[] = await this.surreal.query(sql, vars);
       return this.normalizeResults<T>(raw);
@@ -261,7 +345,9 @@ export class SurrealClient {
     body: string,
     vars?: Record<string, unknown>,
   ): Promise<void> {
+    if (isCurrentWorkAbandoned()) throw new AbandonedQueryError();
     await this.ensureConnected();
+    if (isCurrentWorkAbandoned()) throw new AbandonedQueryError();
     const tx = `BEGIN TRANSACTION;\n${body}\nCOMMIT TRANSACTION;`;
     try {
       // responses() retains every statement failure. collect()/await throws on

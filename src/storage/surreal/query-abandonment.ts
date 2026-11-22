@@ -32,6 +32,25 @@ export function runAbandonable<T>(work: () => Promise<T>): { promise: Promise<T>
   return { promise, abandon: () => { scope.abandoned = true; } };
 }
 
+/**
+ * Races `work` against a timer. When the timer wins, the work is abandoned (its
+ * remaining queries are not sent or re-sent) and the race rejects with
+ * `timeoutMessage`. Every timeout around database work should go through here
+ * or through withTimeoutFlagged with a function argument.
+ */
+export async function raceAbandonable<T>(work: () => Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
+  const { promise, abandon } = runAbandonable(work);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => { abandon(); reject(new Error(timeoutMessage)); }, ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** True when the current async context belongs to abandoned work. */
 export function isCurrentWorkAbandoned(): boolean {
   for (let scope = scopes.getStore(); scope; scope = scope.parent) {

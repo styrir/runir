@@ -52,7 +52,7 @@ import {
   scoreExactQaCandidate,
 } from "../../domain/memory/exact-qa.js";
 import { readVerifiedSourceTurns } from "../../storage/surreal/verified-source-turns.js";
-import { runAbandonable } from "../../storage/surreal/query-abandonment.js";
+import { raceAbandonable, runAbandonable } from "../../storage/surreal/query-abandonment.js";
 import { sourceRecallMode } from "../source-excerpts.js";
 
 let linkedExactQaFailures = 0;
@@ -66,12 +66,9 @@ export async function enrichLinkedExactQaHits(db: Pick<SurrealClient, "query">, 
   const cap = Number.isSafeInteger(configured) ? Math.max(1, Math.min(configured, 50)) : 20;
   const eligible = hits.slice(0, cap).filter((hit) => !hit.rawSpan && !hit.rawSpans?.length).map((hit) => hit.id);
   if (!eligible.length) return hits;
-  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const verified = await Promise.race([
-      readVerifiedSourceTurns(db, eligible, { userId, sessionId }),
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("linked exact QA timeout")), 500); }),
-    ]);
+    const verified = await raceAbandonable(
+      () => readVerifiedSourceTurns(db, eligible, { userId, sessionId }), 500, "linked exact QA timeout");
     return hits.map((hit) => {
       const linkedText = verified.get(extractId(hit.id))?.text;
       if (!linkedText) return hit;
@@ -83,7 +80,6 @@ export async function enrichLinkedExactQaHits(db: Pick<SurrealClient, "query">, 
             linkedText.toLowerCase().includes(token.toLowerCase())) } } };
     }).sort((a, b) => b.score - a.score);
   } catch { linkedExactQaFailures++; return hits; }
-  finally { if (timer) clearTimeout(timer); }
 }
 
 export type { OverlayRetrievalHandle } from "./overlay-merge.js";
