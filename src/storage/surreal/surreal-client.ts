@@ -91,24 +91,65 @@ export class SurrealConnectError extends Error {
   override name = "SurrealConnectError";
 }
 
-const CONNECTION_LOSS_ERRORS = new Set([
+/** Errors for a query that may have reached the server before its connection was lost. */
+const SENT_THEN_LOST_ERRORS = new Set([
   "CallTerminatedError",
-  "ConnectionUnavailableError",
   "UnexpectedConnectionError",
   "ReconnectExhaustionError",
 ]);
 
-/** The connection is gone: the query may not have reached the server, or its answer was lost. */
-function isConnectionLoss(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  return CONNECTION_LOSS_ERRORS.has(err.name) || err.message.includes("ConnectionUnavailable");
+/** The query was sent, then the connection dropped: it may or may not have run. */
+function isSentThenLost(err: unknown): boolean {
+  return err instanceof Error && SENT_THEN_LOST_ERRORS.has(err.name);
 }
 
-/** The connection is up but its session lost authentication. */
-function isStaleSession(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return msg.includes("Anonymous access") || msg.includes("Not enough permissions");
+/** An error the server sent back (SDK ServerError), as opposed to one the SDK raised locally. */
+function isServerError(err: unknown): err is Error & { code: number; kind: string } {
+  return err instanceof Error && typeof (err as { code?: unknown }).code === "number"
+    && typeof (err as { kind?: unknown }).kind === "string";
 }
+
+/**
+ * The SDK refused to send because the connection was already down, so the
+ * query never left Runir. Matched on the SDK's own error type only: a server
+ * or statement error whose text mentions this name is not this case.
+ */
+function isNeverSent(err: unknown): boolean {
+  return err instanceof Error && err.name === "ConnectionUnavailableError" && !isServerError(err);
+}
+
+/**
+ * A server error refusing the session: expired token, invalid auth, or the
+ * NotAllowed kind SurrealDB 3.x returns for an anonymous (lost sign-in)
+ * session. Matched on the SDK's structured fields, never on message text, so a
+ * statement such as `THROW 'Not enough permissions'` is not this case.
+ */
+function isAuthRejection(err: unknown): boolean {
+  if (!isServerError(err)) return false;
+  const auth = err as { isTokenExpired?: boolean; isInvalidAuth?: boolean };
+  return auth.isTokenExpired === true || auth.isInvalidAuth === true || err.kind === "NotAllowed";
+}
+
+type StatementResponse = { success: true; result: unknown } | { success: false; error: unknown };
+
+/**
+ * One send: the rows, or how it failed. `request`: the send or the whole
+ * request failed, so the server returned no statement results. `statement`: the
+ * server ran the batch and a statement failed; statements before it may have
+ * written.
+ */
+type SendOutcome =
+  | { ok: true; raw: unknown[] }
+  | { ok: false; error: unknown; failedAt: "request" | "statement" };
+
+export type QueryOptions = {
+  /**
+   * The caller asserts that running this query twice has the same effect as
+   * running it once (for example, deleting a lease by its holder token), so it
+   * may be re-sent after its connection dropped mid-flight like a read.
+   */
+  resendSafe?: boolean;
+};
 
 function describeError(detail: unknown): string {
   if (detail instanceof Error) {
@@ -116,6 +157,74 @@ function describeError(detail: unknown): string {
     return `${detail.name}: ${detail.message}${cause}`;
   }
   return detail === undefined ? "" : String(detail);
+}
+
+/** Statements, functions and namespaces that change data, the session, or anything outside SurrealDB. */
+const WRITE_KEYWORDS = /\b(CREATE|UPDATE|UPSERT|DELETE|INSERT|RELATE|DEFINE|REMOVE|ALTER|REBUILD|KILL|LIVE|BEGIN|COMMIT|CANCEL|USE|ACCESS|IMPORT)\b/i;
+
+/**
+ * Built-in function namespaces with no side effects. An allowlist on purpose:
+ * a namespace not listed here (sequence::, file::, fn::, http::, ml::, api::,
+ * or one a later SurrealDB adds) counts as a write.
+ */
+const SIDE_EFFECT_FREE_NAMESPACES = new Set([
+  "array", "bytes", "crypto", "duration", "encoding", "geo", "math", "meta", "object", "parse",
+  "rand", "record", "search", "session", "string", "time", "type", "value", "vector",
+]);
+
+/** Any SurrealQL comment marker. Comments can hide what precedes a `::`. */
+const COMMENT_MARKER = /--|\/\/|\/\*|#/;
+
+/**
+ * The namespace that owns the `::` ending at `end`: walks back over
+ * whitespace and `segment ::` links (`vector :: similarity::cosine`) to the
+ * first segment. Null when no plain identifier precedes it (a backtick or
+ * angle-bracket name, a cast, or `::` at the start).
+ */
+function namespaceBefore(sql: string, end: number): string | null {
+  let i = end;
+  let namespace: string | null = null;
+  for (;;) {
+    while (i > 0 && /\s/.test(sql[i - 1])) i--;
+    let start = i;
+    while (start > 0 && /\w/.test(sql[start - 1])) start--;
+    if (start === i || !/[A-Za-z_]/.test(sql[start])) return namespace;
+    namespace = sql.slice(start, i);
+    let j = start;
+    while (j > 0 && /\s/.test(sql[j - 1])) j--;
+    if (j < 2 || sql.slice(j - 2, j) !== "::") return namespace;
+    i = j - 2;
+  }
+}
+
+/**
+ * Conservative read-only check deciding whether a query lost after it was sent
+ * may be re-sent (vk-2995). A query counts as a read only when it starts with
+ * SELECT, RETURN or INFO, contains no write keyword and no comment marker, and
+ * every `::` belongs to a function from SIDE_EFFECT_FREE_NAMESPACES, however
+ * it is spaced (`sequence :: nextval`, `{n:sequence::nextval()}`). The check
+ * scans string literals too. Anything else counts as a write, so a wrong guess
+ * costs one error, never a second execution.
+ */
+export function isReadOnlyQuery(sql: string): boolean {
+  if (!/^\s*(SELECT|RETURN|INFO)\b/i.test(sql) || WRITE_KEYWORDS.test(sql) || COMMENT_MARKER.test(sql)) return false;
+  for (let at = sql.indexOf("::"); at !== -1; at = sql.indexOf("::", at + 2)) {
+    const namespace = namespaceBefore(sql, at);
+    if (namespace === null || !SIDE_EFFECT_FREE_NAMESPACES.has(namespace.toLowerCase())) return false;
+  }
+  return true;
+}
+
+/**
+ * A query was sent and its connection dropped before the answer arrived, and
+ * it was not re-sent because it may write. It may or may not have run; the
+ * caller must check or reconcile rather than assume either outcome.
+ */
+export class QueryOutcomeUnknownError extends Error {
+  override name = "QueryOutcomeUnknownError";
+  constructor(cause: unknown) {
+    super("query outcome unknown: the connection dropped after it was sent, and it was not re-sent because it may write", { cause });
+  }
 }
 
 /** Best available text from a WebSocket error event (undici ErrorEvent, ws, or the SDK's CustomEvent). */
@@ -292,33 +401,81 @@ export class SurrealClient {
    * Executes SurrealQL with native parameter binding (no LET prepending).
    * Returns an array of result arrays, one per SQL statement.
    *
-   * When the connection drops or the session goes stale, reconnects and
-   * re-sends the query at most once; a second failure propagates. Work whose
-   * caller already gave up (see runAbandonable) is never sent or re-sent.
+   * Re-sends a failed query at most once, and only when that cannot run it
+   * twice (vk-2995). "Repeatable" means isReadOnlyQuery(sql) or the caller
+   * passed `resendSafe`.
    *
-   * A query lost with its socket may already have run, so the one re-send can
-   * run a write twice. Writes that must not repeat need idempotent SQL (fixed
-   * record ids, UPSERT) or their own transaction via queryTransaction.
+   * | Failure                                                     | Could it have run? | How it ends                                   |
+   * |-------------------------------------------------------------|--------------------|-----------------------------------------------|
+   * | SDK ConnectionUnavailableError: the SDK never sent it       | No                 | reconnect, re-send once                       |
+   * | Whole request refused as unauthenticated (NotAllowed, token | No: the server     | sign in, re-send once                         |
+   * |   expired, invalid auth); the server returned no statements | checks auth first  |                                               |
+   * | A statement failed, whatever its message                    | Earlier statements | thrown unchanged, not re-sent                 |
+   * | Sent, then the connection dropped                           | Maybe              | repeatable: re-send once;                     |
+   * |                                                             |                    | else QueryOutcomeUnknownError                 |
+   * | The re-send lost with its connection, not repeatable        | Maybe              | QueryOutcomeUnknownError                      |
+   * | Any other error                                             | -                  | thrown unchanged                              |
+   *
+   * A failed re-send propagates. Work whose caller already gave up (see
+   * runAbandonable) is never sent or re-sent. Callers that get
+   * QueryOutcomeUnknownError must not assume either outcome: acquireLock reads
+   * its holder token back; other callers treat it as a failed write.
    */
   async query<T = unknown>(
     sql: string,
     vars?: Record<string, unknown>,
+    options: QueryOptions = {},
   ): Promise<T[][]> {
     if (isCurrentWorkAbandoned()) throw new AbandonedQueryError();
     await this.ensureConnected();
     if (isCurrentWorkAbandoned()) throw new AbandonedQueryError();
-    try {
-      const raw: unknown[] = await this.surreal.query(sql, vars);
-      return this.normalizeResults<T>(raw);
-    } catch (err: unknown) {
-      if (!isConnectionLoss(err) && !isStaleSession(err)) throw err;
-      // Nobody is waiting for this result: re-sending only loads the server.
-      if (isCurrentWorkAbandoned()) throw err;
-      await this.reconnect(describeError(err));
-      if (isCurrentWorkAbandoned()) throw err;
-      const raw: unknown[] = await this.surreal.query(sql, vars);
-      return this.normalizeResults<T>(raw);
+    const repeatable = options.resendSafe === true || isReadOnlyQuery(sql);
+    const first = await this.sendOnce(sql, vars);
+    if (first.ok) return this.normalizeResults<T>(first.raw);
+    const err = first.error;
+    if (first.failedAt === "statement" || !this.mayResend(err, repeatable)) {
+      if (isSentThenLost(err) && !repeatable) throw this.outcomeUnknown(err);
+      throw err;
     }
+    // Nobody is waiting for this result: re-sending only loads the server.
+    if (isCurrentWorkAbandoned()) throw err;
+    await this.reconnect(`request failed: ${describeError(err)}`);
+    if (isCurrentWorkAbandoned()) throw err;
+    const second = await this.sendOnce(sql, vars);
+    if (second.ok) return this.normalizeResults<T>(second.raw);
+    if (isSentThenLost(second.error) && !repeatable) throw this.outcomeUnknown(second.error);
+    throw second.error;
+  }
+
+  /**
+   * Sends once. A statement failure comes back as `failedAt: "statement"`:
+   * the server ran the batch, so it is never re-sent. Transport and
+   * whole-request failures come back as `failedAt: "request"`.
+   */
+  private async sendOnce(sql: string, vars?: Record<string, unknown>): Promise<SendOutcome> {
+    let responses: StatementResponse[];
+    try {
+      responses = await this.surreal.query(sql, vars).responses() as StatementResponse[];
+    } catch (error) {
+      return { ok: false, error, failedAt: "request" };
+    }
+    const failed = responses.find((r): r is Extract<StatementResponse, { success: false }> => r?.success === false);
+    if (!failed) return { ok: true, raw: responses.map((r) => (r?.success ? r.result : undefined)) };
+    return { ok: false, error: failed.error, failedAt: "statement" };
+  }
+
+  /** Whether a request-level failure of the first send may be re-sent once; see the table on query(). */
+  private mayResend(err: unknown, repeatable: boolean): boolean {
+    if (isNeverSent(err)) return true;
+    if (isAuthRejection(err)) return true;
+    if (isSentThenLost(err)) return repeatable;
+    return false;
+  }
+
+  private outcomeUnknown(err: unknown): QueryOutcomeUnknownError {
+    // The next query reconnects; this one may already have written.
+    console.warn(`[runir] surreal query not re-sent: it may write and its outcome is unknown (${describeError(err)})`);
+    return new QueryOutcomeUnknownError(err);
   }
 
   /**
