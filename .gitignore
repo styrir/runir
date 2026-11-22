@@ -9,10 +9,13 @@ coverage/
 __pycache__/
 *.db
 
-# Secrets (keep .env.example tracked)
+# Secrets: .env and every variant (backups, .local) at any depth; keep .env.example tracked
 .env
-.env.local
-.env*.local
+.env.*
+!.env.example
+
+# Pi plugin harness bundle (built by plugins/runir-pi/test/run.sh)
+plugins/runir-pi/test/runir-memory-bundle.mjs
 
 # Local tool / agent / lab noise (do not ship)
 /.styrir/
