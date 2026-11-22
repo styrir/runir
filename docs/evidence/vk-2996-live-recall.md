@@ -2,19 +2,12 @@
 
 The split is meant to move code without changing behavior, so this compares
 live recall with and without it, on the same database at the same time. The
-commit adding this file adds only evidence (this file and the comparison
-script beside it).
+commit adding this file adds only this file.
 
 | Instance | Port | Code |
 |---|---|---|
 | A: without the split | 7798 | `fb59be1` (vk-2995 tip, clean tree) |
-| B: with the split | 7799 | `0b96657` (split merged with `fb59be1` and vk-2997 `664b78c`, clean tree apart from this script) |
-
-After this run the branch merged vk-2997 again (`4ac672b`). Outside
-`docs/evidence`, that merge changes only files under `plugins/runir-pi/` (the
-Pi extension and its harnesses), which the service does not load, so the
-service code compared here is the code delivered
-(`git diff --name-only 0b96657 HEAD -- . ':!docs/evidence'`).
+| B: with the split | 7799 | `637a1e2` (split merged with `fb59be1` and vk-2997 `2797623`, clean tree; the parent of the commit adding this file) |
 
 Both ran `node --env-file=<local .env> --import tsx/esm index.ts` on
 127.0.0.1 against a local SurrealDB 3.1.4, with local ollama embeddings, the
@@ -25,34 +18,43 @@ requests see slightly different database state. The API key was blanked
 because the live suite sends no bearer token. Both instances were stopped
 afterwards.
 
-## /hooks/recall on real project paths
+## /hooks/recall, compared with nothing removed
 
 Script: [`vk-2996-compare-recall.mjs`](vk-2996-compare-recall.mjs), run as
 `RECALL_USER_ID=<tenant> RECALL_PROMPTS=<local prompts file> node docs/evidence/vk-2996-compare-recall.mjs http://127.0.0.1:7798 http://127.0.0.1:7799`.
 
 The prompts and project paths are the operator's and are not committed; the
-labels below describe them. Each prompt goes to A, then B, then A again.
-Nothing is removed before comparing: the script lists every JSON path whose
-value differs. A-vs-A shows what differs between two requests to the same
-code. No response was an adaptive skip.
+labels describe them. Each prompt goes to A, then B, then A again. Nothing is
+removed before comparing: the script lists every JSON path whose value
+differs. A-vs-A shows what differs between two requests to the same code.
 
-| Prompt | HTTP (A/B/A) | Memories (A/B/A) | Differs A vs B | Differs A vs A |
+The last row sends the live suite's own session-opener request: the same
+prompt, the suite's hard-coded placeholder path, and the same body (prompt,
+path and userId only, no client or session id).
+
+"Shape" is the same on all three requests in every row, and is given as
+count / selected memories / injected-context characters / continuity source
+/ structured opener block.
+
+| Prompt | HTTP (A/B/A) | Shape (A = B = A) | Differs A vs B | Differs A vs A |
 |---|---|---|---|---|
-| auth question, other project 1 | 200/200/200 | 5/5/5 | `$.retrievalTraceId` | `$.retrievalTraceId` |
-| reconnect bug, this repo | 200/200/200 | 5/5/5 | `$.retrievalTraceId` | `$.retrievalTraceId` |
-| review policy, other project 2 | 200/200/200 | 5/5/5 | `$.retrievalTraceId` | `$.retrievalTraceId` |
-| service startup, this repo | 200/200/200 | 5/5/5 | `$.retrievalTraceId` | `$.retrievalTraceId` |
-| ranking detail, this repo | 200/200/200 | 5/5/5 | `$.retrievalTraceId` | `$.retrievalTraceId` |
-| services question, other project 3 | 200/200/200 | 5/5/5 | `$.retrievalTraceId` | `$.retrievalTraceId` |
-| session opener, this repo | 200/200/200 | 5/5/5 | `$.retrievalTraceId`; `$.selected[0..4].score` (Δ 6.0e-7 to 6.1e-7) | `$.retrievalTraceId`; `$.selected[0..4].score` (Δ 1.2e-6 each) |
+| auth question, other project 1 | 200/200/200 | 5 / 5 / 6807 / none / no | `$.retrievalTraceId` | `$.retrievalTraceId` |
+| reconnect bug, this repo | 200/200/200 | 5 / 5 / 5058 / none / no | `$.retrievalTraceId` | `$.retrievalTraceId` |
+| review policy, other project 2 | 200/200/200 | 5 / 5 / 8641 / none / no | `$.retrievalTraceId` | `$.retrievalTraceId` |
+| service startup, this repo | 200/200/200 | 5 / 5 / 1258 / none / no | `$.retrievalTraceId` | `$.retrievalTraceId` |
+| ranking detail, this repo | 200/200/200 | 5 / 5 / 2408 / none / no | `$.retrievalTraceId` | `$.retrievalTraceId` |
+| services question, other project 3 | 200/200/200 | 5 / 5 / 3395 / none / no | `$.retrievalTraceId` | `$.retrievalTraceId` |
+| session opener, this repo | 200/200/200 | 5 / 5 / 1521 / deterministic / yes | `$.retrievalTraceId`; `$.selected[0..4].score` (Δ 5.8e-7 to 6.0e-7) | `$.retrievalTraceId`; `$.selected[0..4].score` (Δ 9.9e-7 to 1.0e-6) |
+| live suite's opener request | 200/200/200 | 0 / 0 / 924 / deterministic / yes | nothing | nothing |
 
 - `retrievalTraceId` is a fresh id per request, so it differs between any two
-  requests.
-- On the session opener, all five selected scores move between any two
-  requests. A-vs-A, sent last, moves about twice as much as A-vs-B, which
-  fits a time-dependent score. The selected memories, their order, the
-  injected text and every other field are identical.
-- Every other field matches in all seven cases.
+  requests. The suite's opener request selects no memories and carries no
+  trace id, so nothing differs there.
+- On the session opener, each of the five selected scores moves less between
+  A and B than between the two A requests (sent last), which fits a
+  time-dependent score. The selected memories, their order, the injected
+  text and every other field are identical.
+- No response was an adaptive skip or carried an error.
 
 Memory text is not reproduced because this repository is public.
 
@@ -76,16 +78,29 @@ result.
 | [schema] count >= 1 | pass | pass |
 | [recent_work] count >= 1 | pass | pass |
 | writes dated JSON baseline | pass | pass |
-| session_opener count >= 1 | fail | fail |
+| session_opener count >= 1, prependContext non-null | fail | fail |
 | continuitySource is a known value | pass | pass |
 | writes dated artifacts | pass | pass |
 
-The session-opener test fails with and without the split. It queries a
-hard-coded placeholder path, and nothing in this tenant is recalled for it.
-The session-opener comparison above, on a real path, covers that case
-instead. The previous version of this record (against `e3a1537`) saw four
-failures on both instances; this run, against the newer base, sees one on
-both. The suite's result depends on the tenant's current memories, which is
-why this record compares the two builds rather than requiring a full pass.
-The artifacts the suite writes to `docs/testing/` contain memory text, so
-they were deleted and are not committed.
+How the opener test fails while the artifact test passes: on both instances
+the opener test fails at its first assertion, `session_opener: count should
+be >= 1: expected 0 to be greater than or equal to 1`. The artifact test
+reuses that same response and checks only that `prependContext` is not
+null. The last comparison row shows what that response is: no memories
+selected (count 0), but 924 characters of injected context from the
+deterministic continuity path, with a structured opener block. So nothing is
+recalled for the suite's placeholder path, yet the opener still injects
+continuity context, and that satisfies the artifact test. The continuity
+source test passes for the same reason (`deterministic`).
+
+The suite's result depends on the tenant's current memories, which is why
+this record compares the two builds rather than requiring a full pass. The
+artifacts the suite writes to `docs/testing/` contain memory text, so they
+were deleted and are not committed.
+
+## Earlier versions of this record
+
+Earlier commits on this branch hold earlier versions of this file. Some name
+local projects and a fixture path, and their explanation of the opener
+failures was incomplete. This version replaces them; the branch is not
+rewritten, because that would need a force push.
