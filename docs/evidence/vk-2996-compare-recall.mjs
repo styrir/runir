@@ -6,32 +6,28 @@
 // requests to the same code (fresh ids, timings, and the effect of recall's
 // own writes such as traces and access counts).
 //
-// Prints counts and differing paths only, never memory text.
-// Usage: RECALL_USER_ID=<tenant> node compare-recall.mjs <urlA> <urlB>
-import os from "node:os";
-import path from "node:path";
+// Prompts and project paths are the operator's own, so they live in a local
+// JSON file and are not committed: [{ "label": "...", "prompt": "...",
+// "path": "/abs/project" }]. Labels should not name anything private.
+// Prints labels, counts and differing paths only, never prompts or memory text.
+//
+// Usage: RECALL_USER_ID=<tenant> RECALL_PROMPTS=<prompts.json> \
+//   node compare-recall.mjs <urlA> <urlB>
+import { readFileSync } from "node:fs";
 
 const [urlA, urlB] = process.argv.slice(2);
 const userId = process.env.RECALL_USER_ID;
-if (!urlA || !urlB || !userId) throw new Error("usage: RECALL_USER_ID=<tenant> node compare-recall.mjs <urlA> <urlB>");
-const code = path.join(os.homedir(), "Code");
+const promptsFile = process.env.RECALL_PROMPTS;
+if (!urlA || !urlB || !userId || !promptsFile) {
+  throw new Error("usage: RECALL_USER_ID=<tenant> RECALL_PROMPTS=<prompts.json> node compare-recall.mjs <urlA> <urlB>");
+}
+const prompts = JSON.parse(readFileSync(promptsFile, "utf8"));
 
-const PROMPTS = [
-  ["verba two-factor auth", "verba"],
-  ["surreal reconnect replay loop", "runir"],
-  ["verk review policy checks", "verk"],
-  ["how is the launchd service started", "runir"],
-  ["entity leg rrf weight", "runir"],
-  ["which leit services need to be running", "leit"],
-  // The live suite's session-opener case runs on a stale path and finds nothing.
-  ["let's continue where we left off", "runir"],
-];
-
-async function recall(url, prompt, project, sessionId) {
+async function recall(url, { prompt, path }, sessionId) {
   const res = await fetch(`${url}/hooks/recall`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ prompt, userId, client: "pi-coding-agent", sessionId, path: path.join(code, project) }),
+    body: JSON.stringify({ prompt, userId, client: "pi-coding-agent", sessionId, path }),
   });
   return { status: res.status, body: await res.json() };
 }
@@ -45,39 +41,31 @@ function differingPaths(a, b, at = "$") {
   return [...keys].flatMap((k) => differingPaths(a[k], b[k], Array.isArray(a) ? `${at}[${k}]` : `${at}.${k}`));
 }
 
-/** Collapses array indexes so the same field across memories reports once. */
-const fieldOf = (p) => p.replace(/\[\d+\]/g, "[]");
-const fields = (paths) => [...new Set(paths.map(fieldOf))].sort();
-
 /** Value at a differingPaths path. */
 const valueAt = (obj, p) => p.slice(1).split(/\.|\[|\]/).filter(Boolean).reduce((o, k) => o?.[k], obj);
 
-/** Largest absolute difference among numeric differing paths, per field. */
-function maxNumericDelta(x, y, paths) {
-  const out = {};
-  for (const p of paths) {
+/** Each differing path, with the absolute difference when both values are numbers. */
+function describe(x, y) {
+  return differingPaths(x, y).map((p) => {
     const [u, v] = [valueAt(x, p), valueAt(y, p)];
-    if (typeof u === "number" && typeof v === "number") out[fieldOf(p)] = Math.max(out[fieldOf(p)] ?? 0, Math.abs(u - v));
-  }
-  return out;
+    return typeof u === "number" && typeof v === "number" ? `${p} (Δ ${Math.abs(u - v).toExponential(1)})` : p;
+  });
 }
 
 const rows = [];
-for (const [i, [prompt, project]] of PROMPTS.entries()) {
+for (const [i, entry] of prompts.entries()) {
   const sessionId = `vk2996-compare-${i}-${Date.now()}`;
-  const a1 = await recall(urlA, prompt, project, sessionId);
-  const b = await recall(urlB, prompt, project, sessionId);
-  const a2 = await recall(urlA, prompt, project, sessionId);
+  const a1 = await recall(urlA, entry, sessionId);
+  const b = await recall(urlB, entry, sessionId);
+  const a2 = await recall(urlA, entry, sessionId);
   rows.push({
-    prompt, project,
+    label: entry.label,
     status: [a1.status, b.status, a2.status],
     count: [a1.body.count, b.body.count, a2.body.count],
+    skipped: [a1.body.skipped, b.body.skipped, a2.body.skipped],
     error: a1.body.error ?? b.body.error,
-    topLevelKeys: Object.keys(a1.body).sort(),
-    aVsB: fields(differingPaths(a1.body, b.body)),
-    aVsA: fields(differingPaths(a1.body, a2.body)),
-    aVsBMaxDelta: maxNumericDelta(a1.body, b.body, differingPaths(a1.body, b.body)),
-    aVsAMaxDelta: maxNumericDelta(a1.body, a2.body, differingPaths(a1.body, a2.body)),
+    aVsB: describe(a1.body, b.body),
+    aVsA: describe(a1.body, a2.body),
   });
 }
 console.log(JSON.stringify(rows, null, 2));
