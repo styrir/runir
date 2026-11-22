@@ -8,8 +8,14 @@
 //
 // Prompts and project paths are the operator's own, so they live in a local
 // JSON file and are not committed: [{ "label": "...", "prompt": "...",
-// "path": "/abs/project" }]. Labels should not name anything private.
-// Prints labels, counts and differing paths only, never prompts or memory text.
+// "path": "/abs/project", "bare": false }]. Labels should not name anything
+// private. "bare": true sends only prompt, path and userId, exactly as
+// src/__tests__/recall-integration.test.ts does (no client or sessionId).
+//
+// Prints labels, counts, differing paths and the shape of each response
+// (whether context was injected and how long it is, the continuity source,
+// whether a structured opener came back), never prompts, memory text or
+// server error text.
 //
 // Usage: RECALL_USER_ID=<tenant> RECALL_PROMPTS=<prompts.json> \
 //   node compare-recall.mjs <urlA> <urlB>
@@ -23,11 +29,12 @@ if (!urlA || !urlB || !userId || !promptsFile) {
 }
 const prompts = JSON.parse(readFileSync(promptsFile, "utf8"));
 
-async function recall(url, { prompt, path }, sessionId) {
+async function recall(url, { prompt, path, bare }, sessionId) {
+  const body = bare ? { prompt, path, userId } : { prompt, userId, client: "pi-coding-agent", sessionId, path };
   const res = await fetch(`${url}/hooks/recall`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ prompt, userId, client: "pi-coding-agent", sessionId, path }),
+    body: JSON.stringify(body),
   });
   return { status: res.status, body: await res.json() };
 }
@@ -52,6 +59,17 @@ function describe(x, y) {
   });
 }
 
+/** What a response carried, without its text. */
+const shape = (body) => ({
+  count: body.count,
+  skipped: body.skipped ?? false,
+  selected: Array.isArray(body.selected) ? body.selected.length : null,
+  prependContextChars: typeof body.prependContext === "string" ? body.prependContext.length : null,
+  continuitySource: body.continuitySource ?? null,
+  structuredOpener: body.sessionOpener != null,
+  error: body.error != null,
+});
+
 const rows = [];
 for (const [i, entry] of prompts.entries()) {
   const sessionId = `vk2996-compare-${i}-${Date.now()}`;
@@ -61,9 +79,7 @@ for (const [i, entry] of prompts.entries()) {
   rows.push({
     label: entry.label,
     status: [a1.status, b.status, a2.status],
-    count: [a1.body.count, b.body.count, a2.body.count],
-    skipped: [a1.body.skipped, b.body.skipped, a2.body.skipped],
-    error: a1.body.error ?? b.body.error,
+    shape: [shape(a1.body), shape(b.body), shape(a2.body)],
     aVsB: describe(a1.body, b.body),
     aVsA: describe(a1.body, a2.body),
   });
