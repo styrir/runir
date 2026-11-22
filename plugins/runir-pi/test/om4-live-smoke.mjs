@@ -2,7 +2,10 @@
 // Uses the caller's configuration, as the extension does: RUNIR_USER_ID and
 // RUNIR_API_KEY from the environment, else RUNIR_ENV_FILE (default
 // ~/Code/runir/.env). RUNIR_BASE defaults to the local service.
+import { requireLiveConfig } from "./live-smoke-config.mjs";
+
 process.env.RUNIR_BASE ??= "http://127.0.0.1:7700";
+requireLiveConfig("om4-live-smoke");
 
 const { default: runirMemory } = await import("./runir-memory-bundle.mjs?live=1");
 
