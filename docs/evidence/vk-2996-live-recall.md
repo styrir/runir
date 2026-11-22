@@ -10,6 +10,12 @@ script beside it).
 | A: without the split | 7798 | `fb59be1` (vk-2995 tip, clean tree) |
 | B: with the split | 7799 | `0b96657` (split merged with `fb59be1` and vk-2997 `664b78c`, clean tree apart from this script) |
 
+After this run the branch merged vk-2997 again (`4ac672b`). Outside
+`docs/evidence`, that merge changes only files under `plugins/runir-pi/` (the
+Pi extension and its harnesses), which the service does not load, so the
+service code compared here is the code delivered
+(`git diff --name-only 0b96657 HEAD -- . ':!docs/evidence'`).
+
 Both ran `node --env-file=<local .env> --import tsx/esm index.ts` on
 127.0.0.1 against a local SurrealDB 3.1.4, with local ollama embeddings, the
 local reranker and relevance floor 0.55. LLM keys were blanked, so the
