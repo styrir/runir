@@ -29,3 +29,4 @@ node om4-harness.mjs
 node om5-harness.mjs
 node om6-harness.mjs
 node store-harness.mjs
+node tenant-harness.mjs

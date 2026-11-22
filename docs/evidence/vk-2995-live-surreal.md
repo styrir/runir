@@ -1,6 +1,6 @@
 # vk-2995 live evidence
 
-Run at `59ffd45` on a clean tree. The commit adding this file changes nothing
+Run at `c63f52e` on a clean tree. The commit adding this file changes nothing
 else, so the code it describes is the code in the commit that contains it.
 
 Command, from the repo root:
@@ -12,12 +12,19 @@ RUNIR_TEST_SLOW_LANE=1 RUNIR_TEST_SURREAL_URL=http://127.0.0.1:8000 npx vitest r
 In slow-lane mode `beforeAll` throws when SurrealDB is unreachable, so these
 tests fail rather than skip. Server: SurrealDB 3.1.4.
 
-**56 passed, 0 failed, 0 skipped** (of 56).
+**72 passed, 0 failed, 0 skipped** (of 72).
 
-## surreal-client-reconnect-live-sql.test.ts (18, live)
+## surreal-client-reconnect-live-sql.test.ts (23, live)
 
-Each test counts what the client put on the socket and, for writes, what the
-server committed (rows, or the next sequence value).
+The re-send tests count what the client put on the socket and, for writes,
+what the server committed: rows, lease rows, or the next sequence value. The
+connection tests (refused reconnects, stalled handshake) check timing and
+recovery instead.
+
+The expired-token and invalid-auth tests inject the SDK's `NotAllowedError`
+with the server's detail shape, because inducing those refusals for real
+would mean changing root users on the shared server. The anonymous-session
+test uses the server's real refusal.
 
 - ✅ re-sends a read pending during a dropped socket once, then recovers and logs the drop
 - ✅ does not re-send a write lost with its socket and reports its outcome as unknown
@@ -27,7 +34,12 @@ server committed (rows, or the next sequence value).
 - ✅ reports an unknown outcome when the socket drops during a write's permitted re-send
 - ✅ re-sends a write once when the real SDK refused to send it on a closed socket
 - ✅ acquireLock returns its lease when the CREATE committed but the response was lost
-- ✅ does not re-send a RETURN that advanced a sequence when its response was lost
+- ✅ does not re-send a RETURN that advanced a sequence when its response was lost (plain)
+- ✅ does not re-send a RETURN that advanced a sequence when its response was lost (inside an object, after a field's colon)
+- ✅ does not re-send a RETURN that advanced a sequence when its response was lost (spaced around ::)
+- ✅ acquireLock rethrows when its lease committed but expired before the read-back
+- ✅ signs in again and re-sends once after a whole-request TokenExpired refusal
+- ✅ signs in again and re-sends once after a whole-request InvalidAuth refusal
 - ✅ releaseLock re-sends its holder-scoped DELETE once when the response was lost
 - ✅ re-sends a write once when the SDK refused the first send with ConnectionUnavailableError
 - ✅ sends a write issued after the socket dropped exactly once, on a new connection
@@ -45,15 +57,18 @@ server committed (rows, or the next sequence value).
 - ✅ rethrows when the read-back fails; the lease, if any, expires after its TTL
 - ✅ marks its holder-scoped DELETE safe to re-send
 
-## surreal-read-classifier.test.ts (34)
+## surreal-read-classifier.test.ts (45)
 
-All 34 passed: 10 reads and 24 writes. Writes include `sequence::nextval`,
-`file::`, an unknown namespace, `fn::`, `http::`, `ml::` and `api::` calls,
-writes later in a batch, nested writes, and conservative handling of
-comments and literals.
+All 45 passed: 11 reads and 34 writes. Writes include `sequence::nextval`
+written plain, inside an object after a field's colon, spaced around `::`
+(spaces, newline, tab), and with each comment style before `::`; an escaped
+name, a bare `::`, `file::`, an unknown namespace, `fn::`, `http::`, `ml::`
+and `api::`; writes later in a batch and nested writes. Reads include a
+spaced allowlisted chain inside an object.
 
 ## Against the previous client
 
-With `surreal-client.ts` from `2140e4f` (the classifier before this fix), 5
-of these tests fail: the four new classifier write cases (`sequence::` twice,
-`file::`, an unknown namespace) and the live sequence test.
+Run by hand, not recorded beyond this note: with `surreal-client.ts` from
+`e3a1537` (the classifier before this fix), 11 of these tests fail. Nine are
+classifier cases (the spaced allowlisted read and eight write spellings);
+two are the live sequence tests for the object and spaced spellings.

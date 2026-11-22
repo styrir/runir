@@ -172,21 +172,45 @@ const SIDE_EFFECT_FREE_NAMESPACES = new Set([
   "rand", "record", "search", "session", "string", "time", "type", "value", "vector",
 ]);
 
-/** First segment of every `ns::` call: `vector::similarity::cosine` yields `vector`. */
-const NAMESPACE_CALL = /(?<![:\w])([A-Za-z_]\w*)::/g;
+/** Any SurrealQL comment marker. Comments can hide what precedes a `::`. */
+const COMMENT_MARKER = /--|\/\/|\/\*|#/;
+
+/**
+ * The namespace that owns the `::` ending at `end`: walks back over
+ * whitespace and `segment ::` links (`vector :: similarity::cosine`) to the
+ * first segment. Null when no plain identifier precedes it (a backtick or
+ * angle-bracket name, a cast, or `::` at the start).
+ */
+function namespaceBefore(sql: string, end: number): string | null {
+  let i = end;
+  let namespace: string | null = null;
+  for (;;) {
+    while (i > 0 && /\s/.test(sql[i - 1])) i--;
+    let start = i;
+    while (start > 0 && /\w/.test(sql[start - 1])) start--;
+    if (start === i || !/[A-Za-z_]/.test(sql[start])) return namespace;
+    namespace = sql.slice(start, i);
+    let j = start;
+    while (j > 0 && /\s/.test(sql[j - 1])) j--;
+    if (j < 2 || sql.slice(j - 2, j) !== "::") return namespace;
+    i = j - 2;
+  }
+}
 
 /**
  * Conservative read-only check deciding whether a query lost after it was sent
  * may be re-sent (vk-2995). A query counts as a read only when it starts with
- * SELECT, RETURN or INFO, contains no write keyword, and calls functions only
- * from SIDE_EFFECT_FREE_NAMESPACES. The check scans string literals and
- * comments too. Anything else counts as a write, so a wrong guess costs one
- * error, never a second execution.
+ * SELECT, RETURN or INFO, contains no write keyword and no comment marker, and
+ * every `::` belongs to a function from SIDE_EFFECT_FREE_NAMESPACES, however
+ * it is spaced (`sequence :: nextval`, `{n:sequence::nextval()}`). The check
+ * scans string literals too. Anything else counts as a write, so a wrong guess
+ * costs one error, never a second execution.
  */
 export function isReadOnlyQuery(sql: string): boolean {
-  if (!/^\s*(SELECT|RETURN|INFO)\b/i.test(sql) || WRITE_KEYWORDS.test(sql)) return false;
-  for (const [, namespace] of sql.matchAll(NAMESPACE_CALL)) {
-    if (!SIDE_EFFECT_FREE_NAMESPACES.has(namespace.toLowerCase())) return false;
+  if (!/^\s*(SELECT|RETURN|INFO)\b/i.test(sql) || WRITE_KEYWORDS.test(sql) || COMMENT_MARKER.test(sql)) return false;
+  for (let at = sql.indexOf("::"); at !== -1; at = sql.indexOf("::", at + 2)) {
+    const namespace = namespaceBefore(sql, at);
+    if (namespace === null || !SIDE_EFFECT_FREE_NAMESPACES.has(namespace.toLowerCase())) return false;
   }
   return true;
 }
