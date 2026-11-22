@@ -8,7 +8,8 @@ const RUNIR_BASE = (process.env.RUNIR_BASE ?? "http://127.0.0.1:7700").replace(
   /\/$/,
   "",
 );
-const RUNIR_USER_ID = process.env.RUNIR_USER_ID?.trim() ?? "";
+// Resolved in runirMemory() from the process env, then RUNIR_ENV_FILE (vk-2997).
+let RUNIR_USER_ID = "";
 const RUNIR_ENV_FILE =
   process.env.RUNIR_ENV_FILE ?? join(homedir(), "Code", "runir", ".env");
 const RUNIR_CLIENT = process.env.RUNIR_PI_CLIENT ?? "pi-coding-agent";
@@ -727,12 +728,24 @@ const STORE_OUTCOMES = new Set([
   "supersede",
 ]);
 
-/** Explicit-write tenant — env only, no default. */
+/**
+ * The tenant: Pi process env first, then RUNIR_ENV_FILE, the same two places
+ * the API key comes from. No built-in default tenant.
+ */
+function resolveUserId(): string {
+  return (
+    process.env.RUNIR_USER_ID?.trim() ||
+    readDotEnvValue(RUNIR_ENV_FILE, "RUNIR_USER_ID") ||
+    ""
+  );
+}
+
+/** Explicit-write tenant — env or RUNIR_ENV_FILE, no default. */
 function resolveExplicitUserId(): string {
-  const uid = process.env.RUNIR_USER_ID?.trim();
+  const uid = resolveUserId();
   if (!uid) {
     throw new Error(
-      "runir_store: RUNIR_USER_ID is required (no default tenant on the explicit-write path)",
+      "runir_store: RUNIR_USER_ID is required; checked process env and RUNIR_ENV_FILE (no default tenant on the explicit-write path)",
     );
   }
   return uid;
@@ -1408,8 +1421,23 @@ function parseView(
 }
 
 export default function runirMemory(pi: ExtensionAPI) {
-  // No default tenant: without RUNIR_USER_ID the extension stays inactive.
-  if (!RUNIR_USER_ID) return;
+  RUNIR_USER_ID = resolveUserId();
+  if (!RUNIR_USER_ID) {
+    // No default tenant, so no recall or capture; but never silently inactive.
+    const warning =
+      "Rúnir memory is off: RUNIR_USER_ID is not set (checked the Pi process environment and RUNIR_ENV_FILE).";
+    pi.on("session_start", async (_event, ctx) => {
+      if (ctx.hasUI === false) {
+        // Print and JSON modes bind no UI (status and notify are no-ops) and
+        // JSON mode owns stdout, so the warning goes to stderr.
+        console.warn(`runir: ${warning}`);
+        return;
+      }
+      ctx.ui.setStatus("runir", "ᚱ off: no RUNIR_USER_ID");
+      ctx.ui.notify?.(warning, "warning");
+    });
+    return;
+  }
   const state: RunirState = {
     traces: [],
     nextId: 1,

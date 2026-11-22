@@ -1,8 +1,11 @@
 // OM-5 live smoke: band flow against prod :7700 via the real extension code.
-process.env.RUNIR_BASE = "http://127.0.0.1:7700";
-process.env.RUNIR_ENV_FILE = "/Users/sam/Code/runir/.env";
-process.env.RUNIR_USER_ID = "sam";
-delete process.env.RUNIR_API_KEY;
+// Uses the caller's configuration, as the extension does: RUNIR_USER_ID and
+// RUNIR_API_KEY from the environment, else RUNIR_ENV_FILE (default
+// ~/Code/runir/.env). RUNIR_BASE defaults to the local service.
+import { requireLiveConfig } from "./live-smoke-config.mjs";
+
+process.env.RUNIR_BASE ??= "http://127.0.0.1:7700";
+requireLiveConfig("om5-live-smoke");
 
 const { default: runirMemory } = await import("./runir-memory-bundle.mjs?om5live=1");
 
@@ -15,10 +18,14 @@ runirMemory({
   registerTool: () => {},
   sendMessage: (msg) => messages.push(msg),
 });
+if (!handlers.has("before_agent_start")) {
+  console.error("om5-live-smoke: no tenant; set RUNIR_USER_ID in the environment or RUNIR_ENV_FILE");
+  process.exit(2);
+}
 
 const compactCalls = [];
 const ctx = {
-  cwd: "/Users/sam/Code/runir",
+  cwd: process.cwd(),
   mode: "print",
   usage: undefined,
   sessionManager: {
@@ -27,7 +34,12 @@ const ctx = {
   },
   ui: { setStatus: () => {}, theme: undefined },
   getContextUsage: () => ctx.usage,
-  compact: (options) => compactCalls.push(options ?? {}),
+  // Pi's compact() is fire-and-forget and reports completion later; the
+  // extension's agent_end waits for that, so complete on the next tick.
+  compact: (options) => {
+    compactCalls.push(options ?? {});
+    setTimeout(() => options?.onComplete?.(), 0);
+  },
 };
 
 // plan band at 72%
@@ -53,4 +65,4 @@ if (ci) {
   console.log("...");
   console.log(`length: ${ci.length} chars; contains compaction_projection: ${ci.includes("compaction_projection:")}`);
 }
-compactCalls[0]?.onComplete?.();
+

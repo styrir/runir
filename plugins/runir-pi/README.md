@@ -30,16 +30,18 @@ Local defaults:
 
 ```text
 RUNIR_BASE=http://127.0.0.1:7700
-RUNIR_USER_ID=<your-user-id>   (required; the extension is inactive without it)
+RUNIR_USER_ID=<your-user-id>   (required; there is no default tenant)
 ```
 
-`RUNIR_API_KEY` is required by the local service for hook endpoints. The extension reads it from the Pi process environment first, then from:
+`RUNIR_USER_ID` and `RUNIR_API_KEY` are both read from the Pi process environment first, then from:
 
 ```text
 ~/Code/runir/.env
 ```
 
-Override the file path with `RUNIR_ENV_FILE` if needed.
+Override the file path with `RUNIR_ENV_FILE` if needed. `RUNIR_API_KEY` is required by the local service for hook endpoints.
+
+Without `RUNIR_USER_ID` in either place the extension does no recall or capture, and says so at session start. With a UI (interactive or RPC mode) it shows an `ᚱ off: no RUNIR_USER_ID` badge and a warning. In print (`-p`) and JSON modes, which have no UI, it writes the warning to stderr.
 
 Runtime UI:
 
