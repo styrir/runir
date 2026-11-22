@@ -34,6 +34,8 @@ describe("isReadOnlyQuery", () => {
     "SELECT * FROM (CREATE semiote SET text = 'x');",
     "RETURN fn::rebuild_index();",
     "RETURN http::post('https://example.com', {});",
+    "RETURN ml::sentiment<1.0.0>('text');",
+    "SELECT api::invoke('/hook') FROM ONLY 1;",
     "SELECT * FROM semiote WHERE text CONTAINS 'delete';",
     "-- comment first\nSELECT * FROM semiote;",
     "BEGIN TRANSACTION; SELECT * FROM semiote; COMMIT TRANSACTION;",

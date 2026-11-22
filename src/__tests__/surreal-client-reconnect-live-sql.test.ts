@@ -5,6 +5,7 @@ import { ConnectionUnavailableError, type Surreal } from "surrealdb";
 import { QueryOutcomeUnknownError, SurrealClient } from "../storage/surreal/surreal-client.js";
 import { AbandonedQueryError, runAbandonable } from "../storage/surreal/query-abandonment.js";
 import { withTimeoutFlagged } from "../recall/query/memory-query.js";
+import { acquireLock, releaseLock } from "../lifecycle/semion/lock.js";
 
 // vk-2993 / vk-2995: a dropped WebSocket must not turn into an endless replay
 // loop, and a lost query is re-sent at most once and only when that cannot run
@@ -23,10 +24,14 @@ if (namespace === "main" || database === "main") throw new Error("unsafe live SQ
 const WRITE_PROBE = "CREATE replay_probe SET tag = $tag; SLEEP 1500ms; RETURN 'done';";
 const READ_PROBE = "RETURN $tag; SLEEP 1500ms; RETURN 'done';";
 
-type ProxyMode = "forward" | "refuse" | "hold";
+type ProxyMode = "forward" | "refuse" | "hold" | "mute";
 type Proxy = {
   url: string; connections: () => number; dropAll: () => void; close: () => Promise<void>;
-  /** forward: normal. refuse: new connections are closed at once. hold: accepted, forwarded only after `forward`. */
+  /**
+   * forward: normal. refuse: new connections are closed at once. hold: accepted,
+   * forwarded only after `forward`. mute: the server's replies are discarded, so
+   * a query runs but its response is lost.
+   */
   setMode: (mode: ProxyMode) => void;
 };
 
@@ -44,7 +49,7 @@ async function startProxy(targetHost: string, targetPort: number): Promise<Proxy
     client.on("error", end).on("close", end);
     upstream.on("error", end).on("close", end);
     client.pipe(upstream);
-    upstream.pipe(client);
+    upstream.on("data", (chunk: Buffer) => { if (mode !== "mute") client.write(chunk); });
   };
   const server: Server = createServer((client) => {
     connections++;
@@ -76,9 +81,10 @@ class CountingWebSocket extends WebSocket {
   }
 }
 
-function sendsOf(tag: string): number {
-  const needle = Buffer.from(tag);
-  return sentPayloads.filter((payload) => payload.includes(needle)).length;
+/** Sends carrying `tag`, optionally only those whose SQL contains `sqlPart`. */
+function sendsOf(tag: string, sqlPart?: string): number {
+  const needles = [tag, sqlPart].filter((n): n is string => n !== undefined).map((n) => Buffer.from(n));
+  return sentPayloads.filter((payload) => needles.every((needle) => payload.includes(needle))).length;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -92,6 +98,20 @@ async function probeCount(tag: string): Promise<number> {
   const [rows] = await direct.query<{ count: number }>(
     "SELECT count() AS count FROM replay_probe WHERE tag = $tag GROUP ALL;", { tag });
   return rows?.[0]?.count ?? 0;
+}
+
+async function leaseCount(key: string): Promise<number> {
+  const [rows] = await direct.query<{ count: number }>(
+    "SELECT count() AS count FROM consolidation_locks WHERE lock_key = $key GROUP ALL;", { key });
+  return rows?.[0]?.count ?? 0;
+}
+
+async function waitFor(check: () => Promise<boolean>, what: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!(await check())) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await sleep(25);
+  }
 }
 
 async function waitForProbeCount(tag: string, atLeast: number): Promise<void> {
@@ -127,6 +147,8 @@ beforeAll(async () => {
   try { await direct.query("INFO FOR DB;"); connected = true; }
   catch { if (slow) throw new Error("slow lane SurrealDB unreachable"); return; }
   await direct.query("DEFINE TABLE replay_probe SCHEMALESS;");
+  await direct.query("DEFINE TABLE consolidation_locks SCHEMALESS;");
+  await direct.query("DEFINE INDEX idx_cl_key ON TABLE consolidation_locks COLUMNS lock_key UNIQUE;");
   const target = new URL(url);
   proxy = await startProxy(target.hostname, Number(target.port || 80));
   viaProxy = new SurrealClient({ url: proxy.url, ...credentials },
@@ -156,7 +178,7 @@ it("re-sends a read pending during a dropped socket once, then recovers and logs
   expect(await viaProxy.query("RETURN 1;")).toEqual([[1]]);
   // The SDK's disconnected event has no reason; the client reports the socket's close code.
   expect(warn).toHaveBeenCalledWith(expect.stringMatching(/\[runir\] surreal connection #\d+ disconnected: .*close code=\d+/));
-  expect(warn).toHaveBeenCalledWith(expect.stringMatching(/\[runir\] surreal connection #\d+ reconnecting \(runir\): CallTerminatedError/));
+  expect(warn).toHaveBeenCalledWith(expect.stringMatching(/\[runir\] surreal connection #\d+ reconnecting \(runir\): request failed: CallTerminatedError/));
   expect(warn).toHaveBeenCalledWith(expect.stringMatching(/\[runir\] surreal connection #\d+ connected: surrealdb-/));
 });
 
@@ -181,9 +203,11 @@ it("does not re-send a write lost with its socket and reports its outcome as unk
 /** The SDK instance behind the proxied client, for forcing failures the proxy cannot. */
 const sdkOf = (client: SurrealClient) => (client as unknown as { surreal: Surreal }).surreal;
 
-it("does not re-send a batch whose write committed before a later statement failed with an auth-like message", async (ctx) => {
+const STATEMENT_ERROR_MESSAGES = ["Not enough permissions", "Anonymous access not allowed", "ConnectionUnavailable"];
+
+it("does not re-send a write batch after one of its statements failed, whatever the message", async (ctx) => {
   if (!connected) return ctx.skip();
-  for (const message of ["Not enough permissions", "Anonymous access not allowed", "ConnectionUnavailable"]) {
+  for (const message of STATEMENT_ERROR_MESSAGES) {
     const tag = `stmt-error-${randomUUID()}`;
     await expect(viaProxy.query(`CREATE replay_probe SET tag = $tag; THROW '${message}';`, { tag }))
       .rejects.toThrow(message);
@@ -192,15 +216,32 @@ it("does not re-send a batch whose write committed before a later statement fail
   }
 });
 
-it("signs in again and re-sends once when the server rejects a write as unauthenticated", async (ctx) => {
+it("does not re-send a read-only batch after one of its statements failed, whatever the message", async (ctx) => {
   if (!connected) return ctx.skip();
+  for (const message of STATEMENT_ERROR_MESSAGES) {
+    const tag = `stmt-error-read-${randomUUID()}`;
+    await expect(viaProxy.query(`RETURN $tag; THROW '${message}';`, { tag })).rejects.toThrow(message);
+    expect(sendsOf(tag)).toBe(1);
+  }
+});
+
+it("signs in again and re-sends once when the server refuses the whole request as unauthenticated", async (ctx) => {
+  if (!connected) return ctx.skip();
+  const sdk = sdkOf(viaProxy);
+  await sdk.invalidate();
+  // The server's shape for a lost sign-in: the whole request is refused, no statement results.
+  const shapeTag = `auth-shape-${randomUUID()}`;
+  const refusal = await sdk.query("CREATE replay_probe SET tag = $tag;", { tag: shapeTag }).responses()
+    .then(() => undefined, (err: unknown) => err);
+  expect(refusal).toMatchObject({ name: "NotAllowedError", kind: "NotAllowed" });
+  expect(await probeCount(shapeTag)).toBe(0);
+
   const warn = vi.spyOn(console, "warn");
   const tag = `auth-${randomUUID()}`;
-  await sdkOf(viaProxy).invalidate();
   await viaProxy.query("CREATE replay_probe SET tag = $tag;", { tag });
   expect(await probeCount(tag)).toBe(1);
   expect(sendsOf(tag)).toBe(2);
-  expect(warn).toHaveBeenCalledWith(expect.stringMatching(/reconnecting \(runir\): \w*Error: .*(permission|Anonymous|auth)/i));
+  expect(warn).toHaveBeenCalledWith(expect.stringMatching(/reconnecting \(runir\): request failed: NotAllowedError/));
 });
 
 it("reports an unknown outcome when the socket drops during a write's permitted re-send", async (ctx) => {
@@ -216,6 +257,54 @@ it("reports an unknown outcome when the socket drops during a write's permitted 
   await sleep(2_000);
   expect(await probeCount(tag)).toBe(1);
   expect(sendsOf(tag)).toBe(2);
+});
+
+it("re-sends a write once when the real SDK refused to send it on a closed socket", async (ctx) => {
+  if (!connected) return ctx.skip();
+  const warn = vi.spyOn(console, "warn");
+  const tag = `sdk-refused-${randomUUID()}`;
+  // Skip the client's readiness check once, so the SDK itself meets the closed socket.
+  const client = viaProxy as unknown as { ensureConnected: () => Promise<void> };
+  const ensureConnected = client.ensureConnected;
+  client.ensureConnected = async () => { client.ensureConnected = ensureConnected; };
+  proxy.dropAll();
+  await waitFor(async () => sdkOf(viaProxy).status === "disconnected", "the SDK to see the drop");
+  await viaProxy.query("CREATE replay_probe SET tag = $tag;", { tag });
+  expect(warn).toHaveBeenCalledWith(expect.stringMatching(/reconnecting \(runir\): request failed: ConnectionUnavailableError/));
+  expect(await probeCount(tag)).toBe(1);
+  expect(sendsOf(tag)).toBe(1);
+});
+
+it("acquireLock returns its lease when the CREATE committed but the response was lost", async (ctx) => {
+  if (!connected) return ctx.skip();
+  const key = `lock-lost-${randomUUID()}`;
+  proxy.setMode("mute");
+  const pending = acquireLock(viaProxy, key, 60);
+  await waitFor(async () => (await leaseCount(key)) === 1, "the lease to commit");
+  proxy.setMode("forward");
+  proxy.dropAll();
+  const holder = await pending;
+  const [rows] = await direct.query<{ holder: string }>(
+    "SELECT holder FROM consolidation_locks WHERE lock_key = $key;", { key });
+  expect(rows).toEqual([{ holder }]);
+  expect(sendsOf(key, "CREATE consolidation_locks")).toBe(1);
+  expect(sendsOf(key, "SELECT id FROM consolidation_locks")).toBe(1);
+});
+
+it("releaseLock re-sends its holder-scoped DELETE once when the response was lost", async (ctx) => {
+  if (!connected) return ctx.skip();
+  const key = `release-lost-${randomUUID()}`;
+  const holder = randomUUID();
+  await direct.query("CREATE consolidation_locks SET lock_key = $key, holder = $holder, expires_at = time::now() + 60s;",
+    { key, holder });
+  proxy.setMode("mute");
+  const pending = releaseLock(viaProxy, key, holder);
+  await waitFor(async () => (await leaseCount(key)) === 0, "the lease to be deleted");
+  proxy.setMode("forward");
+  proxy.dropAll();
+  await expect(pending).resolves.toBeUndefined();
+  expect(sendsOf(key, "DELETE consolidation_locks")).toBe(2);
+  expect(await leaseCount(key)).toBe(0);
 });
 
 it("re-sends a write once when the SDK refused the first send with ConnectionUnavailableError", async (ctx) => {
