@@ -291,6 +291,24 @@ it("acquireLock returns its lease when the CREATE committed but the response was
   expect(sendsOf(key, "SELECT id FROM consolidation_locks")).toBe(1);
 });
 
+it("does not re-send a RETURN that advanced a sequence when its response was lost", async (ctx) => {
+  if (!connected) return ctx.skip();
+  const sequence = `seq_${randomUUID().replace(/-/g, "")}`;
+  await direct.query(`DEFINE SEQUENCE ${sequence};`);
+  proxy.setMode("mute");
+  const pending = viaProxy.query(`RETURN sequence::nextval('${sequence}');`)
+    .then(() => undefined, (err: unknown) => err);
+  await waitFor(async () => sendsOf(sequence) === 1, "the query to be sent");
+  await sleep(300);
+  proxy.setMode("forward");
+  proxy.dropAll();
+  expect(await pending).toBeInstanceOf(QueryOutcomeUnknownError);
+  expect(await viaProxy.query("RETURN 1;")).toEqual([[1]]);
+  expect(sendsOf(sequence)).toBe(1);
+  // The lost call took 0; one advance means the next value is 1.
+  expect(await direct.query<number>(`RETURN sequence::nextval('${sequence}');`)).toEqual([[1]]);
+});
+
 it("releaseLock re-sends its holder-scoped DELETE once when the response was lost", async (ctx) => {
   if (!connected) return ctx.skip();
   const key = `release-lost-${randomUUID()}`;

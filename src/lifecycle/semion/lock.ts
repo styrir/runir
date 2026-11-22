@@ -19,9 +19,9 @@ import {
  *
  * If the connection drops after the CREATE was sent, its outcome is unknown
  * (QueryOutcomeUnknownError). The lock then reads its own holder token back:
- * found means the lease is ours and is returned so the caller releases it;
- * not found, or a failed read, rethrows and the lease (if any) expires after
- * its TTL.
+ * an unexpired lease means it is ours and is returned so the caller releases
+ * it; no lease, an expired one (another holder may take it over), or a failed
+ * read rethrows, and any lease expires after its TTL.
  */
 export async function acquireLock(
   db: SurrealClient,
@@ -50,11 +50,11 @@ export async function acquireLock(
   }
 }
 
-/** True when `holder` owns the lease for `key`. A failed read counts as false. */
+/** True when `holder` owns an unexpired lease for `key`. A failed read counts as false. */
 async function holdsLock(db: SurrealClient, key: string, holder: string): Promise<boolean> {
   try {
     const [rows] = await db.query<unknown>(
-      "SELECT id FROM consolidation_locks WHERE lock_key = $key AND holder = $holder;",
+      "SELECT id FROM consolidation_locks WHERE lock_key = $key AND holder = $holder AND expires_at > time::now();",
       { key, holder },
     );
     return Array.isArray(rows) && rows.length > 0;
