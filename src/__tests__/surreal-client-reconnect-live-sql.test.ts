@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, connect, type AddressInfo, type Server, type Socket } from "node:net";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
+import { ConnectionUnavailableError, type Surreal } from "surrealdb";
 import { QueryOutcomeUnknownError, SurrealClient } from "../storage/surreal/surreal-client.js";
 import { AbandonedQueryError, runAbandonable } from "../storage/surreal/query-abandonment.js";
 import { withTimeoutFlagged } from "../recall/query/memory-query.js";
@@ -173,6 +174,62 @@ it("does not re-send a write lost with its socket and reports its outcome as unk
   // Recover first, then count: a re-send would ride on the new connection.
   expect(await viaProxy.query("RETURN 1;")).toEqual([[1]]);
   await sleep(2_000);
+  expect(await probeCount(tag)).toBe(1);
+  expect(sendsOf(tag)).toBe(1);
+});
+
+/** The SDK instance behind the proxied client, for forcing failures the proxy cannot. */
+const sdkOf = (client: SurrealClient) => (client as unknown as { surreal: Surreal }).surreal;
+
+it("does not re-send a batch whose write committed before a later statement failed with an auth-like message", async (ctx) => {
+  if (!connected) return ctx.skip();
+  for (const message of ["Not enough permissions", "Anonymous access not allowed", "ConnectionUnavailable"]) {
+    const tag = `stmt-error-${randomUUID()}`;
+    await expect(viaProxy.query(`CREATE replay_probe SET tag = $tag; THROW '${message}';`, { tag }))
+      .rejects.toThrow(message);
+    expect(await probeCount(tag)).toBe(1);
+    expect(sendsOf(tag)).toBe(1);
+  }
+});
+
+it("signs in again and re-sends once when the server rejects a write as unauthenticated", async (ctx) => {
+  if (!connected) return ctx.skip();
+  const warn = vi.spyOn(console, "warn");
+  const tag = `auth-${randomUUID()}`;
+  await sdkOf(viaProxy).invalidate();
+  await viaProxy.query("CREATE replay_probe SET tag = $tag;", { tag });
+  expect(await probeCount(tag)).toBe(1);
+  expect(sendsOf(tag)).toBe(2);
+  expect(warn).toHaveBeenCalledWith(expect.stringMatching(/reconnecting \(runir\): \w*Error: .*(permission|Anonymous|auth)/i));
+});
+
+it("reports an unknown outcome when the socket drops during a write's permitted re-send", async (ctx) => {
+  if (!connected) return ctx.skip();
+  const tag = `auth-then-lost-${randomUUID()}`;
+  await sdkOf(viaProxy).invalidate();
+  const pending = viaProxy.query(WRITE_PROBE, { tag }).then(() => undefined, (err: unknown) => err);
+  await waitForProbeCount(tag, 1);
+  proxy.dropAll();
+  const outcome = await pending;
+  expect(outcome).toBeInstanceOf(QueryOutcomeUnknownError);
+  expect(await viaProxy.query("RETURN 1;")).toEqual([[1]]);
+  await sleep(2_000);
+  expect(await probeCount(tag)).toBe(1);
+  expect(sendsOf(tag)).toBe(2);
+});
+
+it("re-sends a write once when the SDK refused the first send with ConnectionUnavailableError", async (ctx) => {
+  if (!connected) return ctx.skip();
+  const tag = `never-sent-${randomUUID()}`;
+  const sdk = sdkOf(viaProxy);
+  const original = sdk.query.bind(sdk);
+  // Patched by hand: vi.spyOn records results by calling .then on the SDK's
+  // thenable query object, which would itself send the query.
+  (sdk as { query: unknown }).query = () => {
+    (sdk as { query: unknown }).query = original;
+    return { responses: () => Promise.reject(new ConnectionUnavailableError()) };
+  };
+  await viaProxy.query("CREATE replay_probe SET tag = $tag;", { tag });
   expect(await probeCount(tag)).toBe(1);
   expect(sendsOf(tag)).toBe(1);
 });
