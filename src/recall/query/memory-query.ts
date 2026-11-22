@@ -336,4 +336,3 @@ export async function runHybridQueryWithEvidenceTableAndEntityTrace(
   });
   return { hits, entityMatches, legRanks };
 }
-
