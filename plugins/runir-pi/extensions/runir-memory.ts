@@ -1424,12 +1424,17 @@ export default function runirMemory(pi: ExtensionAPI) {
   RUNIR_USER_ID = resolveUserId();
   if (!RUNIR_USER_ID) {
     // No default tenant, so no recall or capture; but never silently inactive.
+    const warning =
+      "Rúnir memory is off: RUNIR_USER_ID is not set (checked the Pi process environment and RUNIR_ENV_FILE).";
     pi.on("session_start", async (_event, ctx) => {
+      if (ctx.hasUI === false) {
+        // Print and JSON modes bind no UI (status and notify are no-ops) and
+        // JSON mode owns stdout, so the warning goes to stderr.
+        console.warn(`runir: ${warning}`);
+        return;
+      }
       ctx.ui.setStatus("runir", "ᚱ off: no RUNIR_USER_ID");
-      ctx.ui.notify?.(
-        "Rúnir memory is off: RUNIR_USER_ID is not set (checked the Pi process environment and RUNIR_ENV_FILE).",
-        "warning",
-      );
+      ctx.ui.notify?.(warning, "warning");
     });
     return;
   }

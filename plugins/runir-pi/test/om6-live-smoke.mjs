@@ -1,8 +1,14 @@
-// OM-6 live smoke: runir_recall tool against prod :7700 with a real semiote id.
-process.env.RUNIR_BASE = "http://127.0.0.1:7700";
-process.env.RUNIR_ENV_FILE = "/Users/sam/Code/runir/.env";
-process.env.RUNIR_USER_ID = "sam";
-delete process.env.RUNIR_API_KEY;
+// OM-6 live smoke: runir_recall tool against a live service with a real semiote id.
+// Uses the caller's configuration, as the extension does: RUNIR_USER_ID and
+// RUNIR_API_KEY from the environment, else RUNIR_ENV_FILE (default
+// ~/Code/runir/.env). RUNIR_BASE defaults to the local service.
+// RUNIR_SMOKE_SEMIOTE_ID must be a memory id in that tenant (from /memory/search).
+process.env.RUNIR_BASE ??= "http://127.0.0.1:7700";
+const REAL_ID = process.env.RUNIR_SMOKE_SEMIOTE_ID?.trim();
+if (!REAL_ID) {
+  console.error("om6-live-smoke: set RUNIR_SMOKE_SEMIOTE_ID to a memory id in your tenant");
+  process.exit(2);
+}
 
 const { default: runirMemory } = await import("./runir-memory-bundle.mjs?om6live=1");
 
@@ -14,16 +20,19 @@ runirMemory({
   registerTool: (tool) => tools.set(tool.name, tool),
   sendMessage: (msg) => messages.push(msg),
 });
+if (!tools.has("runir_recall")) {
+  console.error("om6-live-smoke: no tenant; set RUNIR_USER_ID in the environment or RUNIR_ENV_FILE");
+  process.exit(2);
+}
 
 const ctx = {
-  cwd: "/Users/sam/Code/runir",
+  cwd: process.cwd(),
   mode: "print",
   sessionManager: { getSessionFile: () => "/x/om6-live.jsonl", getBranch: () => [] },
   ui: { setStatus: () => {}, theme: undefined },
   getContextUsage: () => undefined,
 };
 
-const REAL_ID = "08c6180e-5c26-435a-a51b-94b28de9279d"; // from /memory/search, tenant sam
 const t0 = Date.now();
 const result = await tools
   .get("runir_recall")
