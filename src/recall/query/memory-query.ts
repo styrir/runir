@@ -52,6 +52,7 @@ import {
   scoreExactQaCandidate,
 } from "../../domain/memory/exact-qa.js";
 import { readVerifiedSourceTurns } from "../../storage/surreal/verified-source-turns.js";
+import { runAbandonable } from "../../storage/surreal/query-abandonment.js";
 import { sourceRecallMode } from "../source-excerpts.js";
 
 let linkedExactQaFailures = 0;
@@ -129,14 +130,27 @@ type EntityLookupScope = { scope: MemoryScope; sessionId?: string };
 /** Races a promise against a timeout, reporting whether the timeout fired. Callers
  *  need to distinguish a COMPLETED result (even an empty one) from a TIMED-OUT one:
  *  the annotation-noema leg must run only after a completed-empty RRF, never after
- *  an RRF timeout — otherwise two stacked 8s waits return zero hits (Rúnir-yxwe). */
+ *  an RRF timeout — otherwise two stacked 8s waits return zero hits (Rúnir-yxwe).
+ *
+ *  Pass `work` as a function that starts the work, not as a started promise, when
+ *  it queries the database: a lost race then marks the work abandoned, so its
+ *  remaining queries are not sent and are never re-sent after a reconnect (vk-2993). */
 export function withTimeoutFlagged<T>(
-  promise: Promise<T>,
+  work: Promise<T> | (() => Promise<T>),
   ms: number,
   fallback: T | (() => T),
   label: string,
   warn?: (msg: string) => void,
 ): Promise<{ value: T; timedOut: boolean }> {
+  let abandon: (() => void) | undefined;
+  let promise: Promise<T>;
+  if (typeof work === "function") {
+    const started = runAbandonable(work);
+    promise = started.promise;
+    abandon = started.abandon;
+  } else {
+    promise = work;
+  }
   // The timer MUST be cleared when the race settles: a lost race does not cancel
   // setTimeout, so the warn callback still fired ms later on every SUCCESSFUL call
   // — the log filled with phantom "timed out after 5000ms/8000ms" lines from
@@ -147,6 +161,7 @@ export function withTimeoutFlagged<T>(
     promise.then((value) => ({ value, timedOut: false })),
     new Promise<{ value: T; timedOut: boolean }>((resolve) => {
       timer = setTimeout(() => {
+        abandon?.();
         warn?.(`memory-hybrid: ${label} timed out after ${ms}ms, returning fallback`);
         // Resolve the fallback lazily so an expensive default (e.g. building the
         // entity-leg trace) is only constructed when the timeout actually fires,
@@ -158,15 +173,16 @@ export function withTimeoutFlagged<T>(
 }
 
 /** Races a promise against a timeout. On timeout, resolves to the fallback value
- *  (lazily, when the fallback is a thunk). */
+ *  (lazily, when the fallback is a thunk). See withTimeoutFlagged for passing
+ *  `work` as a function so a lost race abandons its database queries. */
 export function withTimeout<T>(
-  promise: Promise<T>,
+  work: Promise<T> | (() => Promise<T>),
   ms: number,
   fallback: T | (() => T),
   label: string,
   warn?: (msg: string) => void,
 ): Promise<T> {
-  return withTimeoutFlagged(promise, ms, fallback, label, warn).then((r) => r.value);
+  return withTimeoutFlagged(work, ms, fallback, label, warn).then((r) => r.value);
 }
 
 /** Gate for the noema retrieval leg. Primary-mode noema always runs; annotation-mode
@@ -1459,7 +1475,7 @@ export async function nativeRrfSearch(
       // the whole RRF to the 8s outer timeout. Capping it keeps RRF fast and degrades
       // entity hits to an entity_timeout trace instead of an outage (Rúnir-yxwe).
       withTimeout(
-        queryEntityLeg(db, userId, expandedQueryText, safeLimit, sf, activeFilter, tableName, tuning?.entityLookupSessionId, rankingProfile.entityFillerWords)
+        () => queryEntityLeg(db, userId, expandedQueryText, safeLimit, sf, activeFilter, tableName, tuning?.entityLookupSessionId, rankingProfile.entityFillerWords)
           .catch(() => emptyEntityLeg(expandedQueryText, "entity_lookup_failed", rankingProfile.entityFillerWords)),
         ENTITY_LEG_TIMEOUT_MS,
         () => emptyEntityLeg(expandedQueryText, "entity_timeout", rankingProfile.entityFillerWords),
@@ -1820,7 +1836,7 @@ export async function runHybridQueryWithEvidenceTable(
   // RRF + noema waits can't exceed RECALL_BUDGET_MS (Rúnir-yxwe).
   const legsStartMs = Date.now();
   const rrf = await withTimeoutFlagged(
-    nativeRrfSearch(
+    () => nativeRrfSearch(
       db,
       userId,
       embedding,
@@ -1851,7 +1867,7 @@ export async function runHybridQueryWithEvidenceTable(
     const noemaBudget = Math.min(RETRIEVAL_DB_TIMEOUT_MS, Math.max(0, RECALL_BUDGET_MS - elapsedMs));
     if (noemaBudget >= MIN_NOEMA_BUDGET_MS) {
       noemaHits = await withTimeout(
-        queryNoemaCandidates(db, userId, query, embedding, candidateLimit, noemaRetrieval.requestedPath, warn),
+        () => queryNoemaCandidates(db, userId, query, embedding, candidateLimit, noemaRetrieval.requestedPath, warn),
         noemaBudget,
         [] as SearchHit[],
         "noema retrieval DB query",
