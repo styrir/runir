@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, connect, type AddressInfo, type Server, type Socket } from "node:net";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
-import { ConnectionUnavailableError, type Surreal } from "surrealdb";
+import { ConnectionUnavailableError, NotAllowedError, type Surreal } from "surrealdb";
 import { QueryOutcomeUnknownError, SurrealClient } from "../storage/surreal/surreal-client.js";
 import { AbandonedQueryError, runAbandonable } from "../storage/surreal/query-abandonment.js";
 import { withTimeoutFlagged } from "../recall/query/memory-query.js";
@@ -291,12 +291,18 @@ it("acquireLock returns its lease when the CREATE committed but the response was
   expect(sendsOf(key, "SELECT id FROM consolidation_locks")).toBe(1);
 });
 
-it("does not re-send a RETURN that advanced a sequence when its response was lost", async (ctx) => {
+const SEQUENCE_CALLS: Array<[string, (sequence: string) => string]> = [
+  ["plain", (s) => `RETURN sequence::nextval('${s}');`],
+  ["inside an object, after a field's colon", (s) => `RETURN {n:sequence::nextval('${s}')};`],
+  ["spaced around ::", (s) => `RETURN sequence :: nextval('${s}');`],
+];
+
+for (const [form, sql] of SEQUENCE_CALLS) it(`does not re-send a RETURN that advanced a sequence when its response was lost (${form})`, async (ctx) => {
   if (!connected) return ctx.skip();
   const sequence = `seq_${randomUUID().replace(/-/g, "")}`;
   await direct.query(`DEFINE SEQUENCE ${sequence};`);
   proxy.setMode("mute");
-  const pending = viaProxy.query(`RETURN sequence::nextval('${sequence}');`)
+  const pending = viaProxy.query(sql(sequence))
     .then(() => undefined, (err: unknown) => err);
   await waitFor(async () => sendsOf(sequence) === 1, "the query to be sent");
   await sleep(300);
@@ -307,6 +313,41 @@ it("does not re-send a RETURN that advanced a sequence when its response was los
   expect(sendsOf(sequence)).toBe(1);
   // The lost call took 0; one advance means the next value is 1.
   expect(await direct.query<number>(`RETURN sequence::nextval('${sequence}');`)).toEqual([[1]]);
+});
+
+it("acquireLock rethrows when its lease committed but expired before the read-back", async (ctx) => {
+  if (!connected) return ctx.skip();
+  const key = `lock-expired-${randomUUID()}`;
+  proxy.setMode("mute");
+  const pending = acquireLock(viaProxy, key, 1).then(() => undefined, (err: unknown) => err);
+  await waitFor(async () => (await leaseCount(key)) === 1, "the lease to commit");
+  await sleep(1_300);
+  proxy.setMode("forward");
+  proxy.dropAll();
+  expect(await pending).toBeInstanceOf(QueryOutcomeUnknownError);
+  expect(sendsOf(key, "CREATE consolidation_locks")).toBe(1);
+  expect(sendsOf(key, "SELECT id FROM consolidation_locks")).toBe(1);
+});
+
+// The server's own expired-token and invalid-auth refusals cannot be induced
+// without changing root users, so the SDK's NotAllowedError is injected with
+// the server's detail shape; the re-send then runs against the live server.
+for (const authKind of ["TokenExpired", "InvalidAuth"]) it(`signs in again and re-sends once after a whole-request ${authKind} refusal`, async (ctx) => {
+  if (!connected) return ctx.skip();
+  const warn = vi.spyOn(console, "warn");
+  const tag = `auth-${authKind}-${randomUUID()}`;
+  const refusal = new NotAllowedError({ kind: "NotAllowed", code: -32002, message: `${authKind} refusal`,
+    details: { kind: "Auth", details: { kind: authKind } } } as ConstructorParameters<typeof NotAllowedError>[0]);
+  const sdk = sdkOf(viaProxy);
+  const original = sdk.query.bind(sdk);
+  (sdk as { query: unknown }).query = () => {
+    (sdk as { query: unknown }).query = original;
+    return { responses: () => Promise.reject(refusal) };
+  };
+  await viaProxy.query("CREATE replay_probe SET tag = $tag;", { tag });
+  expect(await probeCount(tag)).toBe(1);
+  expect(sendsOf(tag)).toBe(1);
+  expect(warn).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`reconnecting \\(runir\\): request failed: NotAllowedError: ${authKind} refusal`)));
 });
 
 it("releaseLock re-sends its holder-scoped DELETE once when the response was lost", async (ctx) => {
