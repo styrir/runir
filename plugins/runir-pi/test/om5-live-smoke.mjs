@@ -2,7 +2,10 @@
 // Uses the caller's configuration, as the extension does: RUNIR_USER_ID and
 // RUNIR_API_KEY from the environment, else RUNIR_ENV_FILE (default
 // ~/Code/runir/.env). RUNIR_BASE defaults to the local service.
+import { requireLiveConfig } from "./live-smoke-config.mjs";
+
 process.env.RUNIR_BASE ??= "http://127.0.0.1:7700";
+requireLiveConfig("om5-live-smoke");
 
 const { default: runirMemory } = await import("./runir-memory-bundle.mjs?om5live=1");
 
@@ -31,7 +34,12 @@ const ctx = {
   },
   ui: { setStatus: () => {}, theme: undefined },
   getContextUsage: () => ctx.usage,
-  compact: (options) => compactCalls.push(options ?? {}),
+  // Pi's compact() is fire-and-forget and reports completion later; the
+  // extension's agent_end waits for that, so complete on the next tick.
+  compact: (options) => {
+    compactCalls.push(options ?? {});
+    setTimeout(() => options?.onComplete?.(), 0);
+  },
 };
 
 // plan band at 72%
@@ -57,4 +65,4 @@ if (ci) {
   console.log("...");
   console.log(`length: ${ci.length} chars; contains compaction_projection: ${ci.includes("compaction_projection:")}`);
 }
-compactCalls[0]?.onComplete?.();
+

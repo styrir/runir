@@ -41,7 +41,7 @@ RUNIR_USER_ID=<your-user-id>   (required; there is no default tenant)
 
 Override the file path with `RUNIR_ENV_FILE` if needed. `RUNIR_API_KEY` is required by the local service for hook endpoints.
 
-Without `RUNIR_USER_ID` in either place the extension does no recall or capture. It shows an `ᚱ off: no RUNIR_USER_ID` badge and a warning at session start instead.
+Without `RUNIR_USER_ID` in either place the extension does no recall or capture, and says so at session start. With a UI (interactive or RPC mode) it shows an `ᚱ off: no RUNIR_USER_ID` badge and a warning. In print (`-p`) and JSON modes, which have no UI, it writes the warning to stderr.
 
 Runtime UI:
 

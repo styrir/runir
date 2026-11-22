@@ -1,6 +1,6 @@
 # vk-2997 Pi extension harness
 
-Run at `4b4b7b8` on a clean tree. The commit adding this file changes nothing
+Run at `eb26eb1` on a clean tree. The commit adding this file changes nothing
 else, so the code it describes is the code in the commit that contains it.
 
 `npm run test` does not cover the Pi plugin. Its harnesses bundle the
@@ -39,11 +39,31 @@ The default-path case points `HOME` at a temporary directory holding
 
 ## Live smokes
 
-Run by hand against a local service, with `RUNIR_USER_ID`, `RUNIR_API_KEY`
-and `RUNIR_ENV_FILE` unset, so both came from the default env file:
+Run by hand at the same tree against a local service. Each smoke first runs
+the shared preflight (`test/live-smoke-config.mjs`), which resolves
+`RUNIR_USER_ID` and `RUNIR_API_KEY` from the environment, then
+`RUNIR_ENV_FILE`, and prints where each came from (never the values).
 
-- `om4-live-smoke.mjs`: exit 0. Health and auth ok, and it reported the env file's tenant.
-- `om6-live-smoke.mjs` without `RUNIR_SMOKE_SEMIOTE_ID`: exits with "set RUNIR_SMOKE_SEMIOTE_ID …".
-- `om6-live-smoke.mjs` with a memory id from that tenant: exit 0.
+Unconfigured, with `RUNIR_USER_ID` and `RUNIR_API_KEY` unset and
+`RUNIR_ENV_FILE` pointing at a temporary file holding only one of them:
+
+| Smoke | Env file has only the tenant | Env file has only the key |
+|---|---|---|
+| OM-4 | exit 2: `RUNIR_API_KEY not set; checked the environment and RUNIR_ENV_FILE (…)` | exit 2: `RUNIR_USER_ID not set; …` |
+| OM-5 | exit 2: `RUNIR_API_KEY not set; …` | exit 2: `RUNIR_USER_ID not set; …` |
+| OM-6 | exit 2: `RUNIR_API_KEY not set; …` | exit 2: `RUNIR_USER_ID not set; …` |
+
+Configured, OM-6 with `RUNIR_SMOKE_SEMIOTE_ID` set to a memory id from the
+tenant:
+
+| Smoke | From the default env file (nothing in the environment) | From environment overrides, `RUNIR_ENV_FILE` pointing nowhere |
+|---|---|---|
+| OM-4 | exit 0; preflight: both from RUNIR_ENV_FILE; `auth: ok`, `errors: 0` | exit 0; preflight: both from environment; `auth: ok`, `errors: 0` |
+| OM-5 | exit 0 in 4 s; one compact call carrying a compaction projection | exit 0 |
+| OM-6 | exit 0; the lookup returns; the all-zero sentinel id reports not-found | exit 0 |
+
+OM-5 previously completed its fake compaction only after `agent_end` had
+returned, so the forced band waited for the extension's two-minute watchdog.
+It now completes on the next tick.
 
 The tenant, key and memory id are the operator's and are not recorded here.

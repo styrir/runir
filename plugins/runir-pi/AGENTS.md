@@ -63,4 +63,4 @@ python3 -m json.tool ~/.config/mcp/mcp.json
 curl http://127.0.0.1:7700/health
 ```
 
-`test/om*-harness.mjs` drive the bundled extension with fake Pi runtimes against a controllable stub Runir server (49 cases across staging/injection, band latching, and the recall bridge). `test/om*-live-smoke.mjs` hit the REAL service on `:7700` as tenant sam — run individually, not in CI-style loops.
+`test/om*-harness.mjs` drive the bundled extension with fake Pi runtimes against a controllable stub Runir server (49 cases across staging/injection, band latching, and the recall bridge). `test/om*-live-smoke.mjs` hit the REAL service (`RUNIR_BASE`, default `:7700`) with the caller's `RUNIR_USER_ID` and `RUNIR_API_KEY` (environment, then `RUNIR_ENV_FILE`); they exit 2 naming whatever is missing. OM-6 also needs `RUNIR_SMOKE_SEMIOTE_ID`. Run individually, not in CI-style loops.
