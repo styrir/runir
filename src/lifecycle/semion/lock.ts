@@ -1,4 +1,5 @@
 import { extractId, type SurrealClient } from "../../storage/surreal/surreal-store.js";
+import { QueryOutcomeUnknownError } from "../../storage/surreal/surreal-client.js";
 import { ensureProcessingLineageSchema } from "../../storage/surreal/processing-lineage-schema.js";
 import {
   classifyProcessingLineage,
@@ -15,6 +16,12 @@ import {
 /**
  * Attempts to acquire a TTL lease lock for a userId/scope pair.
  * Uses the unique index as the contention arbiter.
+ *
+ * If the connection drops after the CREATE was sent, its outcome is unknown
+ * (QueryOutcomeUnknownError). The lock then reads its own holder token back:
+ * an unexpired lease means it is ours and is returned so the caller releases
+ * it; no lease, an expired one (another holder may take it over), or a failed
+ * read rethrows, and any lease expires after its TTL.
  */
 export async function acquireLock(
   db: SurrealClient,
@@ -31,11 +38,28 @@ export async function acquireLock(
     );
     return holder;
   } catch (err) {
+    if (err instanceof QueryOutcomeUnknownError) {
+      if (await holdsLock(db, key, holder)) return holder;
+      throw err;
+    }
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("idx_cl_key") || (msg.includes("already contains") && msg.includes("consolidation_locks"))) {
       return null;
     }
     throw err;
+  }
+}
+
+/** True when `holder` owns an unexpired lease for `key`. A failed read counts as false. */
+async function holdsLock(db: SurrealClient, key: string, holder: string): Promise<boolean> {
+  try {
+    const [rows] = await db.query<unknown>(
+      "SELECT id FROM consolidation_locks WHERE lock_key = $key AND holder = $holder AND expires_at > time::now();",
+      { key, holder },
+    );
+    return Array.isArray(rows) && rows.length > 0;
+  } catch {
+    return false;
   }
 }
 
@@ -60,9 +84,11 @@ export async function releaseLock(
   key: string,
   holder: string,
 ): Promise<void> {
+  // Deleting by holder token twice equals deleting once, so a lost send may be re-sent.
   await db.query(
     "DELETE consolidation_locks WHERE lock_key = $key AND holder = $holder;",
     { key, holder },
+    { resendSafe: true },
   );
 }
 

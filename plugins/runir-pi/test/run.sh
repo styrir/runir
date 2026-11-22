@@ -2,7 +2,8 @@
 # OM adapter regression harnesses (OM-4/5/6, Rúnir-tfxt.4/.5/.6).
 # Stub-server based — no Pi runtime and no Runir service required.
 # The live smokes (om*-live-smoke.mjs) are NOT run here: they hit the real
-# service on :7700 as tenant sam — run them individually when wanted.
+# service with the caller's tenant (RUNIR_USER_ID from the environment or
+# RUNIR_ENV_FILE) — run them individually when wanted.
 set -e
 cd "$(dirname "$0")"
 # pi-tui must be bundled IN (the harness fakes run outside Pi, so externals
@@ -29,3 +30,4 @@ node om4-harness.mjs
 node om5-harness.mjs
 node om6-harness.mjs
 node store-harness.mjs
+node tenant-harness.mjs

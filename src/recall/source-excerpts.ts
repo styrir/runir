@@ -4,6 +4,7 @@ import { exactQaTokens } from "../domain/memory/exact-qa.js";
 import { approximateTokens } from "./policy/preference-packet.js";
 import { formatRecallInjectionFromRendered } from "./selection/recall-selection.js";
 import { readVerifiedSourceTurns, type SourceBoundary, type VerifiedSource } from "../storage/surreal/verified-source-turns.js";
+import { raceAbandonable } from "../storage/surreal/query-abandonment.js";
 import type { SurrealClient } from "../storage/surreal/surreal-store.js";
 
 export type SourceRecallMode = "off" | "shadow" | "on";
@@ -67,15 +68,12 @@ export async function annotateSelectedFacts(args: {
   const started = performance.now();
   let failures = 0;
   let sources = new Map<string, VerifiedSource>();
-  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    sources = await Promise.race([
-      readVerifiedSourceTurns(args.db, args.selected.map((h) => h.id), args.boundary),
-      new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("source lookup timeout")), 500); }),
-    ]);
+    // A timed-out lookup is abandoned, so its remaining queries are not sent or re-sent (vk-2993).
+    sources = await raceAbandonable(
+      () => readVerifiedSourceTurns(args.db, args.selected.map((h) => h.id), args.boundary), 500, "source lookup timeout");
   }
   catch { failures++; }
-  finally { if (timeout) clearTimeout(timeout); }
   const lookupMs = performance.now() - started;
   const factText = formatRecallInjectionFromRendered(args.renderedText) ?? "";
   const room = Math.min(360, args.budgetTokens === undefined ? 360 : Math.max(0, Math.floor(args.budgetTokens) - approximateTokens(factText)));
