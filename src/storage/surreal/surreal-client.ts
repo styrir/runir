@@ -160,17 +160,35 @@ function describeError(detail: unknown): string {
 }
 
 /** Statements, functions and namespaces that change data, the session, or anything outside SurrealDB. */
-const WRITE_MARKERS = /\b(CREATE|UPDATE|UPSERT|DELETE|INSERT|RELATE|DEFINE|REMOVE|ALTER|REBUILD|KILL|LIVE|BEGIN|COMMIT|CANCEL|USE|ACCESS|IMPORT)\b|\b(fn|http|ml|api)::/i;
+const WRITE_KEYWORDS = /\b(CREATE|UPDATE|UPSERT|DELETE|INSERT|RELATE|DEFINE|REMOVE|ALTER|REBUILD|KILL|LIVE|BEGIN|COMMIT|CANCEL|USE|ACCESS|IMPORT)\b/i;
+
+/**
+ * Built-in function namespaces with no side effects. An allowlist on purpose:
+ * a namespace not listed here (sequence::, file::, fn::, http::, ml::, api::,
+ * or one a later SurrealDB adds) counts as a write.
+ */
+const SIDE_EFFECT_FREE_NAMESPACES = new Set([
+  "array", "bytes", "crypto", "duration", "encoding", "geo", "math", "meta", "object", "parse",
+  "rand", "record", "search", "session", "string", "time", "type", "value", "vector",
+]);
+
+/** First segment of every `ns::` call: `vector::similarity::cosine` yields `vector`. */
+const NAMESPACE_CALL = /(?<![:\w])([A-Za-z_]\w*)::/g;
 
 /**
  * Conservative read-only check deciding whether a query lost after it was sent
  * may be re-sent (vk-2995). A query counts as a read only when it starts with
- * SELECT, RETURN or INFO and contains no write marker anywhere, including in
- * string literals and comments. Anything else counts as a write, so a wrong
- * guess costs one error, never a second execution.
+ * SELECT, RETURN or INFO, contains no write keyword, and calls functions only
+ * from SIDE_EFFECT_FREE_NAMESPACES. The check scans string literals and
+ * comments too. Anything else counts as a write, so a wrong guess costs one
+ * error, never a second execution.
  */
 export function isReadOnlyQuery(sql: string): boolean {
-  return /^\s*(SELECT|RETURN|INFO)\b/i.test(sql) && !WRITE_MARKERS.test(sql);
+  if (!/^\s*(SELECT|RETURN|INFO)\b/i.test(sql) || WRITE_KEYWORDS.test(sql)) return false;
+  for (const [, namespace] of sql.matchAll(NAMESPACE_CALL)) {
+    if (!SIDE_EFFECT_FREE_NAMESPACES.has(namespace.toLowerCase())) return false;
+  }
+  return true;
 }
 
 /**
